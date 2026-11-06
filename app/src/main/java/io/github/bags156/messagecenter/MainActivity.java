@@ -66,7 +66,7 @@ public final class MainActivity extends Activity {
         if(!registered) {
             IntentFilter filter=new IntentFilter(MessageStore.CHANGED);
             if(Build.VERSION.SDK_INT>=33) registerReceiver(changes,filter,Context.RECEIVER_NOT_EXPORTED);
-            else registerReceiver(changes,filter);
+            else registerReceiver(changes,filter,"io.github.bags156.messagecenter.permission.INTERNAL",null);
             registered=true;
         }
         if(thread==null) showInbox(); else renderChat();

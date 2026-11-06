@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <permission android:name="io.github.bags156.messagecenter.permission.INTERNAL" android:protectionLevel="signature" />
+    <uses-permission android:name="io.github.bags156.messagecenter.permission.INTERNAL" />
     <queries><package android:name="com.google.android.apps.messaging" /></queries>
     <application
         android:allowBackup="false"
