@@ -1,0 +1,101 @@
+name: Android build and release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a signed APK release for Obtainium
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
+        with:
+          gradle-version: '8.11.1'
+      - name: Test release update rules
+        run: python3 -m unittest discover -s tools -p 'test_*.py' -v
+      - name: Test, lint, and build Android APK
+        run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleRelease
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unsigned-apk
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: test-reports
+          path: |
+            app/build/reports/tests/
+            app/build/reports/lint-results-debug.html
+          retention-days: 14
+
+  release:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: unsigned-apk
+          path: unsigned
+      - name: Check version and previous release identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p out previous
+          if gh api "repos/$GITHUB_REPOSITORY/releases" --jq 'length' | python3 -c 'import sys; sys.exit(0 if int(sys.stdin.read())>0 else 1)'; then
+            gh release download --repo "$GITHUB_REPOSITORY" --pattern release-metadata.json --dir previous
+            python3 tools/release_metadata.py --previous previous/release-metadata.json --output out/release-metadata.json
+          else
+            python3 tools/release_metadata.py --output out/release-metadata.json
+          fi
+      - name: Install Android signing tools
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;35.0.0"'
+      - name: Sign and verify APK
+        env:
+          ANDROID_SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
+        run: python3 tools/sign_apk.py
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="$(python3 -c 'import json; print(json.load(open("out/release-metadata.json"))["versionName"])')"
+          cp signing-certificate.sha256 out/
+          (cd out && sha256sum message-center.apk > SHA256SUMS)
+          gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Message Center $VERSION" --notes-file docs/release-notes.md \
+            out/message-center.apk out/SHA256SUMS out/signing-certificate.sha256 out/release-metadata.json
