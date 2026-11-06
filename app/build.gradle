@@ -8,7 +8,7 @@ android {
     compileSdk 35
     defaultConfig {
         applicationId 'io.github.bags156.messagecenter'
-        minSdk 28
+        minSdk 33
         targetSdk 35
         versionCode appVersion.versionCode.toInteger()
         versionName appVersion.versionName

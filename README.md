@@ -2,6 +2,8 @@
 
 A native Android companion for **Google Messages**, with signed APK updates through **Obtainium**.
 
+Requires Android 13 or newer.
+
 **Status: first alpha.** This is a notification-based companion, not an independent RCS client or a complete skin of Google Messages. Device testing is required, particularly on OnePlus / ColorOS.
 
 ## What the first version does
