@@ -43,7 +43,7 @@ public final class MessageListener extends NotificationListenerService {
         if((n.flags & Notification.FLAG_GROUP_SUMMARY)!=0) return;
         // Ignore sync/status/OTP service notifications; capture conversation notifications only.
         if(!Notification.CATEGORY_MESSAGE.equals(n.category)
-                && Notification.MessagingStyle.extractMessagingStyleFromNotification(n)==null) return;
+                && messagingStyle(n)==null) return;
         String thread=threadId(sbn); active.put(thread,sbn);
         writer.execute(()-> { capture(sbn,thread); changed(); });
     }
@@ -56,7 +56,7 @@ public final class MessageListener extends NotificationListenerService {
     private void capture(StatusBarNotification sbn,String thread) {
         Notification n=sbn.getNotification();
         String title=title(n);
-        Notification.MessagingStyle style=Notification.MessagingStyle.extractMessagingStyleFromNotification(n);
+        Notification.MessagingStyle style=messagingStyle(n);
         if(style!=null) {
             List<Notification.MessagingStyle.Message> messages=new ArrayList<>(style.getHistoricMessages());
             messages.addAll(style.getMessages());
@@ -79,8 +79,14 @@ public final class MessageListener extends NotificationListenerService {
         // A display name is not a reliable identity, especially in group conversations.
         return p.getKey()!=null && p.getKey().equals(self.getKey());
     }
-    private static String title(Notification n) {
-        Notification.MessagingStyle style=Notification.MessagingStyle.extractMessagingStyleFromNotification(n);
+    private Notification.MessagingStyle messagingStyle(Notification n) {
+        try {
+            Notification.Style style=Notification.Builder.recoverBuilder(this,n).getStyle();
+            return style instanceof Notification.MessagingStyle ? (Notification.MessagingStyle)style:null;
+        } catch(RuntimeException unavailable) { return null; }
+    }
+    private String title(Notification n) {
+        Notification.MessagingStyle style=messagingStyle(n);
         CharSequence title=style==null ? null:style.getConversationTitle();
         if(title==null) title=n.extras.getCharSequence(Notification.EXTRA_TITLE);
         return title==null ? "Conversation":title.toString();
