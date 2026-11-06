@@ -18,12 +18,7 @@ public final class MessageStore extends SQLiteOpenHelper {
         public String id, title, snippet;
         public long time;
     }
-    public static final class Message {
-        public String id, sender, text, status;
-        public long time;
-        public boolean outgoing, hidden;
-        public final Map<String, String> reactions = new LinkedHashMap<>();
-    }
+    public static final class Message extends ConversationProjector.Message {}
     public MessageStore(Context context) { super(context, "messages.db", null, 1); }
     @Override public void onConfigure(SQLiteDatabase db) { db.setForeignKeyConstraintsEnabled(true); }
     @Override public void onCreate(SQLiteDatabase db) {
@@ -70,7 +65,10 @@ public final class MessageStore extends SQLiteOpenHelper {
         try (Cursor c = getReadableDatabase().rawQuery(sql, null)) {
             while(c.moveToNext()) {
                 ThreadInfo t = new ThreadInfo(); t.id=c.getString(0); t.title=c.getString(1);
-                t.time=c.getLong(2); t.snippet=c.getString(3);
+                t.time=c.getLong(2);
+                String sourceText=c.getString(3);
+                t.title=NotificationContent.title(t.title,sourceText);
+                t.snippet=NotificationContent.preview(sourceText);
                 String q=query.toLowerCase(java.util.Locale.ROOT);
                 if(q.isEmpty() || (t.title + " " + t.snippet).toLowerCase(java.util.Locale.ROOT).contains(q)) result.add(t);
             }
@@ -80,7 +78,7 @@ public final class MessageStore extends SQLiteOpenHelper {
     public List<Message> messages(String thread) {
         List<Message> result = new ArrayList<>();
         try (Cursor c = getReadableDatabase().rawQuery(
-            "SELECT id,sender,body,time,outgoing,status FROM (SELECT rowid AS seq,* FROM messages WHERE thread_id=? ORDER BY time DESC,rowid DESC LIMIT 300) ORDER BY time,seq", new String[]{thread})) {
+            "SELECT id,sender,body,time,outgoing,status FROM messages WHERE thread_id=? ORDER BY time,rowid", new String[]{thread})) {
             while(c.moveToNext()) {
                 Message m = new Message(); m.id=c.getString(0); m.sender=c.getString(1);
                 m.text=c.getString(2); m.time=c.getLong(3); m.outgoing=c.getInt(4)!=0;
@@ -91,19 +89,7 @@ public final class MessageStore extends SQLiteOpenHelper {
         return result;
     }
     static void applyReactions(List<Message> messages) {
-        List<String> previous = new ArrayList<>();
-        for (Message m : messages) {
-            ReactionParser.Reaction reaction = ReactionParser.parse(m.text);
-            int target = reaction == null ? -1 : ReactionParser.uniqueMatch(reaction.quote, previous);
-            if(target >= 0) {
-                Message original = messages.get(target);
-                if(reaction.removed) original.reactions.remove(m.sender);
-                else original.reactions.put(m.sender, reaction.emoji);
-                m.hidden=true;
-            }
-            // Keep this list aligned with the original message list, including reactions.
-            previous.add(m.text);
-        }
+        ConversationProjector.apply(messages);
     }
     public synchronized void clear() {
         SQLiteDatabase db=getWritableDatabase(); db.delete("threads", null, null);

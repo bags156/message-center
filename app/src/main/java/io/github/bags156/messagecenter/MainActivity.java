@@ -44,6 +44,7 @@ public final class MainActivity extends Activity {
     private MessageStore store;
     private String thread,title,query="";
     private boolean preview=false,registered=false;
+    private int capturedLimit=300;
     private final Map<String,String> drafts=new HashMap<>();
     private final BroadcastReceiver changes=new BroadcastReceiver() {
         @Override public void onReceive(Context context,Intent intent) {
@@ -144,7 +145,7 @@ public final class MainActivity extends Activity {
         top.addView(button("Settings",false,this::settings)); root.addView(top); space(root,12);
         LinearLayout headline=row(); headline.addView(text("Messages",34,ink,true),new LinearLayout.LayoutParams(0,-2,1));
         headline.addView(button("＋",true,()->openGoogle(true))); root.addView(headline);
-        space(root,5); root.addView(text("A calmer place for your conversations.",14,muted,false)); space(root,22);
+        space(root,5); root.addView(text("Recent Google Messages notifications",14,muted,false)); space(root,22);
         EditText search=new EditText(this); search.setSingleLine(true); search.setTextSize(15);
         search.setTextColor(ink); search.setHintTextColor(muted); search.setHint("Search recent conversations");
         search.setPadding(dp(16),dp(12),dp(16),dp(12)); search.setBackground(shape(card,16));
@@ -160,6 +161,7 @@ public final class MainActivity extends Activity {
     private void renderInbox() {
         if(list==null || thread!=null) return; list.removeAllViews();
         if(!preview && !hasAccess()) { connectionCard(); space(list,20); }
+        else if(!preview) { coverageCard(); space(list,20); }
         if(preview) {
             TextView info=text("Sample conversations • no messages will be sent",12,muted,false);
             info.setPadding(0,0,0,dp(14)); list.addView(info);
@@ -192,6 +194,17 @@ public final class MainActivity extends Activity {
         TextView detail=text("Connect notifications to collect recent messages and reply through Google Messages.",14,muted,false);
         detail.setLineSpacing(dp(3),1); box.addView(detail); space(box,16); box.addView(button("Connect Google Messages",true,this::connect)); list.addView(box);
     }
+    private void coverageCard() {
+        LinearLayout box=vertical(); box.setPadding(dp(16),dp(16),dp(16),dp(16)); box.setBackground(shape(card,18));
+        box.addView(text("Recent notifications, not your full history",15,ink,true)); space(box,6);
+        TextView detail=text("Older chats stay in Google Messages. Android may withhold sensitive notification content.",13,muted,false);
+        detail.setLineSpacing(dp(3),1); box.addView(detail); space(box,10);
+        box.addView(button("Refresh current notifications",false,this::refreshNotifications)); list.addView(box);
+    }
+    private void refreshNotifications() {
+        if(MessageListener.refreshCurrentNotifications()) toast("Refreshing currently available notifications. This does not import older chats.");
+        else toast("Android has not connected the notification listener. Reopen notification access settings and reconnect Message Center.");
+    }
     private View conversation(MessageStore.ThreadInfo t) {
         LinearLayout r=row(); r.setPadding(dp(16),dp(18),dp(16),dp(18));
         TextView avatar=text(initials(t.title),18,BLUE,true); avatar.setGravity(Gravity.CENTER);
@@ -203,13 +216,14 @@ public final class MainActivity extends Activity {
         r.setOnClickListener(v->showThread(t.id,t.title)); r.setContentDescription("Conversation with "+t.title); return r;
     }
     private void showThread(String id,String name) {
+        if(!id.equals(thread)) capturedLimit=300;
         rememberDraft(); thread=id; title=name; list=null; startScreen();
         LinearLayout header=row(); header.addView(button("‹",false,this::showInbox));
         LinearLayout names=vertical(); TextView heading=text(name,19,ink,true); heading.setSingleLine(); heading.setEllipsize(android.text.TextUtils.TruncateAt.END); names.addView(heading);
         names.addView(text(preview ? "Sample conversation":"Via Google Messages",11,muted,false));
         LinearLayout.LayoutParams namesP=new LinearLayout.LayoutParams(0,-2,1); namesP.setMargins(dp(12),0,dp(8),0); header.addView(names,namesP);
         header.addView(button("Open ↗",false,this::openCurrentThread)); root.addView(header); space(root,14);
-        TextView note=text("Recent notification history • RCS stays in Google Messages",11,muted,false); note.setGravity(Gravity.CENTER); root.addView(note); space(root,10);
+        TextView note=text("Captured notifications • older chats stay in Google Messages",11,muted,false); note.setGravity(Gravity.CENTER); root.addView(note); space(root,10);
         chatScroll=new ScrollView(this); chatScroll.setFillViewport(true); chat=vertical(); chat.setPadding(0,dp(16),0,dp(16)); chatScroll.addView(chat);
         root.addView(chatScroll,new LinearLayout.LayoutParams(-1,0,1));
         LinearLayout composeRow=row(); composeRow.setPadding(0,dp(8),0,0);
@@ -224,21 +238,46 @@ public final class MainActivity extends Activity {
         boolean bottom=chat.getHeight()-chatScroll.getScrollY()-chatScroll.getHeight()<dp(90);
         chat.removeAllViews();
         List<MessageStore.Message> messages=preview ? previewMessages(thread):store.messages(thread);
-        for(MessageStore.Message m:messages) {
+        int first=Math.max(0,messages.size()-capturedLimit);
+        if(first>0) {
+            chat.addView(button("Load earlier captured messages",false,()-> {
+                int oldHeight=chat.getHeight(), oldScroll=chatScroll.getScrollY();
+                capturedLimit+=300; renderChat();
+                chatScroll.post(()->chatScroll.scrollTo(0,oldScroll+chat.getHeight()-oldHeight));
+            })); space(chat,16);
+        }
+        for(int index=first;index<messages.size();index++) {
+            MessageStore.Message m=messages.get(index);
             if(m.hidden) continue;
-            LinearLayout wrap=vertical(); wrap.setGravity(m.outgoing ? Gravity.END:Gravity.START);
-            LinearLayout.LayoutParams wp=new LinearLayout.LayoutParams(-1,-2); wp.setMargins(m.outgoing ? dp(44):0,0,m.outgoing ? 0:dp(44),dp(12)); chat.addView(wrap,wp);
-            if(!m.outgoing) { TextView sender=text(m.sender,11,muted,false); sender.setPadding(dp(8),0,0,dp(5)); wrap.addView(sender); }
-            TextView bubble=text(m.text,16,m.outgoing ? Color.WHITE:ink,false); bubble.setTextIsSelectable(true);
-            bubble.setPadding(dp(16),dp(13),dp(16),dp(13)); bubble.setLineSpacing(dp(3),1); bubble.setBackground(shape(m.outgoing ? BLUE:card,20));
+            boolean outgoing=m.outgoing && !m.contextOnly && !m.redacted;
+            LinearLayout wrap=vertical(); wrap.setGravity(outgoing ? Gravity.END:Gravity.START);
+            LinearLayout.LayoutParams wp=new LinearLayout.LayoutParams(-1,-2); wp.setMargins(outgoing ? dp(44):0,0,outgoing ? 0:dp(44),dp(12)); chat.addView(wrap,wp);
+            if(m.redacted) {
+                TextView heading=text("Content hidden by Android",15,ink,true); wrap.addView(heading); space(wrap,6);
+                TextView explanation=text("Android withheld this notification’s text. Message Center cannot recover it. Open Google Messages to read the conversation.",14,muted,false);
+                explanation.setLineSpacing(dp(3),1); wrap.addView(explanation); space(wrap,8);
+                wrap.addView(button("Open Google Messages",false,this::openCurrentThread));
+                continue;
+            }
+            if(!m.outgoing && !m.contextOnly) { TextView sender=text(m.sender,11,muted,false); sender.setPadding(dp(8),0,0,dp(5)); wrap.addView(sender); }
+            if(m.contextNote!=null) {
+                TextView provenance=text(m.contextNote,11,muted,false); provenance.setPadding(dp(6),0,dp(6),dp(6)); wrap.addView(provenance);
+            }
+            TextView bubble=text(m.text,16,outgoing ? Color.WHITE:ink,false); bubble.setTextIsSelectable(true);
+            bubble.setPadding(dp(16),dp(13),dp(16),dp(13)); bubble.setLineSpacing(dp(3),1); bubble.setBackground(shape(outgoing ? BLUE:card,20));
             wrap.addView(bubble,new LinearLayout.LayoutParams(-2,-2));
             if(!m.reactions.isEmpty()) {
                 StringBuilder emojis=new StringBuilder(); for(String emoji:m.reactions.values()) emojis.append(emoji).append(" ");
                 TextView reaction=text(emojis.toString().trim(),15,ink,false); reaction.setBackground(shape(card,14)); reaction.setPadding(dp(9),dp(4),dp(9),dp(4));
-                reaction.setOnClickListener(v->{StringBuilder who=new StringBuilder(); m.reactions.forEach((sender,emoji)->who.append(sender).append(" ").append(emoji).append("\n")); new AlertDialog.Builder(this).setTitle("Reactions").setMessage(who.toString().trim()).setPositiveButton("Done",null).show();});
+                reaction.setContentDescription("Show who reacted"); reaction.setMinHeight(dp(48)); reaction.setMinWidth(dp(48)); reaction.setGravity(Gravity.CENTER);
+                reaction.setOnClickListener(v->{StringBuilder who=new StringBuilder(); m.reactions.forEach((sender,emoji)->who.append(sender==null || sender.trim().isEmpty() ? "Sender not provided":sender).append(" ").append(emoji).append("\n"));
+                    who.append("\nNames come from Google Messages notifications.");
+                    if(m.contextOnly) who.append("\nThis quote came from a reaction; the original message was not captured or could not be matched uniquely.");
+                    new AlertDialog.Builder(this).setTitle("Reactions").setMessage(who.toString().trim()).setPositiveButton("Done",null).show();});
                 wrap.addView(reaction);
             }
-            TextView stamp=text(time(m.time)+(m.status.equals("submitted") ? " · Handed to Google Messages":""),10,muted,false);
+            if(m.reactionEvent!=null) { TextView event=text(m.reactionEvent,12,muted,false); event.setPadding(dp(6),dp(5),dp(6),0); wrap.addView(event); }
+            TextView stamp=text((m.contextOnly ? "Reaction received ":"")+time(m.time)+(m.status.equals("submitted") ? " · Handed to Google Messages":""),10,muted,false);
             stamp.setPadding(dp(6),dp(4),dp(6),0); wrap.addView(stamp);
         }
         if(!preview && !MessageListener.canReply(thread)) {
@@ -269,7 +308,7 @@ public final class MainActivity extends Activity {
             switch(which) {
                 case 0: connect(); break;
                 case 1: new AlertDialog.Builder(this).setTitle("Your messages. Your phone.")
-                    .setMessage("Google Messages stays your default texting app and handles SMS, MMS, and RCS. This companion saves message text exposed in its notifications and uses available notification actions for replies.\n\nIt cannot import your complete RCS history, verify delivery or read receipts, start new RCS chats itself, or retrieve every attachment/reaction. Recognized English reaction texts attach only when the quoted message has one exact match; other messages stay visible.\n\nNo internet permission, analytics, or cloud backup. Saved text is kept in this app’s private storage for up to 90 days or 5,000 messages. Opening this view does not mark messages read in Google Messages.\n\nFirst alpha: test notification capture and replies on your phone.")
+                    .setMessage("Google Messages stays your default texting app and handles SMS, MMS, and RCS. This companion saves message text exposed in its notifications and uses available notification actions for replies.\n\nOlder Google Messages history cannot be imported. Android-protected notification contents cannot be recovered. Refresh only scans notifications currently available to this app.\n\nRecognized reaction texts attach to one exact captured original. If the original was not captured or is ambiguous, a labeled quote card shows only the text supplied in the reaction. Tap its emoji to see the sender reported by the notification. This does not recover the original message or its timestamp.\n\nNo internet permission, analytics, or cloud backup. Saved text stays in this app’s private storage for up to 90 days or 5,000 messages. Earlier captured messages can be loaded in the conversation. Opening this view does not mark messages read in Google Messages.")
                     .setPositiveButton("Done",null).show(); break;
                 case 2: new AlertDialog.Builder(this).setTitle("Updates through Obtainium")
                     .setMessage("In Obtainium, add:\nhttps://github.com/bags156/message-center\n\nChoose the message-center APK from releases. Updates keep your saved messages. You can also view the release page below.")

@@ -9,6 +9,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Parcelable;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
 import java.util.ArrayList;
@@ -43,7 +44,7 @@ public final class MessageListener extends NotificationListenerService {
         if((n.flags & Notification.FLAG_GROUP_SUMMARY)!=0) return;
         // Ignore sync/status/OTP service notifications; capture conversation notifications only.
         if(!Notification.CATEGORY_MESSAGE.equals(n.category)
-                && messagingStyle(n)==null) return;
+                && !n.extras.containsKey(Notification.EXTRA_MESSAGES) && messagingStyle(n)==null) return;
         String thread=threadId(sbn); active.put(thread,sbn);
         writer.execute(()-> { capture(sbn,thread); changed(); });
     }
@@ -57,12 +58,18 @@ public final class MessageListener extends NotificationListenerService {
         Notification n=sbn.getNotification();
         String title=title(n);
         Notification.MessagingStyle style=messagingStyle(n);
-        if(style!=null) {
-            List<Notification.MessagingStyle.Message> messages=new ArrayList<>(style.getHistoricMessages());
-            messages.addAll(style.getMessages());
+        List<Notification.MessagingStyle.Message> messages=new ArrayList<>();
+        messages.addAll(Notification.MessagingStyle.Message.getMessagesFromBundleArray(n.extras.getParcelableArray(Notification.EXTRA_HISTORIC_MESSAGES)));
+        messages.addAll(Notification.MessagingStyle.Message.getMessagesFromBundleArray(n.extras.getParcelableArray(Notification.EXTRA_MESSAGES)));
+        if(messages.isEmpty() && style!=null) {
+            messages.addAll(style.getHistoricMessages()); messages.addAll(style.getMessages());
+        }
+        if(!messages.isEmpty()) {
+            Person self=n.extras.getParcelable(Notification.EXTRA_MESSAGING_PERSON,Person.class);
+            if(self==null && style!=null) self=style.getUser();
             for(Notification.MessagingStyle.Message m:messages) {
                 if(m.getText()==null || m.getText().length()==0) continue;
-                Person person=m.getSenderPerson(); Person self=style.getUser();
+                Person person=m.getSenderPerson();
                 boolean outgoing=person==null || isSelf(person,self);
                 String sender=outgoing ? "You":person.getName()==null ? title:person.getName().toString();
                 long time=m.getTimestamp()>0 ? m.getTimestamp():sbn.getPostTime();
@@ -71,7 +78,9 @@ public final class MessageListener extends NotificationListenerService {
         } else {
             CharSequence body=n.extras.getCharSequence(Notification.EXTRA_BIG_TEXT);
             if(body==null) body=n.extras.getCharSequence(Notification.EXTRA_TEXT);
-            if(body!=null) store.add(thread,title,title,body.toString(),sbn.getPostTime(),false,"observed");
+            boolean group=n.extras.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION,false)
+                || (style!=null && style.isGroupConversation());
+            if(body!=null) store.add(thread,title,group ? "Sender not provided by Google Messages":title,body.toString(),sbn.getPostTime(),false,"observed");
         }
     }
     private static boolean isSelf(Person p,Person self) {
@@ -87,9 +96,11 @@ public final class MessageListener extends NotificationListenerService {
     }
     private String title(Notification n) {
         Notification.MessagingStyle style=messagingStyle(n);
-        CharSequence title=style==null ? null:style.getConversationTitle();
-        if(title==null) title=n.extras.getCharSequence(Notification.EXTRA_TITLE);
-        return title==null ? "Conversation":title.toString();
+        CharSequence title=n.extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE);
+        if(title==null && style!=null) title=style.getConversationTitle();
+        if(title==null || title.toString().trim().isEmpty()) title=n.extras.getCharSequence(Notification.EXTRA_TITLE);
+        CharSequence body=n.extras.getCharSequence(Notification.EXTRA_TEXT);
+        return NotificationContent.title(title==null ? null:title.toString(),body==null ? null:body.toString());
     }
     private static String threadId(StatusBarNotification n) {
         String shortcut=n.getNotification().getShortcutId();
@@ -97,6 +108,14 @@ public final class MessageListener extends NotificationListenerService {
     }
     private void changed() { sendBroadcast(new Intent(MessageStore.CHANGED).setPackage(getPackageName())); }
     public static boolean isConnected() { return connected!=null; }
+    public static boolean refreshCurrentNotifications() {
+        MessageListener s=connected;
+        if(s==null) return false;
+        try {
+            for(StatusBarNotification n:s.getActiveNotifications()) s.onNotificationPosted(n);
+            return true;
+        } catch(SecurityException unavailable) { return false; }
+    }
     private static Notification.Action replyAction(Notification n) {
         if(n.actions==null) return null;
         for(Notification.Action a:n.actions) {

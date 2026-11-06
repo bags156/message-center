@@ -1,13 +1,15 @@
-First alpha of Message Center, a Google Messages companion.
+Message Center 0.1.1 — reaction display and capture clarity.
 
-- Native inbox and conversation view with light/dark appearance.
-- Capture recent message text from Google Messages notifications.
-- Quick replies through available Google Messages notification actions, preserving its handling of SMS/RCS.
-- Conservative recognition of common English iPhone fallback reactions.
-- Open Google Messages for full history, composing new conversations, media, and other features.
-- Local-only storage with no internet permission or cloud backup.
-- Signed APK distribution for Obtainium updates.
+- Recognize Google Messages' `❤️ to “quoted text”` fallback format, other emoji sequences, and common reaction removal formats.
+- Attach reactions to one exact captured original and show reported reactor names when the emoji is tapped.
+- If an original is missing or ambiguous, show a clearly labeled quote card with the reaction. The card does not claim to recover the original message, sender, or timestamp.
+- Reprocess previously saved notification text with the new reaction renderer; no local-history reset required.
+- Read message context directly from notification message bundles, with style recovery as a fallback.
+- Clearly identify Android-redacted content instead of presenting a blank conversation title.
+- Add **Refresh current notifications** and **Load earlier captured messages**.
+- Display reply bodies with an explicit missing-original label when Google Messages supplies no reply reference.
+- Keep the existing application ID, signing key, and saved local history for in-place Obtainium updates.
 
-**Limits:** not a standalone RCS client or a full replacement/skin. Only notification-exposed content is available; attachments, native RCS reaction metadata, full history, and read/delivery receipts are not guaranteed. Opening the companion does not mark messages read in Google Messages. Live capture/reply behavior still needs testing on your phone. No unread badge.
+**Limits:** old Google Messages / RCS history cannot be imported, and Android-protected content cannot be recovered. Refresh only reads currently available notifications. This remains a notification-based companion, not a full Google Messages replacement. Attachments, native RCS reaction metadata, and read/delivery receipts may be unavailable. Opening the companion does not mark messages read in Google Messages. No unread badge.
 
 In Obtainium, add `https://github.com/bags156/message-center` and select `message-center.apk`.

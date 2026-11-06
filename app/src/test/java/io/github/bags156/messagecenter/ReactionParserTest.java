@@ -29,4 +29,25 @@ public class ReactionParserTest {
         assertEquals(-1, ReactionParser.uniqueMatch("Long…", Arrays.asList("Long message")));
         assertEquals(1, ReactionParser.uniqueMatch("Yes", Arrays.asList("No", "Yes")));
     }
+    @Test public void parsesGoogleMessagesEmojiToQuoteFormat() {
+        ReactionParser.Reaction r=ReactionParser.parse("❤️ to “All set for tomorrow!”");
+        assertNotNull(r); assertEquals("❤️",r.emoji); assertEquals("All set for tomorrow!",r.quote);
+    }
+    @Test public void supportsArbitraryEmojiAndJoinedSequences() {
+        assertEquals("👍🏽",ReactionParser.parse("👍🏽 to \"Sounds good\"").emoji);
+        assertEquals("👨‍👩‍👧",ReactionParser.parse("Reacted 👨‍👩‍👧 to “Family day”").emoji);
+        assertEquals("🎉",ReactionParser.parse("🎉 to ‘Congratulations’").emoji);
+    }
+    @Test public void parsesRemovedEmojiWithoutRemovingAnotherReaction() {
+        ReactionParser.Reaction r=ReactionParser.parse("Removed ❤️ from “Hello”");
+        assertTrue(r.removed); assertEquals("Hello",r.quote);
+        assertTrue(ReactionParser.sameEmoji("❤","❤️"));
+        assertFalse(ReactionParser.sameEmoji("👍","❤️"));
+    }
+    @Test public void rejectsOrdinaryWordsAndInvalidEmojiSequences() {
+        assertNull(ReactionParser.parse("Hello to “everyone”"));
+        assertNull(ReactionParser.parse("Reacted thanks to “everyone”"));
+        assertNull(ReactionParser.parse("❤️ from “someone”"));
+        assertNull(ReactionParser.parse("❤️ to “Hello\""));
+    }
 }

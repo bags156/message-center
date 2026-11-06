@@ -10,7 +10,9 @@ Requires Android 13 or newer.
 
 - Collects message text exposed in Google Messages notifications into a clean, searchable inbox.
 - Replies through a live Google Messages notification reply action, when available. Google Messages chooses RCS or SMS and handles transmission.
-- Converts recognized English iPhone fallback reaction texts into attached emoji only when the original message has one exact match in the captured conversation. Ambiguous or unrecognized texts remain visible.
+- Converts recognized fallback reactions, including `❤️ to “quoted text”`, into attached emoji when the original message has one exact match in the captured conversation. Tap the emoji to see the sender reported by the notification.
+- When a reaction quotes an uncaptured or ambiguous original, displays a **labeled quote card** with the reaction. This is quoted context from the reaction, not recovered message history or an inferred original sender/time.
+- Labels Android-redacted notification content clearly and provides a refresh of currently available notifications. It cannot unredact protected text or import older chats.
 - Opens Google Messages for full conversation history, new messages, media, and features not available through notifications.
 - Includes light/dark appearance and an explicitly labeled design preview.
 
@@ -34,7 +36,13 @@ No APK is published until the signed release workflow succeeds. Use release asse
 
 The app has **no internet permission**, advertising SDK, analytics, contact access, SMS permission, accessibility service, or overlay. It only processes notifications from `com.google.android.apps.messaging`. Android's notification-access grant itself is broad; filtering is enforced in app code.
 
-Captured message text is stored in private app storage, with cloud backup disabled. It is retained for up to 90 days or 5,000 messages; conversation views show the most recent 300 captured messages. Clear it from Settings. GitHub contains source and release files, never your message history or the signing private key.
+Captured message text is stored in private app storage, with cloud backup disabled. Capture prunes stored records to the past 90 days or 5,000 messages. Conversation views initially show the most recent 300 saved records and offer **Load earlier captured messages** for the remainder. Clear saved content from Settings. GitHub contains source and release files, never your message history or the signing private key.
+
+## Missing history or hidden messages
+
+This app receives notification snapshots; it does not have access to Google Messages' RCS conversation database. Muted conversations, messages that did not produce an accessible notification, old chats, and Android-protected notification content may be absent. **Refresh current notifications** only reads notifications Android currently exposes; it cannot recover past or redacted text. Use Google Messages for the full conversation.
+
+The app deliberately preserves ambiguous reaction evidence instead of attaching it to a guessed message. Reaction quote cards are explicitly labeled, and names in the popup are supplied by Google Messages notifications. If Google Messages omits the reactor's identity, this companion cannot recover it.
 
 ## Build and release
 
