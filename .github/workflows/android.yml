@@ -77,7 +77,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p out previous
-          if gh api "repos/$GITHUB_REPOSITORY/releases" --jq 'length' | python3 -c 'import sys; sys.exit(0 if int(sys.stdin.read())>0 else 1)'; then
+          gh api "repos/$GITHUB_REPOSITORY/releases" > previous/releases.json
+          if python3 -c 'import json,sys; sys.exit(0 if json.load(open("previous/releases.json")) else 1)'; then
             gh release download --repo "$GITHUB_REPOSITORY" --pattern release-metadata.json --dir previous
             python3 tools/release_metadata.py --previous previous/release-metadata.json --output out/release-metadata.json
           else
