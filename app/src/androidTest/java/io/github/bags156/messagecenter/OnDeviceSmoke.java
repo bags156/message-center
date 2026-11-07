@@ -50,7 +50,13 @@ public final class OnDeviceSmoke extends Instrumentation {
             store.message(new JSONObject("{messageID:'d',conversationID:'smoke',participantID:'p1',timestamp:1794000300000000,messageStatus:{status:'INCOMING_COMPLETE'},messageInfo:[{messageContent:{content:'Replied to a message:\\nSure'}}]}"),0,true);
         }
         Activity bubble=startActivitySync(new Intent(getTargetContext(),BubbleActivity.class).setAction(Intent.ACTION_VIEW).putExtra("chat","smoke").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-        waitForIdleSync();check(bubble!=null&&!bubble.isFinishing(),"Bubble chat did not render");bubble.finish();waitForIdleSync();
+        waitForIdleSync();check(bubble!=null&&!bubble.isFinishing(),"Bubble chat did not render");
+        // The message box must offer attachments (⊕) and, while empty, voice recording.
+        java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();
+        bubble.getWindow().getDecorView().findViewsWithText(found,"Attach photos, videos, or files",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);
+        check(!found.isEmpty()&&found.get(0).isShown(),"Attach button is missing from the message box");found.clear();
+        bubble.getWindow().getDecorView().findViewsWithText(found,"Record voice message",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);
+        check(!found.isEmpty(),"Voice message button is missing from the empty message box");bubble.finish();waitForIdleSync();
         try(PairedStore store=new PairedStore(getTargetContext())){store.clear();}
         Outbox box=new Outbox(getTargetContext());for(JSONObject o:box.all())box.remove(o.optString("id"));
         getTargetContext().getSharedPreferences("transcripts",0).edit().clear().commit();
