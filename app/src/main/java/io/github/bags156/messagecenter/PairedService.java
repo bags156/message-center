@@ -150,7 +150,7 @@ public final class PairedService extends Service {
                     if(!PairedProtocol.outgoing(message) && typing.remove(message.optString("conversationID"))!=null)changed("TYPING");
                     // Answered on the phone: this chat's notification here is no longer needed.
                     if(PairedProtocol.outgoing(message)&&!envelope.optBoolean("old",true))dismiss(message.optString("conversationID"));
-                    if(PairedProtocol.notifyLive(envelope.optBoolean("old",true),existed,message))notifyMessage(message);
+                    if(PairedProtocol.notifyLive(envelope.optBoolean("old",true),existed,message)){autoCopy(message);notifyMessage(message);}
                     changed(kind);
                 }
                 case "TYPING" -> {
@@ -220,7 +220,7 @@ public final class PairedService extends Service {
             for(String id:missed.subList(0,Math.min(5,missed.size()))){JSONObject chat=store.chat(id);long version=store.snapshot();
                 JSONArray ms=new JSONObject(source.messages(id,"")).optJSONArray("messages");if(ms==null)continue;
                 for(int j=0;j<ms.length();j++){JSONObject m=ms.getJSONObject(j);boolean existed=store.message(m,version,false);
-                    if(!existed&&!PairedProtocol.outgoing(m,chat)&&PairedProtocol.time(m)>recent&&chat!=null&&chat.optBoolean("unread")&&!settings.muted(id))main.post(()->postConversation(id,m,false,false));}}
+                    if(!existed&&!PairedProtocol.outgoing(m,chat)&&PairedProtocol.time(m)>recent&&chat!=null&&chat.optBoolean("unread")&&!settings.muted(id)){autoCopy(m);main.post(()->postConversation(id,m,false,false));}}}
             try{source.reactivate();}catch(Exception ignored){}
             changed("MESSAGE");
         }
@@ -305,6 +305,15 @@ public final class PairedService extends Service {
         return new Notification.Builder(this,CONNECTION).setSmallIcon(R.drawable.ic_notification).setContentTitle("Message Center connection")
             .setContentText(status).setContentIntent(openIntent("")).setOngoing(true).setOnlyAlertOnce(true).setShowWhen(false).build();
     }
+    /** Message IDs whose code was copied automatically, so each code is copied once. */
+    private final java.util.Set<String> autoCopied=java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());private volatile String copiedCode="";
+    static boolean autoCopyCodes(Context context){return context.getSharedPreferences("paired",MODE_PRIVATE).getBoolean("auto_copy_codes",true);}
+    /** A verification code in a new incoming message goes straight to the clipboard (Settings → Auto-copy verification codes). */
+    private void autoCopy(JSONObject m){
+        if(!autoCopyCodes(this)||PairedProtocol.outgoing(m)||System.currentTimeMillis()-PairedProtocol.time(m)>10*60_000)return;
+        String code=ChatText.oneTimeCode(PairedProtocol.text(m));if(code.isEmpty()||new ChatSettings(this).muted(m.optString("conversationID")))return;
+        if(!autoCopied.add(m.optString("messageID")))return;
+        copiedCode=code;main.post(()->{try{NotificationActions.copyCode(this,code);}catch(Exception e){copiedCode="";}});}
     /** A conversation-style notification: who sent it, the chat (for groups), the text, and their photo when one is cached. */
     private void notifyMessage(JSONObject m) {String id=m.optString("conversationID");if(new ChatSettings(this).muted(id))return;postConversation(id,m,false,false);}
     /**
@@ -335,7 +344,7 @@ public final class PairedService extends Service {
         builder.addAction(replyAction(id)).addAction(readAction(id));
         // A login or verification code in the newest message gets its own Copy button.
         String code="";for(JSONObject r:recent)if(!PairedProtocol.outgoing(r,chat)){String found=ChatText.oneTimeCode(PairedProtocol.text(r));if(!found.isEmpty())code=found;}
-        if(!code.isEmpty())builder.addAction(copyAction(id,code));
+        if(!code.isEmpty()){builder.addAction(copyAction(id,code));if(code.equals(copiedCode))builder.setSubText("Code "+code+" copied");}
         // Opening a bubble yourself should not ring. A lone notification in its own group with
         // GROUP_ALERT_SUMMARY never alerts (this is what AndroidX's setSilent does).
         if(quiet)builder.setGroup("quiet-"+id).setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY).setOnlyAlertOnce(true);

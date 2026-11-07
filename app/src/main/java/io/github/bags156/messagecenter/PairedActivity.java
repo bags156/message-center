@@ -890,9 +890,7 @@ public class PairedActivity extends Activity {
             String p=problem;ui.post(()->{outgoingChat=chatId;outgoing.addAll(added);renderAttachments();if(p!=null)toast(p);});});
         return null;};
 
-    private void copyCode(String code){android.content.ClipData clip=android.content.ClipData.newPlainText("Code",code);
-        android.os.PersistableBundle extras=new android.os.PersistableBundle();extras.putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE,true);clip.getDescription().setExtras(extras);
-        getSystemService(ClipboardManager.class).setPrimaryClip(clip);toast("Code copied");}
+    private void copyCode(String code){NotificationActions.copyCode(this,code);toast("Code copied");}
     /** Under a message with a login or verification code: one tap copies it. */
     private View codeChip(String code,boolean outgoing,ChatTheme theme){LinearLayout r=row();r.setGravity(outgoing?Gravity.END:Gravity.START);r.setPadding(dp(14),dp(4),dp(14),0);
         TextView t=text("Copy code  "+code,14,theme.accent(dark),true);t.setPadding(dp(14),dp(6),dp(14),dp(6));GradientDrawable g=shape(Color.TRANSPARENT,16);g.setStroke(dp(1),theme.accent(dark));t.setBackground(g);
@@ -1204,6 +1202,8 @@ public class PairedActivity extends Activity {
         note(content,"Read receipts\n\nOff for every chat unless you turn them on for that chat (long-press it in the list, or tap its name at the top of the chat). When on, opening the chat here marks it read on your phone and Google Messages sends a receipt. When off, the chat is not marked read, so it stays unread in Google Messages.\n\nGoogle Messages' own \"Send read receipts\" setting: "+(phone==1?"On":phone==0?"Off: no receipts are sent for any chat":"not reported yet")+".\n\nPins and chat themes are kept in this app. Google's protocol has no pin action, so pinning here does not change Google Messages.");
         boolean typingOn=getSharedPreferences("paired",MODE_PRIVATE).getBoolean("send_typing",true);
         content.addView(button(typingOn?"Typing indicators: on (others see when you type)":"Typing indicators: off",false,()->{getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("send_typing",!typingOn).apply();settings();}));gap(content,8);
+        boolean copyOn=PairedService.autoCopyCodes(this);
+        content.addView(button(copyOn?"Auto-copy verification codes: on":"Auto-copy verification codes: off",false,()->{getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("auto_copy_codes",!copyOn).apply();settings();}));gap(content,8);
         content.addView(button("Bubble settings",false,()->startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()))));gap(content,8);
         content.addView(button("Reconnect",true,()->{PairedService.disconnect(this,false);new android.os.Handler().postDelayed(()->{PairedService.start(this);settings();},300);}));gap(content,8);
         content.addView(button("Sign in / pair again",false,this::signIn));gap(content,8);

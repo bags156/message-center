@@ -24,14 +24,17 @@ public final class NotificationActions extends BroadcastReceiver {
         } else if (COPY.equals(intent.getAction())) {
             String code = intent.getStringExtra("code");
             if (code == null || code.isEmpty()) return;
-            android.content.ClipData clip = android.content.ClipData.newPlainText("Code", code);
-            // Marked sensitive so Android doesn't show the code in its clipboard preview.
-            android.os.PersistableBundle extras = new android.os.PersistableBundle(); extras.putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true);
-            clip.getDescription().setExtras(extras);
-            context.getSystemService(android.content.ClipboardManager.class).setPrimaryClip(clip);
+            copyCode(context, code);
         } else if (READ.equals(intent.getAction())) {
             PendingResult pending = goAsync();
             PairedService.markReadFromNotification(context.getApplicationContext(), chat, pending::finish);
         }
+    }
+    /** Puts a code on the clipboard, marked sensitive so Android doesn't show it in its clipboard preview. */
+    static void copyCode(Context context, String code) {
+        android.content.ClipData clip = android.content.ClipData.newPlainText("Code", code);
+        android.os.PersistableBundle extras = new android.os.PersistableBundle(); extras.putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true);
+        clip.getDescription().setExtras(extras);
+        context.getSystemService(android.content.ClipboardManager.class).setPrimaryClip(clip);
     }
 }
