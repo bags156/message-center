@@ -22,6 +22,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Conversation bubbles: Android requires the bubble's activity to be embeddable and resizable. -->
+        <activity android:name=".BubbleActivity" android:exported="false" android:allowEmbedded="true" android:resizeableActivity="true"
+            android:documentLaunchMode="always" android:windowSoftInputMode="adjustResize" android:label="Message Center" />
         <service android:name=".PairedService" android:exported="false" android:foregroundServiceType="remoteMessaging" />
         <receiver android:name=".PairedBootReceiver" android:exported="false">
             <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /><action android:name="android.intent.action.MY_PACKAGE_REPLACED" /></intent-filter>

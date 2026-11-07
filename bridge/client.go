@@ -72,6 +72,8 @@ func (c *Client) handle(evt any) {
 			c.emitProto("CONVERSATION", conv)
 		}
 		c.emit("READY", "{}")
+	case *gmproto.TypingData:
+		c.emit("TYPING", typingPayload(e))
 	case *gmproto.Settings:
 		if payload, ok := settingsPayload(e); ok {
 			c.emit("SETTINGS", payload)
@@ -292,7 +294,10 @@ func (c *Client) CreateChat(number string) (string, error) {
 	}
 	return marshal(resp.GetConversation())
 }
-func (c *Client) React(chatJSON, messageID, emoji string, remove bool) error {
+
+// React adds, removes, or switches this user's reaction. Google keeps one
+// reaction per person per message, so changing it uses "switch".
+func (c *Client) React(chatJSON, messageID, emoji, action string) error {
 	conv, e := parseChat(chatJSON)
 	if e != nil {
 		return e
@@ -301,13 +306,13 @@ func (c *Client) React(chatJSON, messageID, emoji string, remove bool) error {
 	if e != nil {
 		return e
 	}
-	action := gmproto.SendReactionRequest_ADD
-	if remove {
-		action = gmproto.SendReactionRequest_REMOVE
+	kind, e := reactionAction(action)
+	if e != nil {
+		return e
 	}
 	ctx, cancel := c.requestContext()
 	defer cancel()
-	r, e := c.gm.SendReaction(ctx, &gmproto.SendReactionRequest{MessageID: messageID, ReactionData: gmproto.MakeReactionData(emoji), Action: action, SIMPayload: sim})
+	r, e := c.gm.SendReaction(ctx, &gmproto.SendReactionRequest{MessageID: messageID, ReactionData: gmproto.MakeReactionData(emoji), Action: kind, SIMPayload: sim})
 	if e != nil {
 		return errors.New("Reaction outcome unknown. Refresh before trying again.")
 	}
@@ -375,4 +380,46 @@ func thumbnailJSON(r *gmproto.GetThumbnailResponse) string {
 	}
 	b, _ := json.Marshal(out)
 	return string(b)
+}
+
+// typingPayload reports who is typing by phone number; Google identifies the
+// typist by number rather than participant ID.
+func typingPayload(t *gmproto.TypingData) string {
+	b, _ := json.Marshal(map[string]any{
+		"conversationID": t.GetConversationID(),
+		"number":         t.GetUser().GetNumber(),
+		"typing":         t.GetType() == gmproto.TypingTypes_STARTED_TYPING,
+	})
+	return string(b)
+}
+
+// SetTyping tells the conversation this user is typing. Google offers no
+// "stopped" message from paired clients; the indicator times out on its own.
+func (c *Client) SetTyping(chatJSON string) error {
+	conv, e := parseChat(chatJSON)
+	if e != nil {
+		return e
+	}
+	sim, e := route(conv)
+	if e != nil {
+		return e
+	}
+	ctx, cancel := c.requestContext()
+	defer cancel()
+	if e := c.gm.SetTyping(ctx, conv.GetConversationID(), sim); e != nil {
+		return errors.New("Could not send typing status.")
+	}
+	return nil
+}
+
+func reactionAction(action string) (gmproto.SendReactionRequest_Action, error) {
+	switch action {
+	case "add":
+		return gmproto.SendReactionRequest_ADD, nil
+	case "remove":
+		return gmproto.SendReactionRequest_REMOVE, nil
+	case "switch":
+		return gmproto.SendReactionRequest_SWITCH, nil
+	}
+	return 0, errors.New("Unknown reaction action.")
 }

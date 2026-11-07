@@ -69,3 +69,22 @@ func TestSplitIDsDropsBlanks(t *testing.T) {
 		t.Fatalf("unexpected ids: %v", got)
 	}
 }
+func TestTypingPayloadCarriesNumberAndState(t *testing.T) {
+	raw := typingPayload(&gmproto.TypingData{ConversationID: "c1", User: &gmproto.User{Number: "+15550102000"}, Type: gmproto.TypingTypes_STARTED_TYPING})
+	if raw != `{"conversationID":"c1","number":"+15550102000","typing":true}` {
+		t.Fatalf("unexpected typing payload: %s", raw)
+	}
+	if raw := typingPayload(&gmproto.TypingData{ConversationID: "c1"}); raw != `{"conversationID":"c1","number":"","typing":false}` {
+		t.Fatalf("unexpected stopped payload: %s", raw)
+	}
+}
+func TestReactionActionsMapToGoogle(t *testing.T) {
+	for name, want := range map[string]gmproto.SendReactionRequest_Action{"add": gmproto.SendReactionRequest_ADD, "remove": gmproto.SendReactionRequest_REMOVE, "switch": gmproto.SendReactionRequest_SWITCH} {
+		if got, err := reactionAction(name); err != nil || got != want {
+			t.Fatalf("%s mapped to %v %v", name, got, err)
+		}
+	}
+	if _, err := reactionAction("replace"); err == nil {
+		t.Fatal("unknown action accepted")
+	}
+}

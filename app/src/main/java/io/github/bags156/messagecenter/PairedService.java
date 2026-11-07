@@ -5,10 +5,19 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.app.Person;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.drawable.Icon;
+import android.net.Uri;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.pm.ShortcutInfo;
+import android.content.pm.ShortcutManager;
+import android.provider.Settings;
+import android.service.notification.StatusBarNotification;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.Handler;
@@ -16,6 +25,11 @@ import android.os.IBinder;
 import android.os.Looper;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -36,6 +50,11 @@ public final class PairedService extends Service {
     private volatile boolean ready;
     private volatile String status="Disconnected",emoji="";
     private PairedStore store; private SessionVault vault;
+    /** conversationID -> (phone number -> time the typing indicator expires). */
+    private static final Map<String,Map<String,Long>> typing=new ConcurrentHashMap<>();
+    private static final long TYPING_TIMEOUT_MS=15_000;
+    /** Recent incoming messages per chat, shown together in that chat's notification until it is opened. */
+    private final Map<String,List<JSONObject>> notified=new HashMap<>();
     interface Operation {String run(Client client) throws Exception;}
     interface Result {void done(String value,String error);}
 
@@ -116,7 +135,14 @@ public final class PairedService extends Service {
                 case "MESSAGE" -> {
                     JSONObject envelope=new JSONObject(payload),message=envelope.getJSONObject("message");
                     boolean existed=store.message(message,0,true);touch(message);
+                    if(!PairedProtocol.outgoing(message) && typing.remove(message.optString("conversationID"))!=null)changed("TYPING");
                     if(PairedProtocol.notifyLive(envelope.optBoolean("old",true),existed,message))notifyMessage(message);
+                    changed(kind);
+                }
+                case "TYPING" -> {
+                    JSONObject t=new JSONObject(payload);String conv=t.optString("conversationID"),number=t.optString("number");if(conv.isEmpty())return;
+                    Map<String,Long> people=typing.computeIfAbsent(conv,k->new ConcurrentHashMap<>());
+                    if(t.optBoolean("typing"))people.put(number,System.currentTimeMillis()+TYPING_TIMEOUT_MS);else if(number.isEmpty())people.clear();else people.remove(number);
                     changed(kind);
                 }
                 case "AUTH_REQUIRED" -> {ready=false;getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("enabled",false).apply();update("Google session expired. Sign in again.");}
@@ -173,23 +199,114 @@ public final class PairedService extends Service {
     static void markRead(String conversationID,String messageID,Result done) {
         execute(c->{c.markRead(conversationID,messageID);return "";},done);
     }
+    /** Phone numbers currently typing in this conversation; expired entries are dropped. */
+    static List<String> typing(String conversationID) {
+        List<String> out=new ArrayList<>();Map<String,Long> people=typing.get(conversationID);if(people==null)return out;long now=System.currentTimeMillis();
+        for(Map.Entry<String,Long> e:people.entrySet()){if(e.getValue()<now)people.remove(e.getKey());else out.add(e.getKey());}
+        return out;
+    }
+    static void sendTyping(String chatJSON) {PairedService s=current;if(s==null||!s.ready)return;execute(c->{c.setTyping(chatJSON);return "";},(v,e)->{});}
+    /** Opening a chat clears its notification and the messages collected in it. */
+    static void clearNotification(Context context,String id) {
+        PairedService s=current;if(s!=null)synchronized(s.notified){s.notified.remove(id);}
+        NotificationManager nm=context.getSystemService(NotificationManager.class);
+        // Cancelling a bubbled chat's notification would also close its bubble.
+        for(StatusBarNotification n:nm.getActiveNotifications())if(("chat:"+id).equals(n.getTag())&&(n.getNotification().flags&Notification.FLAG_BUBBLE)!=0)return;
+        nm.cancel("chat:"+id,1);
+    }
+    /**
+     * Floats this conversation as a bubble. Returns "" on success, or what to tell the
+     * person when Android's bubble settings are off (and opens those settings).
+     */
+    static String showBubble(Context context,String id) {
+        NotificationManager nm=context.getSystemService(NotificationManager.class);
+        if(context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return "Allow Message Center notifications first; bubbles are a kind of notification.";
+        if(!nm.areBubblesEnabled()||nm.getBubblePreference()==NotificationManager.BUBBLE_PREFERENCE_NONE){
+            try{context.startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,context.getPackageName()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}catch(Exception ignored){}
+            return "Turn on bubbles for Message Center (and in your phone's notification settings), then try again.";}
+        PairedService s=current;if(s==null)return "Connect to Google Messages first, then try again.";
+        s.postConversation(id,null,true);return "";
+    }
+    /**
+     * Each chat gets its own PendingIntent (the chat ID is in the intent data, so
+     * Android never merges two chats' intents), and it opens that conversation.
+     */
     private PendingIntent openIntent(String id) {
-        Intent intent=new Intent(this,PairedActivity.class).setFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TOP).putExtra("chat",id);
-        return PendingIntent.getActivity(this,id.hashCode(),intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
+        Intent intent=new Intent(this,PairedActivity.class).setAction(PairedActivity.OPEN_CHAT).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP|Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        if(!id.isEmpty())intent.setData(chatUri(id)).putExtra("chat",id);
+        return PendingIntent.getActivity(this,id.isEmpty()?0:1,intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
     }
     private Notification connectionNotification() {
         return new Notification.Builder(this,CONNECTION).setSmallIcon(R.drawable.ic_app).setContentTitle("Message Center connection")
             .setContentText(status).setContentIntent(openIntent("")).setOngoing(true).setOnlyAlertOnce(true).setShowWhen(false).build();
     }
-    private void notifyMessage(JSONObject m) {
+    /** A conversation-style notification: who sent it, the chat (for groups), the text, and their photo when one is cached. */
+    private void notifyMessage(JSONObject m) {postConversation(m.optString("conversationID"),m,false);}
+    /**
+     * Posts (or refreshes) a chat's notification. A new message is added to it; with
+     * bubbleNow the chat opens as an expanded bubble without alerting.
+     */
+    private void postConversation(String id,JSONObject m,boolean bubbleNow) {
         if(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return;
-        String id=m.optString("conversationID");JSONObject chat=store.chat(id);String title=chat==null?"New message":PairedProtocol.title(chat);
-        String sender=PairedProtocol.person(chat,m.optString("participantID"),m.optJSONObject("senderParticipant"));
-        String line=PairedProtocol.other(chat)!=null ? PairedProtocol.body(m):sender+": "+PairedProtocol.body(m);
-        Notification notification=new Notification.Builder(this,MESSAGES).setSmallIcon(R.drawable.ic_app).setContentTitle(title)
-            .setContentText(line).setStyle(new Notification.BigTextStyle().bigText(line))
-            .setCategory(Notification.CATEGORY_MESSAGE).setVisibility(Notification.VISIBILITY_PRIVATE).setContentIntent(openIntent(id)).setAutoCancel(true).setWhen(PairedProtocol.time(m)).build();
-        getSystemService(NotificationManager.class).notify("chat:"+id,1,notification);
+        JSONObject chat=store.chat(id);
+        String title=chat==null?"New message":PairedProtocol.title(chat);boolean group=chat!=null&&PairedProtocol.other(chat)==null;
+        List<JSONObject> recent;
+        synchronized(notified){List<JSONObject> list=notified.computeIfAbsent(id,k->new ArrayList<>());if(m!=null)list.add(m);while(list.size()>6)list.remove(0);recent=new ArrayList<>(list);}
+        if(recent.isEmpty()){List<JSONObject> saved=store.messages(id,3);for(JSONObject r:saved)if(!PairedProtocol.body(r).isEmpty())recent.add(r);}
+        Notification.MessagingStyle style=new Notification.MessagingStyle(new Person.Builder().setName("You").build());
+        if(group){style.setConversationTitle(title);style.setGroupConversation(true);}
+        Bitmap lastPhoto=null;String lastText="";
+        for(JSONObject r:recent){boolean mine=PairedProtocol.outgoing(r,chat);
+            String pid=r.optString("participantID"),sender=PairedProtocol.person(chat,pid,r.optJSONObject("senderParticipant"));
+            if(mine){style.addMessage(new Notification.MessagingStyle.Message(notificationText("You",r),PairedProtocol.time(r),(Person)null));lastText="You: "+notificationText("You",r);continue;}
+            String text=notificationText(sender,r);Bitmap photo=photo(chat,pid,sender);
+            Person.Builder who=new Person.Builder().setName(sender).setKey(pid.isEmpty()?sender:pid);if(photo!=null)who.setIcon(Icon.createWithBitmap(photo));
+            style.addMessage(new Notification.MessagingStyle.Message(text,PairedProtocol.time(r),who.build()));lastPhoto=photo;lastText=group?sender+": "+text:text;
+        }
+        Notification.Builder builder=new Notification.Builder(this,MESSAGES).setSmallIcon(R.drawable.ic_app).setStyle(style).setContentTitle(title).setContentText(lastText)
+            .setCategory(Notification.CATEGORY_MESSAGE).setVisibility(Notification.VISIBILITY_PRIVATE).setContentIntent(openIntent(id)).setAutoCancel(true)
+            .setWhen(recent.isEmpty()?System.currentTimeMillis():PairedProtocol.time(recent.get(recent.size()-1))).setShowWhen(true).setNumber(m==null?0:recent.size());
+        if(!group&&lastPhoto!=null)builder.setLargeIcon(lastPhoto);
+        if(bubbleNow)builder.setSilent(true);
+        // A long-lived shortcut makes this a "conversation" notification, which Android requires for bubbles.
+        Bitmap icon=chatIcon(chat,title);String shortcut=publishShortcut(id,title,icon);
+        if(shortcut!=null){builder.setShortcutId(shortcut);builder.setBubbleMetadata(bubble(id,icon,bubbleNow));}
+        getSystemService(NotificationManager.class).notify("chat:"+id,1,builder.build());
+    }
+    private Bitmap chatIcon(JSONObject chat,String title) {
+        JSONObject other=PairedProtocol.other(chat);String pid=PairedProtocol.participantID(other);Bitmap photo=null;
+        if(!pid.isEmpty()){java.io.File f=Avatars.file(this,pid);if(f.isFile())photo=BitmapFactory.decodeFile(f.getPath());}
+        String hex=other!=null?other.optString("avatarHexColor",""):chat==null?"":chat.optString("avatarHexColor","");
+        return Avatars.adaptive(photo,PairedProtocol.initial(title),PairedProtocol.color(hex,Avatars.fallbackColor(title)),216);
+    }
+    private String publishShortcut(String id,String title,Bitmap icon) {
+        try {
+            Intent open=new Intent(this,PairedActivity.class).setAction(PairedActivity.OPEN_CHAT).setData(chatUri(id)).putExtra("chat",id);
+            ShortcutInfo info=new ShortcutInfo.Builder(this,"chat-"+id).setShortLabel(title).setLongLived(true).setIntent(open)
+                .setIcon(Icon.createWithAdaptiveBitmap(icon)).setPerson(new Person.Builder().setName(title).setKey(id).build())
+                .setCategories(java.util.Collections.singleton(ShortcutInfo.SHORTCUT_CATEGORY_CONVERSATION)).build();
+            getSystemService(ShortcutManager.class).pushDynamicShortcut(info);return info.getId();
+        } catch(Exception e) {return null;}
+    }
+    /** The bubble opens the same chat screen in BubbleActivity, which Android can embed in a floating window. */
+    private Notification.BubbleMetadata bubble(String id,Bitmap icon,boolean expand) {
+        Intent intent=new Intent(this,BubbleActivity.class).setAction(Intent.ACTION_VIEW).setData(chatUri(id)).putExtra("chat",id);
+        // Android requires a mutable PendingIntent for bubbles; the intent is explicit to this app.
+        PendingIntent pending=PendingIntent.getActivity(this,2,intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_MUTABLE);
+        return new Notification.BubbleMetadata.Builder(pending,Icon.createWithAdaptiveBitmap(icon)).setDesiredHeight(640).setAutoExpandBubble(expand).setSuppressNotification(expand).build();
+    }
+    private static Uri chatUri(String id) {return new Uri.Builder().scheme("messagecenter").authority("chat").appendPath(id).build();}
+    private static String notificationText(String sender,JSONObject m) {
+        String body=PairedProtocol.body(m),reply=ChatText.replyFallbackBody(body);
+        if(reply!=null)return "↩ "+reply;
+        String line=ChatText.reactionLine("",body);if(line!=null)return line.trim();
+        return m.optJSONObject("replyMessage")!=null&&!PairedProtocol.string(m.optJSONObject("replyMessage"),"messageID").isEmpty()?"↩ "+body:body;
+    }
+    /** The sender's cached contact photo, or a colored initial like the app shows. */
+    private Bitmap photo(JSONObject chat,String participantID,String name) {
+        if(!participantID.isEmpty()){java.io.File f=Avatars.file(this,participantID);if(f.isFile()){Bitmap b=BitmapFactory.decodeFile(f.getPath());if(b!=null)return Avatars.circle(b,128);}}
+        JSONObject p=PairedProtocol.participant(chat,participantID);
+        return Avatars.initial(PairedProtocol.initial(name),PairedProtocol.color(p==null?"":p.optString("avatarHexColor"),Avatars.fallbackColor(name)),128);
     }
     private void update(String value) {status=value;if(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED)getSystemService(NotificationManager.class).notify(FOREGROUND_ID,connectionNotification());changed("STATUS");}
     private void changed(String kind) {sendBroadcast(new Intent(CHANGED).setPackage(getPackageName()).putExtra("kind",kind));}

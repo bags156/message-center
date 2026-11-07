@@ -28,8 +28,8 @@ final class ChatSettings {
     ChatTheme theme(String id) { return ChatTheme.of(prefs.getString("theme:" + id, "default")); }
     void setTheme(String id, String key) { prefs.edit().putString("theme:" + id, key).apply(); }
 
-    /** Whether opening this chat marks it read on the phone (which sends RCS read receipts). On by default. */
-    boolean receipts(String id) { return prefs.getBoolean("receipts:" + id, true); }
+    /** Whether opening this chat marks it read on the phone (which sends RCS read receipts). Off unless turned on for this chat. */
+    boolean receipts(String id) { return prefs.getBoolean("receipts:" + id, false); }
     void setReceipts(String id, boolean on) { prefs.edit().putBoolean("receipts:" + id, on).apply(); }
 
     long seen(String id) { return prefs.getLong("seen:" + id, 0); }

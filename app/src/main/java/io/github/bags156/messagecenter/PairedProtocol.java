@@ -121,22 +121,59 @@ final class PairedProtocol {
         }
         return names.isEmpty() ? "Conversation "+string(chat,"conversationID"):String.join(", ",names);
     }
-    static Map<String,List<String>> reactions(JSONObject m,JSONObject chat) {
-        Map<String,List<String>> result=new LinkedHashMap<>(); JSONArray entries=m.optJSONArray("reactions");
+    /** Emoji for one reaction: Google's unicode when present, otherwise its reaction type. */
+    static String emoji(JSONObject data) {
+        String emoji=string(data,"unicode"); if(!emoji.isEmpty()) return emoji;
+        return switch(string(data,"type")) {
+            case "LOVE" -> "😍";case "RED_HEART" -> "❤️"; case "LIKE" -> "👍"; case "DISLIKE" -> "👎";
+            case "LAUGH" -> "😂";case "SURPRISED" -> "😮";case "SAD" -> "😥";case "CRYING_FACE" -> "😢";
+            case "ANGRY" -> "😠";case "POUTING_FACE" -> "😡";case "QUESTIONING" -> "🤔";default -> "";
+        };
+    }
+    /** Every reaction on a message as {emoji, participantID}. One person can leave several emoji, and many people the same one. */
+    static List<String[]> reactors(JSONObject m) {
+        List<String[]> out=new ArrayList<>(); JSONArray entries=m.optJSONArray("reactions");
         if(entries!=null) for(int i=0;i<entries.length();i++) {
-            JSONObject e=entries.optJSONObject(i);if(e==null) continue;
-            JSONObject data=e.optJSONObject("data");String emoji=string(data,"unicode");
-            if(emoji.isEmpty()) emoji=switch(string(data,"type")) {
-                case "LOVE" -> "😍";case "RED_HEART" -> "❤️"; case "LIKE" -> "👍"; case "DISLIKE" -> "👎";
-                case "LAUGH" -> "😂";case "SURPRISED" -> "😮";case "SAD" -> "😥";case "CRYING_FACE" -> "😢";
-                case "ANGRY" -> "😠";case "POUTING_FACE" -> "😡";case "QUESTIONING" -> "🤔";default -> "";
-            };
-            if(emoji.isEmpty()) continue;
-            JSONArray actors=e.optJSONArray("participantIDs"); if(actors==null) continue;
-            List<String> names=result.computeIfAbsent(emoji,k->new ArrayList<>());
-            for(int j=0;j<actors.length();j++) names.add(person(chat,actors.optString(j),null));
+            JSONObject e=entries.optJSONObject(i); if(e==null) continue;
+            String emoji=emoji(e.optJSONObject("data")); JSONArray actors=e.optJSONArray("participantIDs");
+            if(emoji.isEmpty() || actors==null) continue;
+            for(int j=0;j<actors.length();j++) { String id=actors.optString(j); if(!id.isEmpty()) out.add(new String[]{emoji,id}); }
         }
+        return out;
+    }
+    static Map<String,List<String>> reactions(JSONObject m,JSONObject chat) {
+        Map<String,List<String>> result=new LinkedHashMap<>();
+        for(String[] r:reactors(m)) result.computeIfAbsent(r[0],k->new ArrayList<>()).add(person(chat,r[1],null));
         return result;
+    }
+    static JSONObject participant(JSONObject chat,String id) {
+        JSONArray ps=chat==null ? null:chat.optJSONArray("participants");
+        if(ps!=null && !id.isEmpty()) for(int i=0;i<ps.length();i++) {
+            JSONObject p=ps.optJSONObject(i); if(p!=null && id.equals(participantID(p))) return p;
+        }
+        return null;
+    }
+    static boolean isMe(JSONObject chat,String id) { JSONObject p=participant(chat,id); return p!=null && p.optBoolean("isMe"); }
+    /** People in the conversation other than you, as Google lists them. */
+    static List<JSONObject> members(JSONObject chat) {
+        List<JSONObject> out=new ArrayList<>(); JSONArray ps=chat==null ? null:chat.optJSONArray("participants");
+        if(ps!=null) for(int i=0;i<ps.length();i++) {
+            JSONObject p=ps.optJSONObject(i); if(p!=null && !p.optBoolean("isMe") && p.optBoolean("isVisible",true)) out.add(p);
+        }
+        return out;
+    }
+    /** Who is typing, by the phone numbers Google reports. Your own number is ignored. */
+    static List<String> typingNames(JSONObject chat,List<String> numbers) {
+        List<String> names=new ArrayList<>(); JSONArray ps=chat==null ? null:chat.optJSONArray("participants");
+        for(String n:numbers) {
+            JSONObject found=null;
+            if(ps!=null) for(int i=0;i<ps.length();i++) { JSONObject p=ps.optJSONObject(i); if(p!=null && ChatText.sameNumber(n,number(p))) { found=p; break; } }
+            if(found!=null && found.optBoolean("isMe")) continue;
+            if(found==null) found=other(chat);
+            String name=found==null ? "Someone":ChatText.firstName(name(found));
+            if(!names.contains(name)) names.add(name);
+        }
+        return names;
     }
     static String cursor(JSONObject response) {
         JSONObject c=response.optJSONObject("cursor");
