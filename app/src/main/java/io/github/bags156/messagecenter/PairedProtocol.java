@@ -69,9 +69,9 @@ final class PairedProtocol {
             JSONObject e=entries.optJSONObject(i);if(e==null) continue;
             JSONObject data=e.optJSONObject("data");String emoji=string(data,"unicode");
             if(emoji.isEmpty()) emoji=switch(string(data,"type")) {
-                case "LOVE","RED_HEART" -> "❤️"; case "LIKE" -> "👍"; case "DISLIKE" -> "👎";
-                case "LAUGH" -> "😂";case "SURPRISED" -> "😮";case "SAD","CRYING_FACE" -> "😢";
-                case "ANGRY","POUTING_FACE" -> "😡";case "QUESTIONING" -> "❓";default -> "";
+                case "LOVE" -> "😍";case "RED_HEART" -> "❤️"; case "LIKE" -> "👍"; case "DISLIKE" -> "👎";
+                case "LAUGH" -> "😂";case "SURPRISED" -> "😮";case "SAD" -> "😥";case "CRYING_FACE" -> "😢";
+                case "ANGRY" -> "😠";case "POUTING_FACE" -> "😡";case "QUESTIONING" -> "🤔";default -> "";
             };
             if(emoji.isEmpty()) continue;
             JSONArray actors=e.optJSONArray("participantIDs"); if(actors==null) continue;

@@ -12,7 +12,8 @@ public class PairedProtocolTest {
         m.put("reactions",new org.json.JSONArray());assertTrue(PairedProtocol.reactions(m,chat).isEmpty());
     }
     @Test public void enumReactionHasEmojiWhenUnicodeMissing()throws Exception {
-        assertTrue(PairedProtocol.reactions(json("{reactions:[{data:{type:'LOVE'},participantIDs:['p9']}]}") ,new JSONObject()).containsKey("❤️"));
+        assertTrue(PairedProtocol.reactions(json("{reactions:[{data:{type:'RED_HEART'},participantIDs:['p9']}]}") ,new JSONObject()).containsKey("❤️"));
+        assertTrue(PairedProtocol.reactions(json("{reactions:[{data:{type:'LOVE'},participantIDs:['p9']}]}") ,new JSONObject()).containsKey("😍"));
     }
     @Test public void missingActorIsNotInvented()throws Exception {
         assertEquals("Participant p9",PairedProtocol.person(new JSONObject(),"p9",null));
