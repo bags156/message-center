@@ -80,6 +80,9 @@ func (c *Client) handle(evt any) {
 		if payload, ok := settingsPayload(e); ok {
 			c.emit("SETTINGS", payload)
 		}
+	case *events.NoDataReceived:
+		// The library noticed the live connection has gone quiet: check for missed messages now.
+		c.emit("STALE", "{}")
 	case *events.BrowserActive:
 		// Google pushes live updates to one paired session; another one just took over.
 		c.emit("INACTIVE", "{}")
@@ -188,6 +191,29 @@ func (c *Client) Chats(cursor string, folder int) (string, error) {
 	}
 	return marshal(r)
 }
+
+// Latest returns only the newest inbox chats: a small, cheap request used to
+// check whether any live updates were missed.
+func (c *Client) Latest(count int) (string, error) {
+	ctx, cancel := c.requestContext()
+	defer cancel()
+	r, e := c.gm.ListConversations(ctx, &gmproto.ListConversationsRequest{Count: latestCount(count), Folder: gmproto.ListConversationsRequest_INBOX})
+	if e != nil {
+		return "", errors.New("Could not check Google for new messages.")
+	}
+	return marshal(r)
+}
+
+func latestCount(count int) int64 {
+	if count < 1 {
+		return 1
+	}
+	if count > 50 {
+		return 50
+	}
+	return int64(count)
+}
+
 func (c *Client) Messages(id, cursor string) (string, error) {
 	p, e := parseCursor(cursor)
 	if e != nil {

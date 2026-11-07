@@ -53,7 +53,10 @@ public final class PairedService extends Service {
     private volatile boolean ready;
     private volatile String status="Disconnected",emoji="";
     private PairedStore store; private SessionVault vault; private Outbox outbox; private boolean flushing,syncing,inactive;
-    private long lastSync;private static final long SYNC_EVERY_MS=5*60_000;private final Runnable syncTick=()->requestSync(false);
+    private long lastSync;private final Runnable syncTick=()->requestSync(false);
+    /** Backstop checks: every minute while you're using the phone, every 5 minutes with the screen off. */
+    private static final long SYNC_SCREEN_ON_MS=60_000,SYNC_SCREEN_OFF_MS=5*60_000,SYNC_MIN_GAP_MS=10_000;
+    private android.content.BroadcastReceiver screenReceiver;private android.net.ConnectivityManager.NetworkCallback networkCallback;
     static final String KEY_REPLY="reply";
     /** Shortcut category matched by res/xml/shortcuts.xml, so recent chats appear in Android's share sheet. */
     static final String SHARE_CATEGORY="io.github.bags156.messagecenter.SHARE_TARGET";
@@ -89,7 +92,7 @@ public final class PairedService extends Service {
         context.stopService(new Intent(context,PairedService.class));
     }
     @Override public void onCreate() {
-        super.onCreate();current=this;store=new PairedStore(this);vault=new SessionVault(this);outbox=new Outbox(this);outbox.recover();
+        super.onCreate();current=this;store=new PairedStore(this);vault=new SessionVault(this);outbox=new Outbox(this);outbox.recover();watchWakeAndNetwork();
         NotificationManager manager=getSystemService(NotificationManager.class);
         manager.createNotificationChannel(new NotificationChannel(CONNECTION,"Background connection",NotificationManager.IMPORTANCE_LOW));
         NotificationChannel messages=new NotificationChannel(MESSAGES,"Incoming messages",NotificationManager.IMPORTANCE_HIGH);
@@ -135,7 +138,7 @@ public final class PairedService extends Service {
                 case "PAIR_EMOJI" -> {emoji=new JSONObject(payload).optString("emoji");update("Approve the matching emoji in Google Messages");}
                 case "READY" -> {
                     ready=true;emoji="";update("Connected to Google Messages");
-                    saveSession(token);main.post(this::flushOutbox);main.removeCallbacks(syncTick);main.postDelayed(syncTick,SYNC_EVERY_MS);
+                    saveSession(token);main.post(this::flushOutbox);scheduleSync();
                     network.execute(()->{if(generation.get()==token)try{chats(client,"",1);}catch(Exception e){update("Connected • tap Refresh to load conversations");}});
                 }
                 case "SAVE_SESSION" -> saveSession(token);
@@ -160,6 +163,7 @@ public final class PairedService extends Service {
                 case "DISCONNECTED" -> {ready=false;update("Connection ended. Tap Reconnect in Settings.");}
                 case "RECONNECTING" -> {ready=false;update("Waiting for Google Messages • check network and battery settings");}
                 case "RECOVERED" -> {ready=true;update("Connected to Google Messages");main.post(this::flushOutbox);main.post(()->requestSync(false));}
+                case "STALE" -> main.post(()->requestSync(true));
                 case "INACTIVE" -> {inactive=true;update("Google Messages for web is open somewhere else. Open Message Center to switch back.");}
                 default -> { }
             }
@@ -195,10 +199,10 @@ public final class PairedService extends Service {
         if(s.inactive&&s.ready){s.inactive=false;s.network.execute(()->{try{if(s.client!=null){s.client.reactivate();s.update("Connected to Google Messages");}}catch(Exception ignored){}});}
         s.requestSync(true);}
     private void requestSync(boolean throttled) {
-        if(!ready||syncing||network.isShutdown())return;long now=System.currentTimeMillis();if(throttled&&now-lastSync<20_000)return;
+        if(!ready||syncing||network.isShutdown())return;long now=System.currentTimeMillis();if(throttled&&now-lastSync<SYNC_MIN_GAP_MS)return;
         syncing=true;lastSync=now;int token=generation.get();
         network.execute(()->{try{if(generation.get()==token&&client!=null&&ready)sync(client);}catch(Exception ignored){}
-            finally{main.post(()->{syncing=false;main.removeCallbacks(syncTick);if(ready)main.postDelayed(syncTick,SYNC_EVERY_MS);});}});
+            finally{main.post(()->{syncing=false;scheduleSync();});}});
     }
     /**
      * Compares Google's newest chats with what arrived live. Google can stop pushing to a
@@ -206,7 +210,8 @@ public final class PairedService extends Service {
      * recent unread ones are notified, and the session is re-armed.
      */
     private void sync(Client source) throws Exception {
-        JSONObject response=new JSONObject(source.chats("",1));JSONArray chats=response.optJSONArray("conversations");if(chats==null)return;
+        // Only the newest few chats: a missed message always moves its chat to the top.
+        JSONObject response=new JSONObject(source.latest(8));JSONArray chats=response.optJSONArray("conversations");if(chats==null)return;
         List<String> missed=new ArrayList<>();
         for(int i=0;i<chats.length();i++){JSONObject c=chats.getJSONObject(i);String id=c.optString("conversationID");JSONObject old=store.chat(id);
             if(old!=null&&PairedProtocol.time(c)>PairedProtocol.time(old)+1500)missed.add(id);applyChat(c);}
@@ -220,6 +225,19 @@ public final class PairedService extends Service {
             changed("MESSAGE");
         }
         changed("CONVERSATION");
+    }
+    private void scheduleSync() {main.removeCallbacks(syncTick);if(!ready)return;
+        boolean screenOn=getSystemService(android.os.PowerManager.class).isInteractive();main.postDelayed(syncTick,screenOn?SYNC_SCREEN_ON_MS:SYNC_SCREEN_OFF_MS);}
+    /** Pushes most often stall when the phone wakes or changes networks, so check right then. */
+    private void watchWakeAndNetwork() {
+        screenReceiver=new android.content.BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){
+            if(Intent.ACTION_SCREEN_OFF.equals(i.getAction()))scheduleSync();else requestSync(true);}};
+        android.content.IntentFilter filter=new android.content.IntentFilter(Intent.ACTION_SCREEN_ON);filter.addAction(Intent.ACTION_USER_PRESENT);filter.addAction(Intent.ACTION_SCREEN_OFF);
+        registerReceiver(screenReceiver,filter,Context.RECEIVER_NOT_EXPORTED);
+        networkCallback=new android.net.ConnectivityManager.NetworkCallback(){
+            // Give the connection a few seconds to come back on the new network before checking.
+            @Override public void onAvailable(android.net.Network n){main.postDelayed(()->requestSync(true),4000);}};
+        try{getSystemService(android.net.ConnectivityManager.class).registerDefaultNetworkCallback(networkCallback);}catch(Exception e){networkCallback=null;}
     }
     static void loadChats(String cursor,int folder,Result done) {
         execute(c->current.chats(c,cursor,folder),done);
@@ -431,6 +449,8 @@ public final class PairedService extends Service {
     @Override public IBinder onBind(Intent intent) {return null;}
     @Override public void onDestroy() {
         generation.incrementAndGet();ready=false;main.removeCallbacks(syncTick);if(current==this)current=null;
+        try{if(screenReceiver!=null)unregisterReceiver(screenReceiver);}catch(Exception ignored){}
+        try{if(networkCallback!=null)getSystemService(android.net.ConnectivityManager.class).unregisterNetworkCallback(networkCallback);}catch(Exception ignored){}
         Client old=client;client=null;network.shutdownNow();events.shutdownNow();media.shutdownNow();
         if(old!=null)new Thread(old::close,"paired-disconnect").start();
         // SQLiteOpenHelper stays alive until in-flight JNI calls return; the process

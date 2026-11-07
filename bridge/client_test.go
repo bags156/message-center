@@ -176,3 +176,10 @@ func TestNumbersMustBeInternational(t *testing.T) {
 		}
 	}
 }
+func TestLatestCountStaysInRange(t *testing.T) {
+	for in, want := range map[int]int64{-3: 1, 0: 1, 8: 8, 50: 50, 500: 50} {
+		if got := latestCount(in); got != want {
+			t.Fatalf("latestCount(%d) = %d, want %d", in, got, want)
+		}
+	}
+}
