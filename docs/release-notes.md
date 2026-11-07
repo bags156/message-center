@@ -1,8 +1,6 @@
-Sharper photos, a new attach panel, and tidier menus.
+Sharp photos in chats.
 
-- **Full-quality photos in chats.** Photos used to show Google's small preview stretched to fit. Now the preview appears instantly and the full photo replaces it a moment later, so it's sharp. To save data, choose "Photos in chats: previews only" in Settings.
-- **New attach panel.** ⊕ opens a panel with large buttons for **Photos & videos**, **Camera** (take a photo and it's added to the message), and **Files**.
-- **Menus slide up from the bottom** instead of the plain gray list boxes: chat options, chat themes, and a person's options in group details. Delete and Block are shown in red.
-- **The "Keep messages arriving on time" card goes away** once you tap Allow (or Not now), and disappears as soon as you come back. ColorOS can keep telling Android the app is restricted even after you allow it in its own settings; Settings now explains that.
+- **Photos are no longer stretched.** Each photo was decoded so its longest side matched the width of its box. For portrait photos (most phone pictures) that made the image narrower than the box, so it was enlarged about 1.5× to fill it, which looked blurry even at full quality. Photos are now decoded just large enough to fill their box in both directions.
+- The same fix applies to link preview images, video preview frames, and the attachments waiting above the message box.
 
-Install over 0.6.3; the package and signing key are unchanged.
+Install over 0.6.4; the package and signing key are unchanged.

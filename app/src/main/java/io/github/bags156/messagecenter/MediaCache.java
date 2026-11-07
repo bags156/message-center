@@ -80,6 +80,48 @@ final class MediaCache {
         });
     }
 
+    /** An already-decoded image for this box, so redrawing a chat does not flash empty boxes. */
+    static Bitmap peekCover(File file, int boxWidth, int boxHeight) { return memory.get(file.getName() + "@" + boxWidth + "x" + boxHeight); }
+
+    /**
+     * Decodes an image (or a video's first frame) just large enough to fill a box of this size
+     * when center-cropped, never smaller in either direction, so it is never stretched up and
+     * never decoded larger than needed.
+     */
+    static Bitmap decodeToCover(File file, int boxWidth, int boxHeight, boolean video) {
+        String key = file.getName() + "@" + boxWidth + "x" + boxHeight;
+        Bitmap cached = memory.get(key);
+        if (cached != null) return cached;
+        Bitmap bitmap = null;
+        try {
+            if (video) {
+                int side = Math.max(boxWidth, boxHeight) * 2;
+                try (MediaMetadataRetriever r = new MediaMetadataRetriever()) {
+                    r.setDataSource(file.getPath());
+                    bitmap = r.getScaledFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, side, side);
+                }
+            } else {
+                bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(file), (decoder, info, source) -> {
+                    int[] size = coverSize(info.getSize().getWidth(), info.getSize().getHeight(), boxWidth, boxHeight);
+                    decoder.setTargetSize(size[0], size[1]);
+                    decoder.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE);
+                });
+            }
+        } catch (Exception | OutOfMemoryError e) {
+            return null;
+        }
+        if (bitmap != null) memory.put(key, bitmap);
+        return bitmap;
+    }
+
+    /** The smallest size, keeping the image's shape, that still covers the box (or the original if it is already smaller). */
+    static int[] coverSize(int width, int height, int boxWidth, int boxHeight) {
+        if (width <= 0 || height <= 0) return new int[]{Math.max(1, width), Math.max(1, height)};
+        float scale = Math.max(boxWidth / (float) width, boxHeight / (float) height);
+        if (scale >= 1f) return new int[]{width, height};
+        return new int[]{Math.max(1, (int) Math.ceil(width * scale)), Math.max(1, (int) Math.ceil(height * scale))};
+    }
+
     /** An already-decoded preview, so redrawing a chat does not flash empty boxes. */
     static Bitmap peek(File file, int maxSide) { return memory.get(file.getName() + "@" + maxSide); }
 

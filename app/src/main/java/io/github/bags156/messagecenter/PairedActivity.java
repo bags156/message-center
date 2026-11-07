@@ -654,7 +654,7 @@ public class PairedActivity extends Activity {
             if(kind.equals("video")){TextView play=text("▶",20,Color.WHITE,false);play.setGravity(Gravity.CENTER);play.setBackground(oval(0x99000000));box.addView(play,new FrameLayout.LayoutParams(dp(52),dp(52),Gravity.CENTER));}
             box.setContentDescription(kind.equals("video")?"Video. Tap to play.":"Photo. Tap to view.");
             box.setOnClickListener(v->openMedia(media));box.setOnLongClickListener(v->{messageSheet(m);return true;});
-            line.addView(box,new LinearLayout.LayoutParams(width,Math.round(width*ratio)));loadPreview(media,img,kind.equals("video"),width);
+            int height=Math.round(width*ratio);line.addView(box,new LinearLayout.LayoutParams(width,height));loadPreview(media,img,kind.equals("video"),width,height);
         } else {
             LinearLayout card=row();card.setPadding(dp(14),dp(12),dp(18),dp(12));card.setBackground(shape(outgoing?theme.bubble(dark):surface,22));int fg=outgoing?theme.onBubble(dark):ink;
             card.addView(text(kind.equals("audio")?"🎤":"📄",24,fg,false));LinearLayout texts=vertical();texts.setPadding(dp(12),0,0,0);
@@ -675,19 +675,19 @@ public class PairedActivity extends Activity {
      * Google's small preview appears first, then the full photo replaces it so it's sharp at
      * chat size (unless "previews only" is chosen in Settings). Videos keep their preview frame.
      */
-    private void loadPreview(JSONObject media,ImageView img,boolean video,int width){
+    private void loadPreview(JSONObject media,ImageView img,boolean video,int width,int height){
         boolean thumb=MediaCache.hasThumbnail(media);long size=media.optLong("size");
         boolean wantFull=!video&&(!thumb||(fullPhotos()&&size<=(25L<<20)));File full=MediaCache.file(this,media,false);
-        if(wantFull&&full.isFile()){Bitmap b=MediaCache.peek(full,width);if(b!=null){img.setTag("full");img.setImageBitmap(b);return;}}
-        if(thumb){File t=MediaCache.file(this,media,true);Bitmap b=t.isFile()?MediaCache.peek(t,width):null;
+        if(wantFull&&full.isFile()){Bitmap b=MediaCache.peekCover(full,width,height);if(b!=null){img.setTag("full");img.setImageBitmap(b);return;}}
+        if(thumb){File t=MediaCache.file(this,media,true);Bitmap b=t.isFile()?MediaCache.peekCover(t,width,height):null;
             if(b!=null)img.setImageBitmap(b);
             else if(t.isFile()||PairedService.ready())MediaCache.fetch(this,media,true,(file,err)->{if(file==null)return;
-                decoder.execute(()->{Bitmap d=MediaCache.decode(file,width,false);if(d!=null)img.post(()->{if(img.getTag()==null)img.setImageBitmap(d);});});});}
+                decoder.execute(()->{Bitmap d=MediaCache.decodeToCover(file,width,height,false);if(d!=null)img.post(()->{if(img.getTag()==null)img.setImageBitmap(d);});});});}
         else if(video&&size>(15L<<20))return;
         if(!wantFull&&thumb)return;
         if(!full.isFile()&&!PairedService.ready())return;
         MediaCache.fetch(this,media,false,(file,err)->{if(file==null)return;
-            decoder.execute(()->{Bitmap d=MediaCache.decode(file,width,video&&!thumb);if(d!=null)img.post(()->{img.setTag("full");img.setImageBitmap(d);});});});
+            decoder.execute(()->{Bitmap d=MediaCache.decodeToCover(file,width,height,video&&!thumb);if(d!=null)img.post(()->{img.setTag("full");img.setImageBitmap(d);});});});
     }
     /** Photos open in the viewer; videos, audio and files open in another app. */
     private void openMedia(JSONObject media){
@@ -789,7 +789,7 @@ public class PairedActivity extends Activity {
             tile.setOutlineProvider(new ViewOutlineProvider(){@Override public void getOutline(View v,Outline ol){ol.setRoundRect(0,0,v.getWidth(),v.getHeight(),dp(14));}});tile.setClipToOutline(true);
             boolean visual=o.mime.startsWith("image/")||o.mime.startsWith("video/");
             if(visual){ImageView img=new ImageView(this);img.setScaleType(ImageView.ScaleType.CENTER_CROP);tile.addView(img,new FrameLayout.LayoutParams(-1,-1));
-                decoder.execute(()->{Bitmap b=MediaCache.decode(o.file,dp(72)*2,o.mime.startsWith("video/"));if(b!=null)img.post(()->img.setImageBitmap(b));});}
+                decoder.execute(()->{Bitmap b=MediaCache.decodeToCover(o.file,dp(72),dp(72),o.mime.startsWith("video/"));if(b!=null)img.post(()->img.setImageBitmap(b));});}
             else {TextView t=text("📄\n"+o.name,11,ink,false);t.setGravity(Gravity.CENTER);t.setMaxLines(3);t.setEllipsize(TextUtils.TruncateAt.END);t.setPadding(dp(4),dp(4),dp(4),dp(4));tile.addView(t,new FrameLayout.LayoutParams(-1,-1));}
             if(o.sending){TextView s=text("Sending…",11,Color.WHITE,true);s.setGravity(Gravity.CENTER);s.setBackgroundColor(0x99000000);tile.addView(s,new FrameLayout.LayoutParams(-1,-1));}
             else {ImageView x=new ImageView(this);x.setImageResource(R.drawable.ic_close);x.setImageTintList(ColorStateList.valueOf(Color.WHITE));x.setBackground(oval(0x99000000));x.setPadding(dp(3),dp(3),dp(3),dp(3));
@@ -1015,7 +1015,7 @@ public class PairedActivity extends Activity {
         int width=Math.round(getResources().getDisplayMetrics().widthPixels*0.66f);line.addView(card,new LinearLayout.LayoutParams(width,-2));
         LinkPreviews.Done fill=p->{card.removeAllViews();String image=p.optString("image");
             if(!image.isEmpty()){ImageView img=new ImageView(this);img.setScaleType(ImageView.ScaleType.CENTER_CROP);card.addView(img,new LinearLayout.LayoutParams(-1,dp(150)));
-                decoder.execute(()->{Bitmap b=MediaCache.decode(new File(image),width,false);if(b!=null)img.post(()->img.setImageBitmap(b));});}
+                decoder.execute(()->{Bitmap b=MediaCache.decodeToCover(new File(image),width,dp(150),false);if(b!=null)img.post(()->img.setImageBitmap(b));});}
             LinearLayout texts=vertical();texts.setPadding(dp(14),dp(10),dp(14),dp(12));TextView title=text(p.optString("title"),15,ink,true);title.setMaxLines(2);title.setEllipsize(TextUtils.TruncateAt.END);texts.addView(title);
             String site=p.optString("site");texts.addView(text(site.isEmpty()?ChatText.domain(url):site,13,muted,false));card.addView(texts);line.setVisibility(View.VISIBLE);};
         card.setOnClickListener(v->{try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));}catch(Exception e){toast("No browser is available.");}});
