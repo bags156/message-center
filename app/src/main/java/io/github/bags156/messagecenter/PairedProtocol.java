@@ -78,10 +78,10 @@ final class PairedProtocol {
         }
         return "#";
     }
-    /** Text and a short label per attachment ("📷 Photo"), for previews, notifications, quotes and copying. */
+    /** Text and a short label per attachment ("Photo"), for previews, notifications, quotes and copying. */
     static String body(JSONObject m) {
         List<String> parts=new ArrayList<>();String text=text(m);if(!text.isEmpty())parts.add(text);
-        JSONObject place=location(m);if(place!=null){String where=placeLabel(place.optString("text"));parts.add("📍 "+(where.isEmpty()?"Location":where));}
+        JSONObject place=location(m);if(place!=null){String where=placeLabel(place.optString("text"));parts.add(where.isEmpty()?"Location":"Location: "+where);}
         for(JSONObject media:media(m))parts.add(mediaLabel(media));
         return String.join("\n",parts);
     }
@@ -149,10 +149,10 @@ final class PairedProtocol {
     }
     static String mediaLabel(JSONObject media) {
         return switch(mediaKind(media)) {
-            case "image" -> string(media,"mimeType").equalsIgnoreCase("image/gif")?"GIF":"📷 Photo";
-            case "video" -> "🎥 Video";
-            case "audio" -> "🎤 Audio";
-            default -> { String name=string(media,"mediaName"); yield name.isEmpty()?"📎 File":"📎 "+name; }
+            case "image" -> string(media,"mimeType").equalsIgnoreCase("image/gif")?"GIF":"Photo";
+            case "video" -> "Video";
+            case "audio" -> "Voice message";
+            default -> { String name=string(media,"mediaName"); yield name.isEmpty()?"File":name; }
         };
     }
     /** "RCS", "SMS", or "MMS", from Google's message type (falling back to the chat's type). */

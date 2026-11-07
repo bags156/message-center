@@ -62,5 +62,8 @@ final class ChatSettings {
     long snoozedUntil(String id) { return prefs.getLong("snooze:" + id, 0); }
     boolean snoozed(String id) { return snoozedUntil(id) > System.currentTimeMillis(); }
     void setSnooze(String id, long until) { if (until <= 0) prefs.edit().remove("snooze:" + id).apply(); else prefs.edit().putLong("snooze:" + id, until).apply(); }
+    /** Chat background: "" (none), "stock:<name>", or "photo" (a picture you chose, saved by the app). */
+    String background(String id) { return prefs.getString("background:" + id, ""); }
+    void setBackground(String id, String value) { if (value == null || value.isEmpty()) prefs.edit().remove("background:" + id).apply(); else prefs.edit().putString("background:" + id, value).apply(); }
     void clear() { prefs.edit().clear().apply(); }
 }

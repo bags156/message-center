@@ -233,4 +233,40 @@ final class ChatText {
         }
         return "";
     }
+
+    private static final String STREET_SUFFIX = "(?:street|st|avenue|ave|av|road|rd|boulevard|blvd|drive|dr|lane|ln|way|court|ct|place|pl|parkway|pkwy|"
+        + "highway|hwy|circle|cir|terrace|ter|trail|trl|loop|square|sq|plaza|plz|alley|aly|crossing|xing|pike|run|path|cove|cv|point|pt|"
+        + "expressway|expy|freeway|fwy|row|ridge|rdg|hollow|holw|bend|park|pass|walk|crescent|cres|close|grove|grv|heights|hts|turnpike|tpke)";
+    private static final String STATES = "(?:AL|AK|AZ|AR|CA|CO|CT|DE|DC|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|"
+        + "Alabama|Alaska|Arizona|Arkansas|California|Colorado|Connecticut|Delaware|Florida|Georgia|Hawaii|Idaho|Illinois|Indiana|Iowa|Kansas|Kentucky|Louisiana|Maine|Maryland|"
+        + "Massachusetts|Michigan|Minnesota|Mississippi|Missouri|Montana|Nebraska|Nevada|New Hampshire|New Jersey|New Mexico|New York|North Carolina|North Dakota|Ohio|Oklahoma|"
+        + "Oregon|Pennsylvania|Rhode Island|South Carolina|South Dakota|Tennessee|Texas|Utah|Vermont|Virginia|Washington|West Virginia|Wisconsin|Wyoming)";
+    private static final String DIRECTION = "(?:north|south|east|west|n|s|e|w|ne|nw|se|sw)\\.?";
+    /**
+     * Street addresses written the US way: a house number, an optional direction, one to four words
+     * of street name, and a street type ("805 SE J St", "123 Main Street Apt 4, Bentonville, AR 72712"),
+     * or a numbered highway ("1200 Hwy 71"). A city, state, and ZIP after it are included.
+     */
+    private static final Pattern ADDRESS = Pattern.compile(
+        "(?<![\\w$:./#-])\\d{1,6}[A-Za-z]?(?:-\\d{1,4})?\\s+(?:" + DIRECTION + "\\s+)?"
+        + "(?:(?:[A-Za-z0-9][A-Za-z0-9'.-]*\\s+){0,3}[A-Za-z0-9][A-Za-z0-9'.-]*\\s+" + STREET_SUFFIX + "\\b\\.?(?:\\s+" + DIRECTION + "(?![\\w']))?"
+        + "|(?:highway|hwy|us|state route|sr|route|rte|county road|cr|farm to market|fm)\\s+\\d{1,4}[A-Za-z]?\\b)"
+        + "(?:,?\\s+(?:apt|apartment|suite|ste|unit|bldg|building|fl|floor|#)\\.?\\s*#?[A-Za-z0-9-]+\\b)?"
+        + "(?:(?:,\\s*|\\s+)[A-Za-z][A-Za-z .'-]{1,30}?,?\\s+" + STATES + "\\b(?:\\s+\\d{5}(?:-\\d{4})?)?"
+        + "|,?\\s+" + STATES + "\\s+\\d{5}(?:-\\d{4})?"
+        + "|\\s+\\d{5}(?:-\\d{4})?(?!\\d))?",
+        Pattern.CASE_INSENSITIVE);
+
+    /** Where street addresses appear in a message, as {start, end} pairs. */
+    static java.util.List<int[]> addresses(String text) {
+        java.util.List<int[]> out = new java.util.ArrayList<>();
+        if (text == null || text.length() < 8) return out;
+        Matcher m = ADDRESS.matcher(text);
+        while (m.find()) out.add(new int[]{m.start(), m.end()});
+        return out;
+    }
+
+    private static final Pattern MEDIA_EMOJI = Pattern.compile("^(?:\\x{1F4F7}|\\x{1F4F8}|\\x{1F3A5}|\\x{1F3A4}|\\x{1F4CE}|\\x{1F4CD}|\\x{1F5BC}\\x{FE0F}?|\\x{1F39E}\\x{FE0F}?|\\x{1F3B5})\\s*");
+    /** "📷 Photo" → "Photo" (Google adds these to some previews). */
+    static String withoutMediaEmoji(String text) { return text == null ? "" : MEDIA_EMOJI.matcher(text).replaceFirst(""); }
 }

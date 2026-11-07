@@ -68,12 +68,12 @@ public class ChatTextTest {
             + "{mediaContent:{mediaID:'m2',mediaName:'clip.MOV'}},{mediaContent:{mediaID:'m3',mimeType:'application/pdf',mediaName:'Lease.pdf'}},{messageContent:{content:'Look'}}]}");
         assertEquals(3, PairedProtocol.media(m).size());
         assertEquals("Look", PairedProtocol.text(m));
-        assertEquals("Look\n📷 Photo\n🎥 Video\n📎 Lease.pdf", PairedProtocol.body(m));
+        assertEquals("Look\nPhoto\nVideo\nLease.pdf", PairedProtocol.body(m));
         assertEquals("image", PairedProtocol.mediaKind(PairedProtocol.media(m).get(0)));
         assertEquals("video", PairedProtocol.mediaKind(PairedProtocol.media(m).get(1)));
         assertEquals("file", PairedProtocol.mediaKind(PairedProtocol.media(m).get(2)));
         assertEquals("audio", PairedProtocol.mediaKind(new JSONObject("{mimeType:'audio/amr'}")));
-        assertEquals("📎 File", PairedProtocol.mediaLabel(new JSONObject("{mimeType:'application/zip'}")));
+        assertEquals("File", PairedProtocol.mediaLabel(new JSONObject("{mimeType:'application/zip'}")));
     }
 
     @Test public void sizesReadNaturally() {
@@ -144,7 +144,7 @@ public class ChatTextTest {
     @Test public void locationsAndGroupEventsAreRead() throws Exception {
         JSONObject place = new JSONObject("{messageID:'l',messageInfo:[{actionMessageID:'a1',locationContent:{messageContent:{content:'Main Street Park https://maps.google.com/?q=36.37,-94.21'}}}]}");
         assertEquals("Main Street Park", PairedProtocol.placeLabel(PairedProtocol.location(place).optString("text")));
-        assertEquals("\uD83D\uDCCD Main Street Park", PairedProtocol.body(place));
+        assertEquals("Location: Main Street Park", PairedProtocol.body(place));
         JSONObject chat = new JSONObject("{isGroupChat:true,participants:[{ID:{participantID:'p1'},fullName:'Sam Example'},{ID:{participantID:'p2'},fullName:'Dana Example'}]}");
         assertEquals("Sam Example left", PairedProtocol.event(new JSONObject("{participantID:'p1',messageStatus:{status:'TOMBSTONE_PARTICIPANT_LEFT'}}"), chat));
         assertEquals("Group renamed to \u201cTrip\u201d", PairedProtocol.event(new JSONObject("{participantID:'p2',messageStatus:{status:'TOMBSTONE_GROUP_RENAMED_GLOBAL'},messageInfo:[{messageContent:{content:'Trip'}}]}"), chat));
@@ -160,5 +160,26 @@ public class ChatTextTest {
         assertEquals("", ChatText.previewTitle("Just a moment...", "", "https://example.com/post"));
         assertEquals("", ChatText.previewTitle("example.com", "", "https://example.com/post"));
         assertEquals("How to brew coffee", ChatText.previewTitle("How to brew coffee", "Example", "https://example.com/post"));
+    }
+
+    private static String found(String text) { java.util.List<int[]> a = ChatText.addresses(text); return a.isEmpty() ? "" : text.substring(a.get(0)[0], a.get(0)[1]); }
+    @Test public void streetAddressesAreFound() {
+        assertEquals("805 SE J St, Bentonville, AR 72712", found("Meet at 805 SE J St, Bentonville, AR 72712 at 6"));
+        assertEquals("123 Main Street", found("It's 123 Main Street, see you"));
+        assertEquals("4500 W Walnut St Suite 200", found("Office: 4500 W Walnut St Suite 200"));
+        assertEquals("1 Infinite Loop, Cupertino, CA 95014", found("1 Infinite Loop, Cupertino, CA 95014"));
+        assertEquals("2200 N Old Wire Rd", found("pick me up at 2200 N Old Wire Rd?"));
+        assertEquals("1200 Hwy 71", found("Gas at 1200 Hwy 71 is cheap"));
+        assertEquals("15 Oak Ln Fayetteville, Arkansas 72701", found("15 Oak Ln Fayetteville, Arkansas 72701"));
+        assertEquals("", found("I have 2 big dogs"));
+        assertEquals("", found("Ran 5 miles at 10 am"));
+        assertEquals("", found("Costs $12 at the store"));
+        assertEquals("", found("Room #12 Park"));
+        assertEquals("", found("See you at 6:30 then"));
+    }
+    @Test public void mediaEmojiIsRemovedFromPreviews() {
+        assertEquals("Photo", ChatText.withoutMediaEmoji("📷 Photo"));
+        assertEquals("Video", ChatText.withoutMediaEmoji("🎥 Video"));
+        assertEquals("Thanks 📷", ChatText.withoutMediaEmoji("Thanks 📷"));
     }
 }

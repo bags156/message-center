@@ -15,6 +15,12 @@ import android.os.PowerManager;
 import android.media.MediaPlayer;
 import android.media.MediaRecorder;
 import android.text.method.LinkMovementMethod;
+import android.text.Spannable;
+import android.text.SpannableString;
+import android.text.Spanned;
+import android.text.TextPaint;
+import android.text.style.ClickableSpan;
+import android.text.style.URLSpan;
 import android.text.util.Linkify;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
@@ -308,7 +314,7 @@ public class PairedActivity extends Activity {
         entry.addView(avatar(c,52));
         LinearLayout middle=vertical();middle.setPadding(dp(16),0,dp(8),0);
         TextView title=text(PairedProtocol.title(c),18,ink,unread);title.setTextSize(18*textScale);title.setSingleLine(true);title.setEllipsize(TextUtils.TruncateAt.END);middle.addView(title);
-        String snippet=PairedProtocol.string(c.optJSONObject("latestMessage"),"displayContent");boolean[] mine={PairedProtocol.latestFromMe(c)};
+        String snippet=ChatText.withoutMediaEmoji(PairedProtocol.string(c.optJSONObject("latestMessage"),"displayContent"));boolean[] mine={PairedProtocol.latestFromMe(c)};
         // Google leaves the preview empty for some events (drafts, some reactions); fall back to the newest synced message.
         if(snippet.isEmpty()){JSONObject last=latestStored(id);if(last!=null)snippet=previewOf(last,c,mine);}
         boolean placeholder=snippet.isEmpty()&&draft.isEmpty();if(placeholder){snippet="Open to load messages";mine[0]=false;}
@@ -364,7 +370,53 @@ public class PairedActivity extends Activity {
             TextView label=text(t.label,16,ink,t.key.equals(current));label.setPadding(dp(16),0,0,0);r.addView(label,new LinearLayout.LayoutParams(0,-2,1));
             if(t.key.equals(current))r.addView(text("✓",18,t.accent(dark),true));
             r.setOnClickListener(v->{chatSettings.setTheme(id,t.key);dialog[0].dismiss();if(screen.equals("chat")&&chatId.equals(id))thread(id);else if(screen.equals("details"))details();});list.addView(r);}
+        TextView bgHeading=text("Background",18,ink,true);bgHeading.setPadding(dp(8),dp(14),dp(8),dp(8));list.addView(bgHeading);
+        HorizontalScrollView strip=new HorizontalScrollView(this);strip.setHorizontalScrollBarEnabled(false);LinearLayout tiles=row();tiles.setPadding(dp(8),0,dp(8),dp(8));strip.addView(tiles);list.addView(strip);
+        String currentBg=chatSettings.background(id);
+        tiles.addView(backgroundTile(null,"None",currentBg.isEmpty(),()->{dialog[0].dismiss();setChatBackground(id,"");}));
+        for(String[] stock:STOCK_BACKGROUNDS){String value="stock:"+stock[0];tiles.addView(backgroundTile(stock[0],stock[1],currentBg.equals(value),()->{dialog[0].dismiss();setChatBackground(id,value);}));}
+        tiles.addView(backgroundTile("photo:"+id,"Your photo…",currentBg.equals("photo"),()->{dialog[0].dismiss();pickBackgroundPhoto(id);}));
         dialog[0]=sheet(list);}
+    // ---- Chat backgrounds ----
+    /** Built-in backgrounds (made for this app; no outside images): resource name, label. */
+    private static final String[][] STOCK_BACKGROUNDS={{"dusk","Dusk"},{"forest","Misty forest"},{"ocean","Ocean"},{"aurora","Aurora"},{"bokeh","City lights"},{"stars","Starry night"}};
+    private static final Map<String,Bitmap> backgroundCache=new LinkedHashMap<>();private static final int PICK_BACKGROUND=94;private String backgroundFor="";
+    private File backgroundFile(String id){return new File(new File(getFilesDir(),"backgrounds"),MediaCache.hash(id)+".jpg");}
+    private int stockRes(String name){return getResources().getIdentifier("chat_bg_"+name,"drawable",getPackageName());}
+    /** The picture behind a chat's messages, dimmed a little so timestamps and names stay readable. */
+    private void addChatBackground(FrameLayout frame,String id){String value=chatSettings.background(id);if(value.isEmpty())return;
+        ImageView bg=new ImageView(this);bg.setScaleType(ImageView.ScaleType.CENTER_CROP);frame.addView(bg,new FrameLayout.LayoutParams(-1,-1));
+        View scrim=new View(this);scrim.setBackgroundColor(dark?0x66000000:0x80ffffff);frame.addView(scrim,new FrameLayout.LayoutParams(-1,-1));
+        File photo=backgroundFile(id);String key=value.equals("photo")?value+":"+id+":"+photo.lastModified():value;
+        synchronized(backgroundCache){Bitmap hit=backgroundCache.get(key);if(hit!=null){bg.setImageBitmap(hit);return;}}
+        int w=getResources().getDisplayMetrics().widthPixels,h=getResources().getDisplayMetrics().heightPixels;
+        decoder.execute(()->{Bitmap b=null;
+            try{if(value.startsWith("stock:")){int res=stockRes(value.substring(6));if(res!=0)b=BitmapFactory.decodeResource(getResources(),res);}
+                else if(value.equals("photo")&&photo.isFile())b=MediaCache.decodeToCover(photo,w,h,false);}catch(Throwable ignored){}
+            if(b==null)return;Bitmap done=b;synchronized(backgroundCache){backgroundCache.put(key,done);while(backgroundCache.size()>2)backgroundCache.remove(backgroundCache.keySet().iterator().next());}
+            bg.post(()->bg.setImageBitmap(done));});}
+    private View backgroundTile(String source,String label,boolean current,Runnable pick){LinearLayout tile=vertical();tile.setGravity(Gravity.CENTER_HORIZONTAL);tile.setPadding(dp(4),0,dp(4),0);
+        FrameLayout box=new FrameLayout(this);GradientDrawable frameShape=shape(surface,14);if(current)frameShape.setStroke(dp(3),BLUE);box.setBackground(frameShape);box.setPadding(dp(3),dp(3),dp(3),dp(3));
+        ImageView img=new ImageView(this);img.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        img.setOutlineProvider(new ViewOutlineProvider(){@Override public void getOutline(View v,Outline o){o.setRoundRect(0,0,v.getWidth(),v.getHeight(),dp(11));}});img.setClipToOutline(true);box.addView(img,new FrameLayout.LayoutParams(-1,-1));
+        if(source==null){TextView none=text("∅",22,muted,false);none.setGravity(Gravity.CENTER);box.addView(none,new FrameLayout.LayoutParams(-1,-1));}
+        else if(source.startsWith("photo:")){File f=backgroundFile(source.substring(6));if(f.isFile())decoder.execute(()->{Bitmap b=MediaCache.decodeToCover(f,dp(64),dp(112),false);if(b!=null)img.post(()->img.setImageBitmap(b));});
+            else{TextView plus=text("+",26,muted,false);plus.setGravity(Gravity.CENTER);box.addView(plus,new FrameLayout.LayoutParams(-1,-1));}}
+        else{int res=stockRes(source);if(res!=0)decoder.execute(()->{BitmapFactory.Options o=new BitmapFactory.Options();o.inSampleSize=8;Bitmap b=BitmapFactory.decodeResource(getResources(),res,o);if(b!=null)img.post(()->img.setImageBitmap(b));});}
+        tile.addView(box,new LinearLayout.LayoutParams(dp(70),dp(118)));TextView name=text(label,12,current?ink:muted,current);name.setPadding(0,dp(4),0,0);tile.addView(name);
+        tile.setContentDescription("Background: "+label+(current?", selected":""));tile.setOnClickListener(v->pick.run());return tile;}
+    private void setChatBackground(String id,String value){chatSettings.setBackground(id,value);if(!value.equals("photo")){File f=backgroundFile(id);if(f.isFile())f.delete();}
+        if(screen.equals("chat")&&chatId.equals(id))thread(id);else if(screen.equals("details"))details();}
+    private void pickBackgroundPhoto(String id){backgroundFor=id;try{startActivityForResult(new Intent(MediaStore.ACTION_PICK_IMAGES).setType("image/*"),PICK_BACKGROUND);}
+        catch(Exception e){try{startActivityForResult(new Intent(Intent.ACTION_GET_CONTENT).setType("image/*"),PICK_BACKGROUND);}catch(Exception e2){toast("No photo picker is available.");}}}
+    /** Keeps a screen-sized copy of the chosen photo, so the original can be moved or deleted. */
+    private void saveBackgroundPhoto(Uri uri){String id=backgroundFor;if(id.isEmpty())return;toast("Setting background…");
+        decoder.execute(()->{boolean ok=false;File target=backgroundFile(id);
+            try{android.graphics.ImageDecoder.Source src=android.graphics.ImageDecoder.createSource(getContentResolver(),uri);
+                Bitmap b=android.graphics.ImageDecoder.decodeBitmap(src,(dec,info,s2)->{int lw=info.getSize().getWidth(),lh=info.getSize().getHeight();float k=Math.min(1f,1800f/Math.max(lw,lh));dec.setTargetSize(Math.max(1,Math.round(lw*k)),Math.max(1,Math.round(lh*k)));dec.setAllocator(android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE);});
+                File dir=target.getParentFile();if(!dir.isDirectory())dir.mkdirs();File part=new File(target.getPath()+".part");
+                try(java.io.FileOutputStream out=new java.io.FileOutputStream(part)){b.compress(Bitmap.CompressFormat.JPEG,88,out);}ok=part.renameTo(target);}catch(Exception ignored){}
+            boolean saved=ok;ui.post(()->{if(!saved){toast("That photo couldn't be used.");return;}setChatBackground(id,"photo");});});}
     private void toggleReceipts(String id){boolean on=!chatSettings.receipts(id);chatSettings.setReceipts(id,on);
         if(!on){new ReadReceiptQueue(this).cancel(id);toast("Read receipts off for this chat.");}
         else {JSONObject latest=store.latestIncoming(id),chat=store.chat(id);
@@ -392,7 +444,7 @@ public class PairedActivity extends Activity {
         ImageView more=icon(R.drawable.ic_more,ink,"More options",null);more.setBackground(ripple());more.setOnClickListener(this::chatMenu);bar.addView(more);
         root.addView(bar,new LinearLayout.LayoutParams(-1,dp(64)));connection();
         scroll=new ScrollView(this);scroll.setVerticalScrollBarEnabled(false);items=vertical();items.setPadding(dp(12),dp(8),dp(12),dp(8));scroll.addView(items);
-        chatFrame=new FrameLayout(this);chatFrame.addView(scroll,new FrameLayout.LayoutParams(-1,-1));root.addView(chatFrame,new LinearLayout.LayoutParams(-1,0,1));
+        chatFrame=new FrameLayout(this);addChatBackground(chatFrame,id);chatFrame.addView(scroll,new FrameLayout.LayoutParams(-1,-1));root.addView(chatFrame,new LinearLayout.LayoutParams(-1,0,1));
         jumpButton=text("↓",15,ink,true);jumpButton.setPadding(dp(18),dp(10),dp(18),dp(10));jumpButton.setBackground(shape(card,22));jumpButton.setElevation(dp(4));jumpButton.setVisibility(View.GONE);
         jumpButton.setOnClickListener(v->jumpToLatest());FrameLayout.LayoutParams jl=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.END);jl.setMargins(0,0,dp(16),dp(12));chatFrame.addView(jumpButton,jl);
         newWhileAway=0;newestSeenTime=0;
@@ -430,7 +482,7 @@ public class PairedActivity extends Activity {
         if(c!=null)requestPhotos(java.util.Collections.singletonList(c));
     }
     private void chatMenu(View anchor){JSONObject c=store.chat(chatId);if(c==null)return;PopupMenu menu=new PopupMenu(this,anchor);Menu m=menu.getMenu();
-        m.add(0,1,0,chatSettings.pinned(c)?"Unpin":"Pin to top");m.add(0,2,1,"Chat theme");
+        m.add(0,1,0,chatSettings.pinned(c)?"Unpin":"Pin to top");m.add(0,2,1,"Theme & background");
         m.add(0,3,2,"Read receipts for this chat").setCheckable(true).setChecked(chatSettings.receipts(chatId));
         m.add(0,6,0,PairedProtocol.other(c)==null?"Group details":"Details");m.add(0,9,0,"Search in chat");m.add(0,10,4,chatSettings.muted(chatId)?"Unmute notifications":"Mute notifications");m.add(0,14,4,chatSettings.snoozed(chatId)?"Snoozed until "+snoozeLabel(chatId)+"…":"Snooze notifications…");
         boolean archived=c.optString("status").contains("ARCHIVED"),blocked=c.optString("status").equals("BLOCKED_FOLDER")||c.optString("status").equals("SPAM_FOLDER");
@@ -506,6 +558,12 @@ public class PairedActivity extends Activity {
         // One to three emoji alone are shown large, without a bubble.
         if(media.isEmpty()&&target.isEmpty()&&fallback==null){int jumbo=ChatText.emojiOnly(body);if(jumbo>0){text.setTextSize(jumbo==1?48:jumbo==2?40:34);b.setBackground(null);b.setPadding(dp(4),0,dp(4),0);}}
         if(Linkify.addLinks(text,Linkify.WEB_URLS|Linkify.EMAIL_ADDRESSES|Linkify.PHONE_NUMBERS)){text.setLinkTextColor(outgoing?theme.onBubble(dark):ink);text.setHighlightColor(((outgoing?theme.onBubble(dark):ink)&0x00ffffff)|0x26000000);text.setMovementMethod(LinkMovementMethod.getInstance());text.setOnLongClickListener(v->{messageSheet(m);return true;});}
+        // Street addresses open in your maps app.
+        List<int[]> places=ChatText.addresses(text.getText().toString());
+        if(!places.isEmpty()){Spannable sp=text.getText() instanceof Spannable?(Spannable)text.getText():new SpannableString(text.getText());int linkColor=outgoing?theme.onBubble(dark):ink;
+            for(int[] r:places){if(sp.getSpans(r[0],r[1],URLSpan.class).length>0)continue;String where=sp.subSequence(r[0],r[1]).toString();
+                sp.setSpan(new ClickableSpan(){@Override public void onClick(View w){openPlace(where);}@Override public void updateDrawState(TextPaint ds){ds.setColor(linkColor);ds.setUnderlineText(true);}},r[0],r[1],Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);}
+            text.setText(sp);text.setHighlightColor((linkColor&0x00ffffff)|0x26000000);text.setMovementMethod(LinkMovementMethod.getInstance());text.setOnLongClickListener(v->{messageSheet(m);return true;});}
         b.setOnLongClickListener(v->{messageSheet(m);return true;});b.setOnClickListener(v->tapped(m,b));if(text.getMovementMethod()!=null)text.setOnClickListener(v->tapped(m,b));
         line.addView(b,new LinearLayout.LayoutParams(-2,-2));wrap.addView(line,new LinearLayout.LayoutParams(-1,-2));
         String url=linkPreviewsOn()&&(outgoing||chatTrusted)?ChatText.firstUrl(fallback!=null?fallback:body):"";if(!url.isEmpty()){gap(wrap,4);wrap.addView(linkCard(url,outgoing),new LinearLayout.LayoutParams(-1,-2));}
@@ -590,8 +648,30 @@ public class PairedActivity extends Activity {
         card.setOnClickListener(v->openMap(text));card.setOnLongClickListener(v->{messageSheet(m);return true;});
         line.addView(card,new LinearLayout.LayoutParams(-2,-2));return line;}
     private void openMap(String text){String url=ChatText.firstUrl(text);String label=PairedProtocol.placeLabel(text);
-        Uri uri=!url.isEmpty()?Uri.parse(url):Uri.parse("geo:0,0?q="+Uri.encode(label.isEmpty()?text:label));
-        try{startActivity(new Intent(Intent.ACTION_VIEW,uri));}catch(Exception e){toast("No maps app is installed.");}}
+        // A shared pin: open its exact spot in your maps app (any app understands geo: coordinates).
+        java.util.regex.Matcher at=java.util.regex.Pattern.compile("(-?\\d{1,2}\\.\\d+),\\s*(-?\\d{1,3}\\.\\d+)").matcher(url.isEmpty()?text:Uri.decode(url));
+        if(at.find()){String ll=at.group(1)+","+at.group(2);openMaps(Uri.parse("geo:"+ll+"?q="+Uri.encode(ll+(label.isEmpty()?"":" ("+label+")"))),url);return;}
+        if(!label.isEmpty()){openPlace(label);return;}
+        if(!url.isEmpty())openMaps(null,url);}
+    private void openPlace(String query){openMaps(Uri.parse("geo:0,0?q="+Uri.encode(query.replaceAll("\\s+"," ").trim())),"");}
+    /** Opens in the maps app chosen in Settings; the first time, asks which one (when there's more than one). */
+    private void openMaps(Uri geo,String fallbackUrl){
+        if(geo==null){try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(fallbackUrl)));}catch(Exception e){toast("No app can open this map link.");}return;}
+        Intent view=new Intent(Intent.ACTION_VIEW,geo);String pkg=getSharedPreferences("paired",MODE_PRIVATE).getString("maps_app","");
+        if(!pkg.isEmpty()&&!pkg.equals("ask")){Intent pinned=new Intent(view).setPackage(pkg);if(pinned.resolveActivity(getPackageManager())!=null){startActivity(pinned);return;}}
+        List<android.content.pm.ResolveInfo> apps=mapsApps();
+        if(apps.isEmpty()){if(!fallbackUrl.isEmpty())openMaps(null,fallbackUrl);else toast("No maps app is installed.");return;}
+        if(apps.size()==1||pkg.equals("ask")){startActivity(apps.size()==1?new Intent(view).setPackage(apps.get(0).activityInfo.packageName):Intent.createChooser(view,"Open with"));return;}
+        chooseMapsApp(chosen->{Intent pinned=new Intent(view).setPackage(chosen);try{startActivity(pinned);}catch(Exception e){toast("That maps app couldn't open this place.");}});}
+    private List<android.content.pm.ResolveInfo> mapsApps(){return getPackageManager().queryIntentActivities(new Intent(Intent.ACTION_VIEW,Uri.parse("geo:0,0?q=coffee")),0);}
+    private void chooseMapsApp(java.util.function.Consumer<String> then){List<android.content.pm.ResolveInfo> apps=mapsApps();if(apps.isEmpty()){toast("No maps app is installed.");return;}
+        List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
+        for(android.content.pm.ResolveInfo r:apps){String pkg=r.activityInfo.packageName;labels.add(String.valueOf(r.loadLabel(getPackageManager())));
+            actions.add(()->{getSharedPreferences("paired",MODE_PRIVATE).edit().putString("maps_app",pkg).apply();if(then!=null)then.accept(pkg);else if(screen.equals("settings"))settings();});}
+        labels.add("Ask every time");actions.add(()->{getSharedPreferences("paired",MODE_PRIVATE).edit().putString("maps_app","ask").apply();if(screen.equals("settings"))settings();});
+        menuSheet("Open places in",labels,actions);}
+    private String mapsAppLabel(){String pkg=getSharedPreferences("paired",MODE_PRIVATE).getString("maps_app","");if(pkg.isEmpty())return "Ask the first time";if(pkg.equals("ask"))return "Ask every time";
+        try{return String.valueOf(getPackageManager().getApplicationLabel(getPackageManager().getApplicationInfo(pkg,0)));}catch(Exception e){return "Ask the first time";}}
     private void jumpTo(String id){View v=messageViews.get(id);
         if(v==null||scroll==null){toast("That message isn't loaded here. Scroll up to load older messages.");return;}
         scroll.smoothScrollTo(0,Math.max(0,v.getTop()-dp(96)));
@@ -778,7 +858,7 @@ public class PairedActivity extends Activity {
         if(group){LinearLayout me=row();me.setPadding(dp(4),dp(10),dp(4),dp(10));me.addView(personAvatar(null,"You",44));TextView you=text("You",17,ink,false);you.setPadding(dp(16),0,0,0);me.addView(you);content.addView(me);}
         gap(content,20);content.addView(text("This chat",14,muted,true));gap(content,4);
         sheetAction(content,chatSettings.pinned(c)?"Unpin":"Pin to top",()->{togglePin(c);details();});
-        sheetAction(content,"Chat theme: "+chatSettings.theme(id).label,()->chooseTheme(id));
+        sheetAction(content,"Theme & background: "+chatSettings.theme(id).label+(chatSettings.background(id).isEmpty()?"":" + picture"),()->chooseTheme(id));
         sheetAction(content,"Read receipts: "+(chatSettings.receipts(id)?"on":"off"),()->toggleReceipts(id));
         receiptStatusView=text("",13,muted,false);receiptStatusView.setPadding(dp(16),0,dp(16),dp(8));content.addView(receiptStatusView);updateReceiptStatus();
         if(chatSettings.receipts(id)){sheetAction(content,"Retry read request / refresh Google setting",()->{JSONObject latest=store.latestIncoming(id);
@@ -982,6 +1062,7 @@ public class PairedActivity extends Activity {
         try{startActivityForResult(shoot,TAKE_PHOTO);}catch(Exception e){pendingCapture=null;toast("No camera app is available.");}}
     @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);
         if(request==RESTORE_BACKUP){if(result==RESULT_OK&&data!=null&&data.getData()!=null)restoreBackup(data.getData());return;}
+        if(request==PICK_BACKGROUND){if(result==RESULT_OK&&data!=null&&data.getData()!=null)saveBackgroundPhoto(data.getData());return;}
         if(request==TAKE_PHOTO){File shot=pendingCapture;pendingCapture=null;if(shot==null)return;
             if(result==RESULT_OK&&shot.length()>0){outgoing.add(new Outgoing(shot,"Photo.jpg","image/jpeg"));outgoingChat=chatId;renderAttachments();}else shot.delete();return;}
         if((request!=PICK_MEDIA&&request!=PICK_FILES)||result!=RESULT_OK||data==null)return;List<Uri> uris=new ArrayList<>();
@@ -1553,6 +1634,7 @@ public class PairedActivity extends Activity {
         String themeMode=getSharedPreferences("paired",MODE_PRIVATE).getString("theme","system");
         content.addView(button("Theme: "+(themeMode.equals("light")?"Light":themeMode.equals("dark")?"Dark":"Match phone")+" (tap to change)",false,()->{String next=themeMode.equals("system")?"light":themeMode.equals("light")?"dark":"system";appTheme(next);}));gap(content,8);
         content.addView(button("Text size: "+scaleLabel(textScale)+" (tap to change)",false,()->{float next=textScale<1f?1f:textScale<1.15f?1.15f:textScale<1.3f?1.3f:0.9f;getSharedPreferences("paired",MODE_PRIVATE).edit().putFloat("text_scale",next).apply();settings();}));gap(content,8);
+        content.addView(button("Maps app for addresses: "+mapsAppLabel(),false,()->chooseMapsApp(null)));gap(content,8);
         content.addView(button("Back up app data",false,this::backupNow));gap(content,8);
         content.addView(button("Restore from a backup",false,()->{try{startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*").putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/json","text/plain","application/octet-stream"}),RESTORE_BACKUP);}catch(Exception e){toast("No file picker is available.");}}));gap(content,8);
         String mentionNames=getSharedPreferences("paired",MODE_PRIVATE).getString("mention_name","");
