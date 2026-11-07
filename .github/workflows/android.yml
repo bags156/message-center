@@ -16,7 +16,7 @@ permissions:
 
 concurrency:
   group: android-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   build:
@@ -97,11 +97,15 @@ jobs:
           path: apks
       - name: Launch Android emulator and run offline checks
         run: |
+          export PATH="$ANDROID_HOME/platform-tools:$PATH"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/message-center-avds"
+          mkdir -p "$ANDROID_AVD_HOME"
           sudo chmod 666 /dev/kvm
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "emulator" "system-images;android-35;google_apis;x86_64"
-          echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --name message-center-test --package "system-images;android-35;google_apis;x86_64" --device pixel_6
+          echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --force --name message-center-test --path "$ANDROID_AVD_HOME/message-center-test.avd" --package "system-images;android-35;google_apis;x86_64" --device pixel_6
+          test -f "$ANDROID_AVD_HOME/message-center-test.ini"
           "$ANDROID_HOME/emulator/emulator" -avd message-center-test -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > emulator.log 2>&1 &
-          adb wait-for-device
+          timeout 180 adb wait-for-device
           timeout 240 bash -c 'until adb shell getprop sys.boot_completed | tr -d "\r" | grep -q 1; do sleep 2; done'
           adb shell input keyevent 82
           adb install apks/debug/app-debug.apk
@@ -113,7 +117,7 @@ jobs:
           adb pull /sdcard/message-center.png
       - name: Collect Android diagnostics
         if: always()
-        run: adb logcat -d -s AndroidRuntime > android-runtime.txt || true
+        run: '"$ANDROID_HOME/platform-tools/adb" logcat -d -s AndroidRuntime > android-runtime.txt || true'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

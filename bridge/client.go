@@ -99,6 +99,11 @@ func (c *Client) Pair(cookies string) error {
 	defer c.gm.Disconnect()
 	ctx, cancel := context.WithTimeout(c.ctx, 3*time.Minute)
 	defer cancel()
+	// The account config supplies Google's browser device ID. Pairing with the
+	// zero UUID from NewAuthData would reuse a placeholder identity.
+	if err := c.gm.FetchConfig(ctx); err != nil {
+		return errors.New("Google account configuration could not be loaded. Finish signing in and try again.")
+	}
 	emoji, ps, err := c.gm.StartGaiaPairing(ctx, c.ctx)
 	if err != nil {
 		return pairingError(err)
@@ -136,6 +141,8 @@ func (c *Client) Start() error {
 }
 func (c *Client) Close() { c.cancel(); c.gm.Disconnect() }
 func (c *Client) ExportSession() (string, error) {
+	c.gm.AuthData.CookiesLock.RLock()
+	defer c.gm.AuthData.CookiesLock.RUnlock()
 	b, e := json.Marshal(c.gm.AuthData)
 	return string(b), e
 }
