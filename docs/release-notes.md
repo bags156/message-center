@@ -1,8 +1,7 @@
-Photos and screenshots.
+Real photos instead of blocks.
 
-- **Photos people send now come through.** Google sometimes sends a photo without its download details (end-to-end encrypted chats do this on linked devices). The app only asked your phone for the full photo when a preview had arrived; photos with no preview stayed blank. Now it always asks, shows "Getting photo from your phone…" meanwhile, and fills in the photo when your phone sends it.
-- If a photo still can't load, it says so; tap it to see why and to retry.
-- Asking your phone for photos now runs on its own, so a slow phone can't hold up sending messages.
-- **Screenshots work everywhere in the app.** The Google sign-in page used to block screenshots, and that block could stay on after signing in. Screenshots are never blocked now; the sign-in page is only hidden from the Recents preview.
+- **Fixed blocky photos.** For some photos Google puts a tiny placeholder image (a few pixels wide) inside the message and keeps the real photo on your phone. Since 0.7.2 the app treated that placeholder as the photo: it was stretched into big blocks and the real photo was never asked for. Now the placeholder is only a preview (shown blurred, not blocky), your phone is asked for the real photo, and it replaces the preview when it arrives.
+- Photos that are still loading say "Loading full photo…" at the bottom. If your phone doesn't send one, the photo says so; tap it for the reason and Retry.
+- Photos already shown as blocks are fixed too: the bad copies are no longer used.
 
-Install over 0.8.1; the package and signing key are unchanged.
+Install over 0.8.2; the package and signing key are unchanged.

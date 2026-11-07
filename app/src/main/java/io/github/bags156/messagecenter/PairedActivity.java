@@ -752,7 +752,7 @@ public class PairedActivity extends Activity {
             ImageView img=new ImageView(this);img.setScaleType(ImageView.ScaleType.CENTER_CROP);box.addView(img,new FrameLayout.LayoutParams(-1,-1));
             if(kind.equals("video")){TextView play=text("▶",20,Color.WHITE,false);play.setGravity(Gravity.CENTER);play.setBackground(oval(0x99000000));box.addView(play,new FrameLayout.LayoutParams(dp(52),dp(52),Gravity.CENTER));}
             TextView state=text("",13,Color.WHITE,false);state.setPadding(dp(12),dp(6),dp(12),dp(6));state.setBackground(shape(0x99000000,14));state.setVisibility(View.GONE);
-            box.addView(state,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));img.setTag(R.id.tile_state,state);
+            FrameLayout.LayoutParams stl=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);stl.bottomMargin=dp(12);box.addView(state,stl);img.setTag(R.id.tile_state,state);
             box.setContentDescription(kind.equals("video")?"Video. Tap to play.":"Photo. Tap to view.");
             box.setOnClickListener(v->{String problem=mediaErrors.get(mediaKey(media));if(problem!=null&&!MediaCache.file(this,media,false).isFile())mediaProblem(media,problem,img,kind.equals("video"),box);else openMedia(media);});box.setOnLongClickListener(v->{messageSheet(m);return true;});
             int height=Math.round(width*ratio);line.addView(box,new LinearLayout.LayoutParams(width,height));loadPreview(media,img,kind.equals("video"),width,height);
@@ -779,26 +779,30 @@ public class PairedActivity extends Activity {
      * chat size (unless "previews only" is chosen in Settings). Videos keep their preview frame.
      */
     private void loadPreview(JSONObject media,ImageView img,boolean video,int width,int height){
-        boolean thumb=MediaCache.hasThumbnail(media);long size=media.optLong("size");
-        boolean wantFull=!video&&MediaCache.hasFull(media)&&(!thumb||(fullPhotos()&&size<=(25L<<20)));File full=MediaCache.file(this,media,false);
-        // Google sometimes sends a photo without its download details (end-to-end encrypted chats do this on
-        // linked devices); the phone sends the full photo when asked, and the message updates by itself.
+        boolean thumb=MediaCache.hasThumbnail(media);long size=media.optLong("size");File full=MediaCache.file(this,media,false);
+        boolean wantFull=!video&&MediaCache.hasFull(media)&&(!thumb||(fullPhotos()&&size<=(25L<<20)));
+        // Google sometimes sends a photo with only a preview, or nothing at all, on linked devices (end-to-end
+        // encrypted chats do this). The phone sends the full photo when asked, and the message updates by itself.
         boolean ask=!video&&MediaCache.needsPhone(media)&&(fullPhotos()||!thumb)&&!full.isFile();
-        if(ask&&!thumb)tileState(img,media,"Getting photo from your phone…",null);
-        if(ask&&PairedService.ready())PairedService.requestFullMedia(media,false,(v,e)->{if(!e.isEmpty())tileState(img,media,"Couldn't get this photo • Tap for details",e);});
-        if(wantFull&&full.isFile()){Bitmap b=MediaCache.peekCover(full,width,height);if(b!=null){img.setTag("full");img.setImageBitmap(b);return;}}
+        if(ask)tileState(img,media,thumb?"Loading full photo…":"Getting photo from your phone…",null);
+        if(ask&&PairedService.ready())PairedService.requestFullMedia(media,false,(v,e)->{if(!e.isEmpty())tileState(img,media,thumb?"Only a preview • Tap for details":"Couldn't get this photo • Tap for details",e);});
+        if(wantFull&&full.isFile()){Bitmap b=MediaCache.peekCover(full,width,height);if(b!=null){img.setTag("full");img.setImageBitmap(b);sharp(img);tileState(img,media,null,null);return;}}
         if(thumb){File t=MediaCache.file(this,media,true);Bitmap b=t.isFile()?MediaCache.peekCover(t,width,height):null;
-            if(b!=null)img.setImageBitmap(b);
-            else if(t.isFile()||PairedService.ready())MediaCache.fetch(this,media,true,(file,err)->{if(file==null)return;
-                decoder.execute(()->{Bitmap d=MediaCache.decodeToCover(file,width,height,false);if(d!=null)img.post(()->{if(img.getTag()==null)img.setImageBitmap(d);});});});}
+            if(b!=null){img.setImageBitmap(b);if(MediaCache.tiny(t))soft(img);}
+            else if(t.isFile()||PairedService.ready()||MediaCache.hasInline(media))MediaCache.fetch(this,media,true,(file,err)->{if(file==null)return;
+                decoder.execute(()->{Bitmap d=MediaCache.decodeToCover(file,width,height,false);boolean small=MediaCache.tiny(file);
+                    if(d!=null)img.post(()->{if(img.getTag()==null){img.setImageBitmap(d);if(small)soft(img);}});});});}
         else if(video&&size>(15L<<20))return;
         if(!wantFull&&thumb)return;
         if(!full.isFile()&&!PairedService.ready())return;
         if(!full.isFile()&&!MediaCache.hasFull(media))return; // waiting for the phone (above); nothing to download yet
-        MediaCache.fetch(this,media,false,(file,err)->{if(file==null){if(!thumb)tileState(img,media,"Couldn't load • Tap for details",err);return;}
-            decoder.execute(()->{Bitmap d=MediaCache.decodeToCover(file,width,height,video&&!thumb);img.post(()->{if(d!=null){img.setTag("full");img.setImageBitmap(d);tileState(img,media,null,null);}
+        MediaCache.fetch(this,media,false,(file,err)->{if(file==null){tileState(img,media,thumb?"Only a preview • Tap for details":"Couldn't load • Tap for details",err);return;}
+            decoder.execute(()->{Bitmap d=MediaCache.decodeToCover(file,width,height,video&&!thumb);img.post(()->{if(d!=null){img.setTag("full");img.setImageBitmap(d);sharp(img);tileState(img,media,null,null);}
                 else if(!thumb)tileState(img,media,"Can't show this photo here • Tap for details","The file downloaded but Android couldn't read it as a picture.");});});});
     }
+    /** A tiny preview is blurred while the full photo loads, instead of showing as big blocks. */
+    private void soft(ImageView img){float r=dp(18);img.setRenderEffect(android.graphics.RenderEffect.createBlurEffect(r,r,android.graphics.Shader.TileMode.CLAMP));}
+    private void sharp(ImageView img){img.setRenderEffect(null);}
     /** Why a photo couldn't load, by attachment, so tapping it can explain and retry. */
     private final Map<String,String> mediaErrors=new HashMap<>();
     private static String mediaKey(JSONObject media){return media.optString("_message")+":"+media.optInt("_index",-1);}
@@ -867,7 +871,7 @@ public class PairedActivity extends Activity {
             t.setOnClickListener(v->{if(full[0]==null){toast("Still downloading…");return;}if(a[0].equals("Save"))saveToPhone(full[0],media);else share(full[0],media);});bar.addView(t);}
         box.addView(bar,new FrameLayout.LayoutParams(-1,-2,Gravity.TOP));image.setOnTap(()->bar.setVisibility(bar.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE));
         d.setContentView(box);d.show();
-        File thumb=MediaCache.file(this,media,true);if(thumb.isFile()){Bitmap t=MediaCache.peek(thumb,Math.round(getResources().getDisplayMetrics().widthPixels*0.66f));if(t!=null)image.setImageBitmap(t);}
+        File thumb=MediaCache.file(this,media,true);if(thumb.isFile()){Bitmap t=MediaCache.peek(thumb,Math.round(getResources().getDisplayMetrics().widthPixels*0.66f));if(t!=null){image.setImageBitmap(t);if(MediaCache.tiny(thumb))soft(image);}}
         if(!MediaCache.file(this,media,false).isFile()&&!PairedService.ready()){spinner.setVisibility(View.GONE);toast("Connect to Google Messages to download the full photo.");return;}
         if(!MediaCache.hasFull(media)&&!MediaCache.file(this,media,false).isFile()){
             TextView note=text("Getting the full photo from your phone…",14,Color.WHITE,false);note.setPadding(dp(14),dp(8),dp(14),dp(8));note.setBackground(shape(0x99000000,16));
@@ -887,7 +891,7 @@ public class PairedActivity extends Activity {
         ui.postDelayed(check[0],1500);}
     private void showFullPhoto(JSONObject media,Dialog d,ZoomImageView image,ProgressBar spinner,File[] full){
         MediaCache.fetch(this,media,false,(file,error)->{if(file==null){spinner.setVisibility(View.GONE);if(d.isShowing())toast(error);return;}full[0]=file;
-            decoder.execute(()->{Bitmap b=MediaCache.decode(file,2560,false);ui.post(()->{spinner.setVisibility(View.GONE);if(b!=null)image.setImageBitmap(b);else toast("This photo can't be shown here. Use Share to open it in another app.");});});});
+            decoder.execute(()->{Bitmap b=MediaCache.decode(file,2560,false);ui.post(()->{spinner.setVisibility(View.GONE);if(b!=null){image.setImageBitmap(b);sharp(image);}else toast("This photo can't be shown here. Use Share to open it in another app.");});});});
     }
     private static final int TAKE_PHOTO=43;private File pendingCapture;
     /** ⊕ button: a panel with Photos & videos (Android's photo picker, no storage permission), Camera, and Files. */

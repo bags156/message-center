@@ -44,16 +44,30 @@ final class MediaCache {
     static File file(Context context, JSONObject media, boolean thumb) {
         String id = thumb ? PairedProtocol.string(media, "thumbnailMediaID") : PairedProtocol.string(media, "mediaID");
         // Attachments without a download ID yet (preview only, or sent inline) are named by message and part.
-        if (id.isEmpty()) id = "msg:" + media.optString("_message") + ":" + media.optString("_index") + (thumb ? ":thumb" : "");
+        // ("preview2:" — earlier versions saved Google's in-message placeholder as if it were the photo.)
+        if (id.isEmpty()) id = "preview2:" + media.optString("_message") + ":" + media.optString("_index") + (thumb ? ":thumb" : ":full");
         String ext = thumb ? "jpg" : extension(media);
         return new File(dir(context), hash(id) + (thumb ? "-thumb." : ".") + ext);
     }
 
-    static boolean hasThumbnail(JSONObject media) { return !PairedProtocol.string(media, "thumbnailMediaID").isEmpty(); }
-    /** The full attachment can be downloaded now (or was sent inside the message itself). */
+    /**
+     * A preview to show first: Google's thumbnail, or the small placeholder image it sometimes puts
+     * inside the message itself. Neither is the photo; the full one is downloaded or asked for.
+     */
+    static boolean hasThumbnail(JSONObject media) { return !PairedProtocol.string(media, "thumbnailMediaID").isEmpty() || hasInline(media); }
+    static boolean hasInline(JSONObject media) { return !PairedProtocol.string(media, "mediaData").isEmpty(); }
+    /** The full attachment can be downloaded now. */
     static boolean hasFull(JSONObject media) {
-        return (!PairedProtocol.string(media, "mediaID").isEmpty() && !PairedProtocol.string(media, "decryptionKey").isEmpty()) || !PairedProtocol.string(media, "mediaData").isEmpty();
+        return !PairedProtocol.string(media, "mediaID").isEmpty() && !PairedProtocol.string(media, "decryptionKey").isEmpty();
     }
+    /** A preview this small would turn into big blocks when stretched over a photo tile; it's shown blurred instead. */
+    static boolean tiny(File file) {
+        android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options(); o.inJustDecodeBounds = true;
+        android.graphics.BitmapFactory.decodeFile(file.getPath(), o);
+        return o.outWidth > 0 && Math.max(o.outWidth, o.outHeight) < 240;
+    }
+    private static final java.util.concurrent.ExecutorService inlineWriter = java.util.concurrent.Executors.newSingleThreadExecutor();
+    private static final Handler mainThread = new Handler(Looper.getMainLooper());
     /** The full file isn't downloadable yet; the phone sends it when asked (with or without a preview). */
     static boolean needsPhone(JSONObject media) { return !hasFull(media); }
     /** Only a preview arrived; the phone sends the full file when asked. */
@@ -82,14 +96,21 @@ final class MediaCache {
         }
         String id = thumb ? PairedProtocol.string(media, "thumbnailMediaID") : PairedProtocol.string(media, "mediaID");
         String secret = thumb ? PairedProtocol.string(media, "thumbnailDecryptionKey") : PairedProtocol.string(media, "decryptionKey");
-        String inline = thumb ? "" : PairedProtocol.string(media, "mediaData");
-        if (!inline.isEmpty() && (id.isEmpty() || secret.isEmpty())) {
-            // Small attachments can come inside the message itself.
-            PairedService.executeMedia(c -> { byte[] data = android.util.Base64.decode(inline, android.util.Base64.DEFAULT);
-                File part = new File(target.getPath() + ".part"); try (java.io.FileOutputStream out = new java.io.FileOutputStream(part)) { out.write(data); }
-                if (!part.renameTo(target)) throw new Exception("There is no room to save this attachment."); return target.getPath(); }, (value, error) -> {
-                List<Done> list; synchronized (waiting) { list = waiting.remove(key); } if (list == null) return;
-                for (Done d : list) d.done(error.isEmpty() ? target : null, error); });
+        String inline = thumb && id.isEmpty() ? PairedProtocol.string(media, "mediaData") : "";
+        if (!inline.isEmpty()) {
+            // The placeholder inside the message: saved like a thumbnail (no connection needed).
+            inlineWriter.execute(() -> { String error = "";
+                try { byte[] data = android.util.Base64.decode(inline, android.util.Base64.DEFAULT);
+                    File part = new File(target.getPath() + ".part"); try (java.io.FileOutputStream out = new java.io.FileOutputStream(part)) { out.write(data); }
+                    if (!part.renameTo(target)) error = "There is no room to save this preview."; }
+                catch (Exception e) { error = "This preview couldn't be read."; }
+                String err = error; mainThread.post(() -> { List<Done> list; synchronized (waiting) { list = waiting.remove(key); } if (list == null) return;
+                    for (Done d : list) d.done(err.isEmpty() ? target : null, err); }); });
+            return;
+        }
+        if (id.isEmpty() || secret.isEmpty()) {
+            List<Done> list; synchronized (waiting) { list = waiting.remove(key); }
+            if (list != null) for (Done d : list) d.done(null, thumb ? "No preview was sent with this photo." : "This photo hasn't been sent to linked devices yet. Your phone is being asked for it.");
             return;
         }
         PairedService.executeMedia(c -> { c.downloadMedia(id, secret, target.getPath()); return target.getPath(); }, (value, error) -> {
