@@ -1,0 +1,4 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- White speech bubble with three dots, kept inside the adaptive-icon safe zone. -->
+    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd" android:pathData="M39.0,37.8L69.0,37.8Q73.8,37.8 73.8,42.6L73.8,58.8Q73.8,63.6 69.0,63.6L51.0,63.6L40.8,70.2L42.6,63.6L39.0,63.6Q34.2,63.6 34.2,58.8L34.2,42.6Q34.2,37.8 39.0,37.8ZM41.4,50.4a2.4,2.4 0,1 0,4.8,0a2.4,2.4 0,1 0,-4.8,0M51.6,50.4a2.4,2.4 0,1 0,4.8,0a2.4,2.4 0,1 0,-4.8,0M61.8,50.4a2.4,2.4 0,1 0,4.8,0a2.4,2.4 0,1 0,-4.8,0"/>
+</vector>

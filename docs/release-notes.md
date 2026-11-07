@@ -1,8 +1,10 @@
-Voice message transcripts, and chats open without sliding.
+Stays in sync with Google Messages, no yellow flash, proper app icon.
 
-- **Transcribe voice messages.** Tap **Transcribe** under any voice message to turn it into text, right on your phone; nothing is uploaded. The transcript replaces the link and is saved, so each message is transcribed once. Long-press to copy it.
-  - Uses Android's offline speech recognition. If your phone doesn't have it, or doesn't have your language downloaded yet, you'll see a message saying so; installing "Speech Recognition & Synthesis from Google" from the Play Store adds it.
-  - The first time, Android asks for microphone access. Its speech recognizer requires that permission even to read a message; nothing is recorded.
-- **Chats open in place.** Opening a conversation no longer shows a scroll down to the newest message; it appears already at the bottom. It also stays at the bottom when the keyboard opens or a link preview loads.
+- **Sync with your phone.** Google sends live updates to one paired session and can quietly stop. Message Center now checks Google's latest chats every 5 minutes and every time you open it (or expand a bubble). If anything was missed, it pulls the messages in, notifies you of recent unread ones, and re-registers with Google so live updates resume. Messages you send from Google Messages and chats you read there now show up here.
+- **Screens refresh when you come back.** A chat or the inbox re-draws with anything that arrived while it was hidden, including inside a collapsed bubble, then refreshes from Google.
+- **Notifications follow the phone.** When you read a chat or reply in Google Messages, its Message Center notification goes away (bubbles stay).
+- **If Google Messages for web is opened somewhere else,** Message Center says so and takes the connection back the next time you open it.
+- **No yellow flash.** Tapping rows, menus, and links now shows a soft ripple instead of the old Android highlight.
+- **App icon.** The launcher icon, the badge on bubbles, and the status-bar icon are redrawn as proper Android adaptive icons (no more small icon on a white circle).
 
-Install over 0.6.0; the package and signing key are unchanged.
+Install over 0.6.1; the package and signing key are unchanged.

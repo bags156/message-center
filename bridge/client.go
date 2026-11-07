@@ -80,6 +80,9 @@ func (c *Client) handle(evt any) {
 		if payload, ok := settingsPayload(e); ok {
 			c.emit("SETTINGS", payload)
 		}
+	case *events.BrowserActive:
+		// Google pushes live updates to one paired session; another one just took over.
+		c.emit("INACTIVE", "{}")
 	case *events.AuthTokenRefreshed:
 		c.emit("SAVE_SESSION", "{}")
 	case *events.GaiaLoggedOut:
@@ -678,4 +681,15 @@ func reactionAction(action string) (gmproto.SendReactionRequest_Action, error) {
 		return gmproto.SendReactionRequest_SWITCH, nil
 	}
 	return 0, errors.New("Unknown reaction action.")
+}
+
+// Reactivate makes this the session Google sends live updates to. Google pushes
+// to one paired session at a time and can stop pushing without an error.
+func (c *Client) Reactivate() error {
+	ctx, cancel := c.requestContext()
+	defer cancel()
+	if e := c.gm.SetActiveSession(ctx); e != nil {
+		return errors.New("Could not reactivate the connection.")
+	}
+	return nil
 }

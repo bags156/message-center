@@ -15,8 +15,8 @@
         android:allowBackup="false"
         android:fullBackupContent="false"
         android:label="Message Center"
-        android:icon="@drawable/ic_app"
-        android:roundIcon="@drawable/ic_app"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/AppTheme"
         android:supportsRtl="true"
         android:usesCleartextTraffic="false">

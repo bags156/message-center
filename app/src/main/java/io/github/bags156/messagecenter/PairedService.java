@@ -52,7 +52,8 @@ public final class PairedService extends Service {
     private volatile Client client;
     private volatile boolean ready;
     private volatile String status="Disconnected",emoji="";
-    private PairedStore store; private SessionVault vault; private Outbox outbox; private boolean flushing;
+    private PairedStore store; private SessionVault vault; private Outbox outbox; private boolean flushing,syncing,inactive;
+    private long lastSync;private static final long SYNC_EVERY_MS=5*60_000;private final Runnable syncTick=()->requestSync(false);
     static final String KEY_REPLY="reply";
     /** Shortcut category matched by res/xml/shortcuts.xml, so recent chats appear in Android's share sheet. */
     static final String SHARE_CATEGORY="io.github.bags156.messagecenter.SHARE_TARGET";
@@ -134,16 +135,18 @@ public final class PairedService extends Service {
                 case "PAIR_EMOJI" -> {emoji=new JSONObject(payload).optString("emoji");update("Approve the matching emoji in Google Messages");}
                 case "READY" -> {
                     ready=true;emoji="";update("Connected to Google Messages");
-                    saveSession(token);main.post(this::flushOutbox);
+                    saveSession(token);main.post(this::flushOutbox);main.removeCallbacks(syncTick);main.postDelayed(syncTick,SYNC_EVERY_MS);
                     network.execute(()->{if(generation.get()==token)try{chats(client,"",1);}catch(Exception e){update("Connected • tap Refresh to load conversations");}});
                 }
                 case "SAVE_SESSION" -> saveSession(token);
                 case "SETTINGS" -> {JSONObject rcs=new JSONObject(payload);new ChatSettings(this).setPhoneReceipts(rcs.optBoolean("rcsEnabled") && rcs.optBoolean("sendReadReceipts"));changed(kind);}
-                case "CONVERSATION" -> {store.chat(new JSONObject(payload));changed(kind);}
+                case "CONVERSATION" -> {applyChat(new JSONObject(payload));changed(kind);}
                 case "MESSAGE" -> {
                     JSONObject envelope=new JSONObject(payload),message=envelope.getJSONObject("message");
                     boolean existed=store.message(message,0,true);touch(message);
                     if(!PairedProtocol.outgoing(message) && typing.remove(message.optString("conversationID"))!=null)changed("TYPING");
+                    // Answered on the phone: this chat's notification here is no longer needed.
+                    if(PairedProtocol.outgoing(message)&&!envelope.optBoolean("old",true))dismiss(message.optString("conversationID"));
                     if(PairedProtocol.notifyLive(envelope.optBoolean("old",true),existed,message))notifyMessage(message);
                     changed(kind);
                 }
@@ -156,7 +159,8 @@ public final class PairedService extends Service {
                 case "AUTH_REQUIRED" -> {ready=false;getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("enabled",false).apply();update("Google session expired. Sign in again.");}
                 case "DISCONNECTED" -> {ready=false;update("Connection ended. Tap Reconnect in Settings.");}
                 case "RECONNECTING" -> {ready=false;update("Waiting for Google Messages • check network and battery settings");}
-                case "RECOVERED" -> {ready=true;update("Connected to Google Messages");main.post(this::flushOutbox);}
+                case "RECOVERED" -> {ready=true;update("Connected to Google Messages");main.post(this::flushOutbox);main.post(()->requestSync(false));}
+                case "INACTIVE" -> {inactive=true;update("Google Messages for web is open somewhere else. Open Message Center to switch back.");}
                 default -> { }
             }
         }catch(Exception e){update("A Google update could not be saved. Refresh the conversation.");}
@@ -176,11 +180,46 @@ public final class PairedService extends Service {
     }
     private String chats(Client source,String cursor,int folder) throws Exception {
         /* app folder 3 = Google's spam & blocked folder (5) */JSONObject response=new JSONObject(source.chats(cursor,folder==3?5:folder));JSONArray chats=response.optJSONArray("conversations");
-        if(chats!=null)for(int i=0;i<chats.length();i++)store.chat(chats.getJSONObject(i));
+        if(chats!=null)for(int i=0;i<chats.length();i++)applyChat(chats.getJSONObject(i));
         String next=PairedProtocol.cursor(response),note="";
         if(!next.isEmpty() && next.equals(cursor)){next="";note="Google repeated a history cursor; stopped to prevent a loop.";}
         if(next.isEmpty())note=response.optString("cursorBytes","").isEmpty()?"End of the conversation pages Google supplied.":"Google returned an unsupported conversation cursor. Some older chats may be unavailable.";
         store.page("folder:"+folder,next,note);changed("CONVERSATION");return "";
+    }
+    /** Saves a chat from Google; once Google says it's read (on the phone or anywhere), this app's notification goes too. */
+    private void applyChat(JSONObject c) {store.chat(c);if(!c.optBoolean("unread"))dismiss(c.optString("conversationID"));}
+    /** Drops a chat's notification if this app posted one (bubbles stay). */
+    private void dismiss(String id) {synchronized(notified){if(notified.remove(id)==null)return;}clearNotification(this,id);}
+    /** Called when the app is opened: catch up with Google now (at most every 20 seconds). */
+    static void syncNow() {PairedService s=current;if(s==null)return;
+        if(s.inactive&&s.ready){s.inactive=false;s.network.execute(()->{try{if(s.client!=null){s.client.reactivate();s.update("Connected to Google Messages");}}catch(Exception ignored){}});}
+        s.requestSync(true);}
+    private void requestSync(boolean throttled) {
+        if(!ready||syncing||network.isShutdown())return;long now=System.currentTimeMillis();if(throttled&&now-lastSync<20_000)return;
+        syncing=true;lastSync=now;int token=generation.get();
+        network.execute(()->{try{if(generation.get()==token&&client!=null&&ready)sync(client);}catch(Exception ignored){}
+            finally{main.post(()->{syncing=false;main.removeCallbacks(syncTick);if(ready)main.postDelayed(syncTick,SYNC_EVERY_MS);});}});
+    }
+    /**
+     * Compares Google's newest chats with what arrived live. Google can stop pushing to a
+     * paired session without an error; when that happened, the missed messages are fetched,
+     * recent unread ones are notified, and the session is re-armed.
+     */
+    private void sync(Client source) throws Exception {
+        JSONObject response=new JSONObject(source.chats("",1));JSONArray chats=response.optJSONArray("conversations");if(chats==null)return;
+        List<String> missed=new ArrayList<>();
+        for(int i=0;i<chats.length();i++){JSONObject c=chats.getJSONObject(i);String id=c.optString("conversationID");JSONObject old=store.chat(id);
+            if(old!=null&&PairedProtocol.time(c)>PairedProtocol.time(old)+1500)missed.add(id);applyChat(c);}
+        if(!missed.isEmpty()){
+            long recent=System.currentTimeMillis()-30*60_000;ChatSettings settings=new ChatSettings(this);
+            for(String id:missed.subList(0,Math.min(5,missed.size()))){JSONObject chat=store.chat(id);long version=store.snapshot();
+                JSONArray ms=new JSONObject(source.messages(id,"")).optJSONArray("messages");if(ms==null)continue;
+                for(int j=0;j<ms.length();j++){JSONObject m=ms.getJSONObject(j);boolean existed=store.message(m,version,false);
+                    if(!existed&&!PairedProtocol.outgoing(m,chat)&&PairedProtocol.time(m)>recent&&chat!=null&&chat.optBoolean("unread")&&!settings.muted(id))main.post(()->postConversation(id,m,false,false));}}
+            try{source.reactivate();}catch(Exception ignored){}
+            changed("MESSAGE");
+        }
+        changed("CONVERSATION");
     }
     static void loadChats(String cursor,int folder,Result done) {
         execute(c->current.chats(c,cursor,folder),done);
@@ -245,7 +284,7 @@ public final class PairedService extends Service {
         return PendingIntent.getActivity(this,id.isEmpty()?0:1,intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
     }
     private Notification connectionNotification() {
-        return new Notification.Builder(this,CONNECTION).setSmallIcon(R.drawable.ic_app).setContentTitle("Message Center connection")
+        return new Notification.Builder(this,CONNECTION).setSmallIcon(R.drawable.ic_notification).setContentTitle("Message Center connection")
             .setContentText(status).setContentIntent(openIntent("")).setOngoing(true).setOnlyAlertOnce(true).setShowWhen(false).build();
     }
     /** A conversation-style notification: who sent it, the chat (for groups), the text, and their photo when one is cached. */
@@ -271,7 +310,7 @@ public final class PairedService extends Service {
             Person.Builder who=new Person.Builder().setName(sender).setKey(pid.isEmpty()?sender:pid);if(photo!=null)who.setIcon(Icon.createWithBitmap(photo));
             style.addMessage(new Notification.MessagingStyle.Message(text,PairedProtocol.time(r),who.build()));lastPhoto=photo;lastText=group?sender+": "+text:text;
         }
-        Notification.Builder builder=new Notification.Builder(this,MESSAGES).setSmallIcon(R.drawable.ic_app).setStyle(style).setContentTitle(title).setContentText(lastText)
+        Notification.Builder builder=new Notification.Builder(this,MESSAGES).setSmallIcon(R.drawable.ic_notification).setStyle(style).setContentTitle(title).setContentText(lastText)
             .setCategory(Notification.CATEGORY_MESSAGE).setVisibility(Notification.VISIBILITY_PRIVATE).setContentIntent(openIntent(id)).setAutoCancel(true)
             .setWhen(recent.isEmpty()?System.currentTimeMillis():PairedProtocol.time(recent.get(recent.size()-1))).setShowWhen(true).setNumber(m==null?0:recent.size());
         if(!group&&lastPhoto!=null)builder.setLargeIcon(lastPhoto);
@@ -391,7 +430,7 @@ public final class PairedService extends Service {
     private void changed(String kind) {sendBroadcast(new Intent(CHANGED).setPackage(getPackageName()).putExtra("kind",kind));}
     @Override public IBinder onBind(Intent intent) {return null;}
     @Override public void onDestroy() {
-        generation.incrementAndGet();ready=false;if(current==this)current=null;
+        generation.incrementAndGet();ready=false;main.removeCallbacks(syncTick);if(current==this)current=null;
         Client old=client;client=null;network.shutdownNow();events.shutdownNow();media.shutdownNow();
         if(old!=null)new Thread(old::close,"paired-disconnect").start();
         // SQLiteOpenHelper stays alive until in-flight JNI calls return; the process

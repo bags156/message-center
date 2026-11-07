@@ -129,7 +129,10 @@ public class PairedActivity extends Activity {
     @Override protected void onResume(){super.onResume();resumed=true;if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
         if(PairedService.ready()&&screen.equals("pair")){CookieManager.getInstance().removeAllCookies(null);inbox();askNotifications();}
         else if(!bubble()&&!PairedService.emoji().isEmpty()&&login==null)pairing();
-        else {updateStatus();if(screen.equals("chat")){markReadIfAllowed();updateTyping();if(!bubble())PairedService.clearNotification(this,chatId);}else if(screen.equals("inbox"))refreshInbox(false);}}
+        else {updateStatus();PairedService.syncNow();
+            // Updates that arrived while this screen was hidden (or a bubble was collapsed) are shown now, then refreshed from Google.
+            if(screen.equals("chat")){renderMessages(false);if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();if(!bubble())PairedService.clearNotification(this,chatId);}
+            else if(screen.equals("inbox")){renderInbox();refreshInbox(false);}}}
     @Override protected void onPause(){resumed=false;remember();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&player.isPlaying()){player.pause();updatePlayLabel();}if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
     @Override protected void onSaveInstanceState(Bundle out){remember();out.putString("chat",chatId);out.putString("reply",replyId);out.putString("draft",drafts.getOrDefault(chatId,""));super.onSaveInstanceState(out);}
     @Override public void onBackPressed(){if(screen.equals("details")){thread(chatId);return;}if(bubble()){super.onBackPressed();return;}if(login!=null){destroyLogin();inbox();}else if(screen.equals("inbox")&&folder!=1){folder=1;inbox();}else if(!screen.equals("inbox")){remember();inbox();}else super.onBackPressed();}
@@ -156,7 +159,7 @@ public class PairedActivity extends Activity {
     private TextView button(String title,boolean primary,Runnable action){TextView b=text(title,15,primary?Color.WHITE:BLUE,true);b.setGravity(Gravity.CENTER);b.setPadding(dp(14),dp(12),dp(14),dp(12));b.setMinHeight(dp(48));b.setBackground(shape(primary?BLUE:card,16));b.setOnClickListener(v->action.run());return b;}
     private ImageView icon(int drawable,int color,String label,Runnable action){
         ImageView i=new ImageView(this);i.setImageResource(drawable);i.setImageTintList(ColorStateList.valueOf(color));i.setPadding(dp(12),dp(12),dp(12),dp(12));
-        i.setContentDescription(label);if(action!=null){i.setOnClickListener(v->action.run());i.setBackground(getDrawable(android.R.drawable.list_selector_background));}
+        i.setContentDescription(label);if(action!=null){i.setOnClickListener(v->action.run());i.setBackground(ripple());}
         i.setLayoutParams(new LinearLayout.LayoutParams(dp(48),dp(48)));return i;}
     private EditText input(String hint){EditText e=new EditText(this);e.setHint(hint);e.setTextColor(ink);e.setHintTextColor(muted);e.setTextSize(16);e.setPadding(dp(16),dp(12),dp(16),dp(12));e.setBackground(shape(card,18));return e;}
     private void header(String title,Runnable back){LinearLayout r=row();if(back!=null)r.addView(icon(R.drawable.ic_back,ink,"Back",back));TextView heading=text(title,24,ink,false);heading.setPadding(dp(back==null?4:8),0,dp(8),0);r.addView(heading,new LinearLayout.LayoutParams(0,-2,1));root.addView(r);gap(root,10);}
@@ -193,6 +196,8 @@ public class PairedActivity extends Activity {
         TextView letter=text(PairedProtocol.initial(chat==null?"":PairedProtocol.title(chat)),Math.round(size*0.42f),Color.WHITE,false);letter.setGravity(Gravity.CENTER);
         box.addView(letter,new FrameLayout.LayoutParams(-1,-1));return box;
     }
+    /** A soft press ripple in the text color (the old list selector flashed yellow on some phones). */
+    private android.graphics.drawable.Drawable ripple(){return new android.graphics.drawable.RippleDrawable(ColorStateList.valueOf((ink&0x00ffffff)|0x24000000),null,new ColorDrawable(Color.WHITE));}
     private ImageView roundImage(Bitmap b){ImageView img=new ImageView(this);img.setImageBitmap(b);img.setScaleType(ImageView.ScaleType.CENTER_CROP);
         img.setOutlineProvider(new ViewOutlineProvider(){@Override public void getOutline(View v,Outline o){o.setOval(0,0,v.getWidth(),v.getHeight());}});img.setClipToOutline(true);return img;}
     /** One person's photo, or their initial on their Google color. */
@@ -237,7 +242,7 @@ public class PairedActivity extends Activity {
         if(folder!=1)bar.addView(icon(R.drawable.ic_back,ink,"Back",()->{folder=1;inbox();}));
         bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
         if(new SessionVault(this).exists()){bar.addView(icon(R.drawable.ic_search,ink,"Search",this::toggleSearch));bar.addView(icon(R.drawable.ic_more,ink,"More options",null));
-            View more=bar.getChildAt(bar.getChildCount()-1);more.setBackground(getDrawable(android.R.drawable.list_selector_background));more.setOnClickListener(this::inboxMenu);}
+            View more=bar.getChildAt(bar.getChildCount()-1);more.setBackground(ripple());more.setOnClickListener(this::inboxMenu);}
         root.addView(bar,new LinearLayout.LayoutParams(-1,dp(64)));connection();
         if(!new SessionVault(this).exists()){
             note(root,"On-device pairing • experimental\n\nConnect directly to your Google Messages account. Google Messages stays installed as your default SMS/RCS app. No extra server is required.");
@@ -275,7 +280,7 @@ public class PairedActivity extends Activity {
     private View inboxRow(JSONObject c){
         String id=c.optString("conversationID");boolean unread=chatSettings.unread(c),pinned=chatSettings.pinned(c);String draft=drafts.getOrDefault(id,"").trim();
         LinearLayout entry=row();entry.setPadding(dp(4),dp(12),dp(4),dp(12));entry.setGravity(Gravity.CENTER_VERTICAL);
-        entry.setBackground(getDrawable(android.R.drawable.list_selector_background));
+        entry.setBackground(ripple());
         entry.addView(avatar(c,52));
         LinearLayout middle=vertical();middle.setPadding(dp(16),0,dp(8),0);
         TextView title=text(PairedProtocol.title(c),18,ink,unread);title.setSingleLine(true);title.setEllipsize(TextUtils.TruncateAt.END);middle.addView(title);
@@ -329,7 +334,7 @@ public class PairedActivity extends Activity {
     private void chooseTheme(String id){
         LinearLayout list=vertical();list.setPadding(dp(8),dp(8),dp(8),dp(8));AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Chat theme").setView(list).setNegativeButton("Cancel",null).create();
         String current=chatSettings.theme(id).key;
-        for(ChatTheme t:ChatTheme.ALL){LinearLayout r=row();r.setPadding(dp(16),dp(10),dp(16),dp(10));r.setBackground(getDrawable(android.R.drawable.list_selector_background));
+        for(ChatTheme t:ChatTheme.ALL){LinearLayout r=row();r.setPadding(dp(16),dp(10),dp(16),dp(10));r.setBackground(ripple());
             View swatch=new View(this);GradientDrawable sw=oval(t.bubble(dark));sw.setStroke(dp(3),t.accent(dark));swatch.setBackground(sw);r.addView(swatch,new LinearLayout.LayoutParams(dp(32),dp(32)));
             TextView label=text(t.label,16,ink,t.key.equals(current));label.setPadding(dp(16),0,0,0);r.addView(label,new LinearLayout.LayoutParams(0,-2,1));
             if(t.key.equals(current))r.addView(text("✓",18,t.accent(dark),true));
@@ -353,7 +358,7 @@ public class PairedActivity extends Activity {
         bar.addView(who,new LinearLayout.LayoutParams(0,-1,1));
         String number=PairedProtocol.number(PairedProtocol.other(c));
         if(!number.isEmpty())bar.addView(icon(R.drawable.ic_call,ink,"Call",()->{try{startActivity(new Intent(Intent.ACTION_DIAL,Uri.parse("tel:"+number)));}catch(Exception e){toast("No phone app is available.");}}));
-        ImageView more=icon(R.drawable.ic_more,ink,"More options",null);more.setBackground(getDrawable(android.R.drawable.list_selector_background));more.setOnClickListener(this::chatMenu);bar.addView(more);
+        ImageView more=icon(R.drawable.ic_more,ink,"More options",null);more.setBackground(ripple());more.setOnClickListener(this::chatMenu);bar.addView(more);
         root.addView(bar,new LinearLayout.LayoutParams(-1,dp(64)));connection();
         scroll=new ScrollView(this);scroll.setVerticalScrollBarEnabled(false);items=vertical();items.setPadding(dp(12),dp(8),dp(12),dp(8));scroll.addView(items);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         // Chats never animate on their own; only an explicit jump (search, reply quote) scrolls smoothly.
@@ -449,7 +454,7 @@ public class PairedActivity extends Activity {
         GradientDrawable shape=new GradientDrawable();shape.setColor(outgoing?theme.bubble(dark):surface);
         shape.setCornerRadii(outgoing?new float[]{big,big,top,top,bottomR,bottomR,big,big}:new float[]{top,top,big,big,big,big,bottomR,bottomR});b.setBackground(shape);
         TextView text=text(fallback!=null?fallback:body,17,outgoing?theme.onBubble(dark):ink,false);text.setLineSpacing(0,1.1f);text.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));b.addView(text);
-        if(Linkify.addLinks(text,Linkify.WEB_URLS|Linkify.EMAIL_ADDRESSES|Linkify.PHONE_NUMBERS)){text.setLinkTextColor(outgoing?theme.onBubble(dark):ink);text.setMovementMethod(LinkMovementMethod.getInstance());text.setOnLongClickListener(v->{messageSheet(m);return true;});}
+        if(Linkify.addLinks(text,Linkify.WEB_URLS|Linkify.EMAIL_ADDRESSES|Linkify.PHONE_NUMBERS)){text.setLinkTextColor(outgoing?theme.onBubble(dark):ink);text.setHighlightColor(((outgoing?theme.onBubble(dark):ink)&0x00ffffff)|0x26000000);text.setMovementMethod(LinkMovementMethod.getInstance());text.setOnLongClickListener(v->{messageSheet(m);return true;});}
         b.setOnLongClickListener(v->{messageSheet(m);return true;});b.setOnClickListener(v->{});
         line.addView(b,new LinearLayout.LayoutParams(-2,-2));wrap.addView(line,new LinearLayout.LayoutParams(-1,-2));
         String url=linkPreviewsOn()?ChatText.firstUrl(fallback!=null?fallback:body):"";if(!url.isEmpty()){gap(wrap,4);wrap.addView(linkCard(url,outgoing),new LinearLayout.LayoutParams(-1,-2));}
@@ -577,7 +582,7 @@ public class PairedActivity extends Activity {
         sheetAction(content,"Delete message…",()->{d[0].dismiss();deleteMessage(m);});
         d[0]=sheet(content);}
     private void sheetAction(LinearLayout parent,String label,Runnable action){TextView t=text(label,17,ink,false);t.setPadding(dp(8),dp(14),dp(8),dp(14));
-        t.setBackground(getDrawable(android.R.drawable.list_selector_background));t.setOnClickListener(v->action.run());parent.addView(t,new LinearLayout.LayoutParams(-1,-2));}
+        t.setBackground(ripple());t.setOnClickListener(v->action.run());parent.addView(t,new LinearLayout.LayoutParams(-1,-2));}
     private void react(JSONObject m,String emoji,String action){JSONObject chat=store.chat(chatId);if(chat==null){error("Refresh this conversation first.");return;}
         PairedService.execute(cl->{cl.react(chat.toString(),m.optString("messageID"),emoji,action);return "";},(v,e)->{if(!e.isEmpty())error(e);else loadMessages(false);});}
     private void startReply(JSONObject m){if(replyPanel==null||composer==null)return;JSONObject c=store.chat(chatId);replyId=m.optString("messageID");
@@ -604,7 +609,7 @@ public class PairedActivity extends Activity {
         content.addView(top,new LinearLayout.LayoutParams(-1,-2));gap(content,20);
         content.addView(text(group?"Members":"Contact",14,muted,true));gap(content,4);
         for(JSONObject p:people){String name=PairedProtocol.name(p),number=p.optString("formattedNumber",PairedProtocol.number(p));
-            LinearLayout r=row();r.setPadding(dp(4),dp(10),dp(4),dp(10));r.setBackground(getDrawable(android.R.drawable.list_selector_background));r.addView(personAvatar(p,name,44));
+            LinearLayout r=row();r.setPadding(dp(4),dp(10),dp(4),dp(10));r.setBackground(ripple());r.addView(personAvatar(p,name,44));
             LinearLayout texts=vertical();texts.setPadding(dp(16),0,dp(8),0);texts.addView(text(name,17,ink,false));if(!number.isEmpty()&&!number.equals(name))texts.addView(text(number,14,muted,false));
             r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));r.setOnClickListener(v->memberActions(p));content.addView(r);}
         if(group){LinearLayout me=row();me.setPadding(dp(4),dp(10),dp(4),dp(10));me.addView(personAvatar(null,"You",44));TextView you=text("You",17,ink,false);you.setPadding(dp(16),0,0,0);me.addView(you);content.addView(me);}
@@ -855,7 +860,7 @@ public class PairedActivity extends Activity {
             if(!ql.isEmpty()&&!name.toLowerCase(Locale.ROOT).contains(ql)&&(qd.length()<3||!ChatText.digits(n).contains(qd)))continue;
             shown.add(n);items.addView(contactRow(name.isEmpty()?formatted:name,n,formatted,ct.optString("avatarHexColor")));added++;}}
     private TextView sectionLabel(String label){TextView t=text(label,14,muted,true);t.setPadding(dp(8),dp(14),dp(8),dp(6));return t;}
-    private View contactRow(String name,String number,String formatted,String hex){LinearLayout r=row();r.setPadding(dp(8),dp(8),dp(8),dp(8));r.setBackground(getDrawable(android.R.drawable.list_selector_background));
+    private View contactRow(String name,String number,String formatted,String hex){LinearLayout r=row();r.setPadding(dp(8),dp(8),dp(8),dp(8));r.setBackground(ripple());
         JSONObject p=new JSONObject();try{p.put("avatarHexColor",hex);}catch(Exception ignored){}r.addView(personAvatar(p,name,44));
         LinearLayout texts=vertical();texts.setPadding(dp(16),0,dp(8),0);texts.addView(text(name,17,ink,false));if(!formatted.isEmpty()&&!formatted.equals(name))texts.addView(text(formatted,14,muted,false));
         r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));
@@ -899,7 +904,7 @@ public class PairedActivity extends Activity {
             public void onTextChanged(CharSequence s,int st,int b,int cc){String query=s.toString();int g=++generation[0];
                 decoder.execute(()->{List<JSONObject> found=query.trim().length()<2?new ArrayList<>():store.search(id,query,60);ui.post(()->{if(g!=generation[0])return;results.removeAllViews();
                     if(query.trim().length()<2){results.addView(hint);return;}if(found.isEmpty()){results.addView(text("No matches in synced messages",14,muted,false));return;}
-                    for(JSONObject m:found){LinearLayout r=vertical();r.setPadding(dp(4),dp(10),dp(4),dp(10));r.setBackground(getDrawable(android.R.drawable.list_selector_background));
+                    for(JSONObject m:found){LinearLayout r=vertical();r.setPadding(dp(4),dp(10),dp(4),dp(10));r.setBackground(ripple());
                         r.addView(text((PairedProtocol.outgoing(m,c)?"You":senderName(m,c))+" • "+separatorStamp(PairedProtocol.time(m)),12,muted,false));
                         TextView t=text(PairedProtocol.text(m),15,ink,false);t.setMaxLines(3);t.setEllipsize(TextUtils.TruncateAt.END);r.addView(t);
                         r.setOnClickListener(v->{d.dismiss();showMessage(m);});results.addView(r);}});});}});
