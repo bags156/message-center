@@ -1,5 +1,7 @@
 Quality-of-life update.
 
+- **Double-tap to like.** Double-tap a message to react with 👍.
+- **No repeat reactions.** Choosing the reaction you already gave does nothing, so the other person isn't sent another update (iPhone users would see a new "Liked…" message each time). To take a reaction back, long-press → Remove your reaction.
 - **Copy one-time codes.** Messages with a verification or login code show a "Copy code" button under the message, and the notification has a Copy code action.
 - **Swipe gestures.** Swipe a message right to reply. In the inbox, swipe a chat left to archive it (or unarchive it from Archived), and right to mark it read or unread.
 - **Jump to latest.** When you scroll up in a chat, a ↓ button appears; it shows how many new messages arrived while you were reading.

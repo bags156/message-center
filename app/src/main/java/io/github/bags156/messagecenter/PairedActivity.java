@@ -469,7 +469,7 @@ public class PairedActivity extends Activity {
         // One to three emoji alone are shown large, without a bubble.
         if(media.isEmpty()&&target.isEmpty()&&fallback==null){int jumbo=ChatText.emojiOnly(body);if(jumbo>0){text.setTextSize(jumbo==1?48:jumbo==2?40:34);b.setBackground(null);b.setPadding(dp(4),0,dp(4),0);}}
         if(Linkify.addLinks(text,Linkify.WEB_URLS|Linkify.EMAIL_ADDRESSES|Linkify.PHONE_NUMBERS)){text.setLinkTextColor(outgoing?theme.onBubble(dark):ink);text.setHighlightColor(((outgoing?theme.onBubble(dark):ink)&0x00ffffff)|0x26000000);text.setMovementMethod(LinkMovementMethod.getInstance());text.setOnLongClickListener(v->{messageSheet(m);return true;});}
-        b.setOnLongClickListener(v->{messageSheet(m);return true;});b.setOnClickListener(v->{});
+        b.setOnLongClickListener(v->{messageSheet(m);return true;});b.setOnClickListener(v->tapped(m,b));if(text.getMovementMethod()!=null)text.setOnClickListener(v->tapped(m,b));
         line.addView(b,new LinearLayout.LayoutParams(-2,-2));wrap.addView(line,new LinearLayout.LayoutParams(-1,-2));
         String url=linkPreviewsOn()?ChatText.firstUrl(fallback!=null?fallback:body):"";if(!url.isEmpty()){gap(wrap,4);wrap.addView(linkCard(url,outgoing),new LinearLayout.LayoutParams(-1,-2));}
         return wrap;
@@ -577,13 +577,15 @@ public class PairedActivity extends Activity {
             thread(chat.getString("conversationID"));}catch(Exception ex){error("The new conversation could not be opened.");}});}
     /** Long-press a message: react (tap your current reaction to remove it), reply, copy, or see reactions. */
     private void messageSheet(JSONObject m){JSONObject c=store.chat(chatId);LinearLayout content=vertical();Dialog[] d=new Dialog[1];
-        List<String[]> reactors=PairedProtocol.reactors(m);String mine="";for(String[] r:reactors)if(PairedProtocol.isMe(c,r[1]))mine=r[0];
+        List<String[]> reactors=PairedProtocol.reactors(m);String mine=myReaction(m,c);
         List<String> choices=new ArrayList<>(java.util.Arrays.asList(REACTIONS));if(!mine.isEmpty()&&!choices.contains(mine)){choices.add(0,mine);choices.remove(choices.size()-1);}
         LinearLayout emojis=row();String current=mine;
         for(String e:choices){TextView t=text(e,26,ink,false);t.setGravity(Gravity.CENTER);boolean selected=e.equals(current);if(selected)t.setBackground(oval(fab));
-            t.setContentDescription(selected?"Remove your "+e+" reaction":"React with "+e);
-            t.setOnClickListener(v->{d[0].dismiss();react(m,e,selected?"remove":current.isEmpty()?"add":"switch");});emojis.addView(t,new LinearLayout.LayoutParams(0,dp(50),1));}
+            t.setContentDescription(selected?"Your reaction: "+e:"React with "+e);
+            // Picking the reaction you already gave changes nothing, so nothing is sent.
+            t.setOnClickListener(v->{d[0].dismiss();if(!selected)react(m,e,current.isEmpty()?"add":"switch");});emojis.addView(t,new LinearLayout.LayoutParams(0,dp(50),1));}
         content.addView(emojis);gap(content,10);
+        if(!mine.isEmpty())sheetAction(content,"Remove your "+mine+" reaction",()->{d[0].dismiss();react(m,current,"remove");});
         sheetAction(content,"Reply",()->{d[0].dismiss();startReply(m);});
         String code=PairedProtocol.outgoing(m,c)?"":ChatText.oneTimeCode(PairedProtocol.text(m));if(!code.isEmpty())sheetAction(content,"Copy code "+code,()->{d[0].dismiss();copyCode(code);});
         sheetAction(content,starred.has(m.optString("messageID"))?"Unstar":"Star",()->{d[0].dismiss();starred.toggle(m);renderMessages(false);});
@@ -607,8 +609,28 @@ public class PairedActivity extends Activity {
         for(int i=0;i<labels.size();i++){Runnable a=actions.get(i);String label=labels.get(i);TextView row=sheetAction(list,label,()->{d[0].dismiss();a.run();});
             if(label.startsWith("Delete")||label.startsWith("Block"))row.setTextColor(danger);}
         d[0]=sheet(content);}
+    /** Your own reaction on a message, or "" — including one just sent that Google hasn't echoed back yet. */
+    private String myReaction(JSONObject m,JSONObject c){String id=m.optString("messageID");Long at=sentReactionAt.get(id);
+        if(at!=null&&android.os.SystemClock.uptimeMillis()-at<20_000)return sentReactions.get(id);
+        String mine="";for(String[] r:PairedProtocol.reactors(m))if(PairedProtocol.isMe(c,r[1]))mine=r[0];return mine;}
+    private static boolean sameEmoji(String a,String b){return a.replace("\uFE0F","").equals(b.replace("\uFE0F",""));}
+    /** Sends a reaction, unless it is the one you already gave (so the other person isn't sent a repeat). */
     private void react(JSONObject m,String emoji,String action){JSONObject chat=store.chat(chatId);if(chat==null){error("Refresh this conversation first.");return;}
-        PairedService.execute(cl->{cl.react(chat.toString(),m.optString("messageID"),emoji,action);return "";},(v,e)->{if(!e.isEmpty())error(e);else loadMessages(false);});}
+        String id=m.optString("messageID"),mine=myReaction(m,chat);
+        if(action.equals("remove")?mine.isEmpty():sameEmoji(emoji,mine))return;
+        String sent=action.equals("remove")?"":emoji;sentReactions.put(id,sent);sentReactionAt.put(id,android.os.SystemClock.uptimeMillis());
+        PairedService.execute(cl->{cl.react(chat.toString(),id,emoji,mine.isEmpty()||action.equals("remove")?action:"switch");return "";},(v,e)->{
+            if(!e.isEmpty()){if(sent.equals(sentReactions.get(id))){sentReactions.remove(id);sentReactionAt.remove(id);}error(e);}else loadMessages(false);});}
+    private final Map<String,String> sentReactions=new HashMap<>();private final Map<String,Long> sentReactionAt=new HashMap<>();
+    /** Double-tap a message to like it with 👍. Already liked: nothing is sent. */
+    private long lastTapAt;private String lastTapId="";
+    private void tapped(JSONObject m,View v){String id=m.optString("messageID");long now=android.os.SystemClock.uptimeMillis();
+        if(id.equals(lastTapId)&&now-lastTapAt<=android.view.ViewConfiguration.getDoubleTapTimeout()+100){lastTapId="";quickLike(m,v);return;}
+        lastTapId=id;lastTapAt=now;}
+    private void quickLike(JSONObject m,View v){v.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM);
+        v.animate().scaleX(0.92f).scaleY(0.92f).setDuration(90).withEndAction(()->v.animate().scaleX(1f).scaleY(1f).setDuration(160).start()).start();
+        JSONObject c=store.chat(chatId);if(c==null)return;String mine=myReaction(m,c);if(sameEmoji(mine,"👍"))return;
+        react(m,"👍",mine.isEmpty()?"add":"switch");}
     private void startReply(JSONObject m){if(replyPanel==null||composer==null)return;JSONObject c=store.chat(chatId);replyId=m.optString("messageID");
         replyLabel.setText(PairedProtocol.outgoing(m,c)?"Replying to yourself":"Replying to "+ChatText.firstName(senderName(m,c)));replyQuote.setText(displayBody(m));
         replyPanel.setVisibility(View.VISIBLE);composer.requestFocus();getSystemService(InputMethodManager.class).showSoftInput(composer,0);}
@@ -849,13 +871,11 @@ public class PairedActivity extends Activity {
 
     /** GIFs and stickers inserted from the keyboard become attachments. */
     private final android.view.OnReceiveContentListener keyboardContent=(view,payload)->{
-        android.util.Pair<android.view.ContentInfo,android.view.ContentInfo> parts=payload.partition(item->item.getUri()!=null);
-        android.view.ContentInfo media=parts.first;
-        if(media!=null){List<Uri> uris=new ArrayList<>();android.content.ClipData clip=media.getClip();for(int i=0;i<clip.getItemCount();i++)if(clip.getItemAt(i).getUri()!=null)uris.add(clip.getItemAt(i).getUri());
-            decoder.execute(()->{List<Outgoing> added=new ArrayList<>();String problem=null;for(Uri u:uris){try{added.add(copyIn(u));}catch(Exception e){problem=e.getMessage();}}
-                String p=problem;
-                ui.post(()->{outgoingChat=chatId;outgoing.addAll(added);renderAttachments();if(p!=null)toast(p);});});}
-        return parts.second;};
+        android.content.ClipData clip=payload.getClip();List<Uri> uris=new ArrayList<>();for(int i=0;i<clip.getItemCount();i++)if(clip.getItemAt(i).getUri()!=null)uris.add(clip.getItemAt(i).getUri());
+        if(uris.isEmpty())return payload; // plain text: let the box handle it
+        decoder.execute(()->{List<Outgoing> added=new ArrayList<>();String problem=null;for(Uri u:uris){try{added.add(copyIn(u));}catch(Exception e){problem=e.getMessage();}}
+            String p=problem;ui.post(()->{outgoingChat=chatId;outgoing.addAll(added);renderAttachments();if(p!=null)toast(p);});});
+        return null;};
 
     private void copyCode(String code){android.content.ClipData clip=android.content.ClipData.newPlainText("Code",code);
         android.os.PersistableBundle extras=new android.os.PersistableBundle();extras.putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE,true);clip.getDescription().setExtras(extras);
