@@ -106,4 +106,28 @@ public class ChatTextTest {
         assertEquals("Lake & Trail", m.get("og:title"));
         assertEquals("A quiet walk", m.get("description"));
     }
+
+    @Test public void oneTimeCodesAreFoundOnlyInCodeMessages() {
+        assertEquals("482913", ChatText.oneTimeCode("Your verification code is 482913. Don't share it."));
+        assertEquals("382915", ChatText.oneTimeCode("G-382915 is your Google verification code."));
+        assertEquals("123456", ChatText.oneTimeCode("123 456 is your login code"));
+        assertEquals("4821", ChatText.oneTimeCode("Use PIN 4821 to sign in"));
+        assertEquals("", ChatText.oneTimeCode("Call me at 5550102000 about the code"));
+        assertEquals("", ChatText.oneTimeCode("Your code total is $1234.50"));
+        assertEquals("", ChatText.oneTimeCode("See you at 7:30, room 1204"));
+        assertEquals("", ChatText.oneTimeCode(null));
+    }
+
+    @Test public void emojiOnlyMessagesAreCounted() {
+        assertEquals(1, ChatText.emojiOnly("😂"));
+        assertEquals(1, ChatText.emojiOnly("❤️"));
+        assertEquals(1, ChatText.emojiOnly("👍🏽"));
+        assertEquals(1, ChatText.emojiOnly("👨\u200D👩\u200D👧"));
+        assertEquals(1, ChatText.emojiOnly("🇺🇸"));
+        assertEquals(3, ChatText.emojiOnly(" 😂😂 😂 "));
+        assertEquals(0, ChatText.emojiOnly("😂😂😂😂"));
+        assertEquals(0, ChatText.emojiOnly("lol 😂"));
+        assertEquals(0, ChatText.emojiOnly("1"));
+        assertEquals(1, ChatText.emojiOnly("1\uFE0F\u20E3"));
+    }
 }

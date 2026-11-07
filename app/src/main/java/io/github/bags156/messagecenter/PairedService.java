@@ -333,6 +333,9 @@ public final class PairedService extends Service {
             .setWhen(recent.isEmpty()?System.currentTimeMillis():PairedProtocol.time(recent.get(recent.size()-1))).setShowWhen(true).setNumber(m==null?0:recent.size());
         if(!group&&lastPhoto!=null)builder.setLargeIcon(lastPhoto);
         builder.addAction(replyAction(id)).addAction(readAction(id));
+        // A login or verification code in the newest message gets its own Copy button.
+        String code="";for(JSONObject r:recent)if(!PairedProtocol.outgoing(r,chat)){String found=ChatText.oneTimeCode(PairedProtocol.text(r));if(!found.isEmpty())code=found;}
+        if(!code.isEmpty())builder.addAction(copyAction(id,code));
         // Opening a bubble yourself should not ring. A lone notification in its own group with
         // GROUP_ALERT_SUMMARY never alerts (this is what AndroidX's setSilent does).
         if(quiet)builder.setGroup("quiet-"+id).setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY).setOnlyAlertOnce(true);
@@ -374,6 +377,29 @@ public final class PairedService extends Service {
             .addRemoteInput(new RemoteInput.Builder(KEY_REPLY).setLabel("Reply").build()).setSemanticAction(Notification.Action.SEMANTIC_ACTION_REPLY)
             .addExtras(noUi()).setAllowGeneratedReplies(true).build();
     }
+    private Notification.Action copyAction(String id,String code) {
+        Intent intent=new Intent(this,NotificationActions.class).setAction(NotificationActions.COPY).setData(chatUri(id)).putExtra("chat",id).putExtra("code",code);
+        PendingIntent pending=PendingIntent.getBroadcast(this,6,intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
+        return new Notification.Action.Builder(Icon.createWithResource(this,R.drawable.ic_notification),"Copy "+code,pending).addExtras(noUi()).build();
+    }
+    /**
+     * Opens Android's settings for this one conversation (sound, vibration, priority, Do Not
+     * Disturb), creating its own channel first so it can differ from other chats.
+     */
+    static void openConversationSettings(Context context,String id,String title) {
+        NotificationManager nm=context.getSystemService(NotificationManager.class);String shortcut="chat-"+id;
+        if(nm.getNotificationChannel(MESSAGES,shortcut)==null){
+            NotificationChannel parent=nm.getNotificationChannel(MESSAGES);
+            NotificationChannel conv=new NotificationChannel(MESSAGES+":"+id,title,parent==null?NotificationManager.IMPORTANCE_HIGH:parent.getImportance());
+            conv.setConversationId(MESSAGES,shortcut);if(parent!=null){conv.setSound(parent.getSound(),parent.getAudioAttributes());conv.enableVibration(parent.shouldVibrate());}
+            nm.createNotificationChannel(conv);}
+        Intent settings=new Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,context.getPackageName())
+            .putExtra(Settings.EXTRA_CHANNEL_ID,MESSAGES).putExtra(Settings.EXTRA_CONVERSATION_ID,shortcut).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try{context.startActivity(settings);}catch(Exception e){context.startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,context.getPackageName()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}
+    }
+    /** Publishes a chat's conversation shortcut (needed before it can have its own notification settings). */
+    static void ensureShortcut(Context context,String id) {PairedService s=current;if(s==null)return;JSONObject chat=s.store.chat(id);if(chat==null)return;
+        String title=PairedProtocol.title(chat);s.publishShortcut(id,title,s.chatIcon(chat,title));}
     private Notification.Action readAction(String id) {
         Intent intent=new Intent(this,NotificationActions.class).setAction(NotificationActions.READ).setData(chatUri(id)).putExtra("chat",id);
         PendingIntent pending=PendingIntent.getBroadcast(this,4,intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
@@ -404,10 +430,11 @@ public final class PairedService extends Service {
         if(s!=null)synchronized(s.notified){s.notified.remove(chat);}
         context.getSystemService(NotificationManager.class).cancel("chat:"+chat,1);
         ChatSettings settings=new ChatSettings(context);settings.setMarkedUnread(chat,false);
-        if(s==null||!s.ready||!settings.receipts(chat)){done.run();return;}
-        JSONObject c=s.store.chat(chat),latest=null;for(JSONObject m:s.store.messages(chat,50))if(!PairedProtocol.outgoing(m,c))latest=m;
-        if(latest==null){done.run();return;}String mid=latest.optString("messageID");
-        settings.markSeen(chat,PairedProtocol.time(latest));
+        // Clear the unread dot here even when no read receipt goes to the sender.
+        PairedStore own=s==null?new PairedStore(context):null,store=own!=null?own:s.store;JSONObject c=store.chat(chat),latest=null;for(JSONObject m:store.messages(chat,50))if(!PairedProtocol.outgoing(m,c))latest=m;if(own!=null)own.close();
+        long seenAt=Math.max(c==null?0:PairedProtocol.time(c),latest==null?0:PairedProtocol.time(latest));if(seenAt>0)settings.markSeen(chat,seenAt);
+        if(s==null||!s.ready||!settings.receipts(chat)||latest==null){if(s!=null)s.changed("CONVERSATION");done.run();return;}
+        String mid=latest.optString("messageID");
         markRead(chat,mid,(v,e)->{if(e.isEmpty())settings.setMarkedRead(chat,mid);s.changed("CONVERSATION");done.run();});
     }
     /** Sends saved messages one at a time, oldest first, while connected. */
@@ -429,6 +456,9 @@ public final class PairedService extends Service {
         JSONObject c=s.store.chat(chat);if(c==null){done.done("","Refresh this conversation before sending.");return;}
         execute(cl->cl.sendText(c.toString(),text,reply),done);
     }
+    /** Sends whatever is waiting in the outbox now, starting the connection first if it isn't running. */
+    static void flushOutboxNow(Context context) {PairedService s=current;
+        if(s!=null){s.main.post(()->{s.changed("OUTBOX");s.flushOutbox();});}else{try{start(context);}catch(Exception ignored){}}}
     /** Puts a saved message back in line to send (after the person chose Retry). */
     static void retryOutbox(Context context,String id) {new Outbox(context).setState(id,Outbox.WAITING,"");PairedService s=current;if(s!=null){s.changed("OUTBOX");s.flushOutbox();}}
     private static Uri chatUri(String id) {return new Uri.Builder().scheme("messagecenter").authority("chat").appendPath(id).build();}
@@ -445,7 +475,10 @@ public final class PairedService extends Service {
         return Avatars.initial(PairedProtocol.initial(name),PairedProtocol.color(p==null?"":p.optString("avatarHexColor"),Avatars.fallbackColor(name)),128);
     }
     private void update(String value) {status=value;if(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED)getSystemService(NotificationManager.class).notify(FOREGROUND_ID,connectionNotification());changed("STATUS");}
-    private void changed(String kind) {sendBroadcast(new Intent(CHANGED).setPackage(getPackageName()).putExtra("kind",kind));}
+    private final Runnable widgetRefresh=()->{try{MessagesWidget.update(this);}catch(Exception ignored){}};
+    private void changed(String kind) {sendBroadcast(new Intent(CHANGED).setPackage(getPackageName()).putExtra("kind",kind));
+        // The home screen widget follows chat changes, at most every two seconds.
+        if(kind.equals("CONVERSATION")||kind.equals("MESSAGE")){main.removeCallbacks(widgetRefresh);main.postDelayed(widgetRefresh,2000);}}
     @Override public IBinder onBind(Intent intent) {return null;}
     @Override public void onDestroy() {
         generation.incrementAndGet();ready=false;main.removeCallbacks(syncTick);if(current==this)current=null;

@@ -48,6 +48,24 @@ final class PairedStore extends SQLiteOpenHelper {
         }
         return out;
     }
+    /** Synced messages in any chat whose text contains the query, newest first. */
+    synchronized List<JSONObject> searchAll(String query,int max) {
+        List<JSONObject> out=new ArrayList<>();String q=query.trim().toLowerCase(java.util.Locale.ROOT);if(q.length()<2)return out;
+        // A rough LIKE on the stored JSON narrows the rows; the real match is on the message text only.
+        String like="%"+q.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%";
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM items WHERE lower(data) LIKE ? ESCAPE '\\' ORDER BY time DESC LIMIT 2000",new String[]{like})) {
+            while(c.moveToNext()&&out.size()<max){JSONObject m=json(c.getString(0));if(PairedProtocol.text(m).toLowerCase(java.util.Locale.ROOT).contains(q))out.add(m);}
+        }
+        return out;
+    }
+    /** Every synced message with an attachment in this chat, newest first. */
+    synchronized List<JSONObject> mediaMessages(String chat,int max) {
+        List<JSONObject> out=new ArrayList<>();
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM items WHERE chat=? AND data LIKE '%mediaContent%' ORDER BY time DESC LIMIT ?",new String[]{chat,String.valueOf(max)})) {
+            while(c.moveToNext()){JSONObject m=json(c.getString(0));if(!PairedProtocol.media(m).isEmpty())out.add(m);}
+        }
+        return out;
+    }
     /** How many synced messages in the chat are at or after this time (to load enough to show it). */
     synchronized int countSince(String chat,long time) {
         try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM items WHERE chat=? AND time>=?",new String[]{chat,String.valueOf(time)})){c.moveToFirst();return c.getInt(0);}

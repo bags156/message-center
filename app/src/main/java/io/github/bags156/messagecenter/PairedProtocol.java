@@ -115,6 +115,24 @@ final class PairedProtocol {
             default -> { String name=string(media,"mediaName"); yield name.isEmpty()?"📎 File":"📎 "+name; }
         };
     }
+    /** "RCS", "SMS", or "MMS", from Google's message type (falling back to the chat's type). */
+    static String kind(JSONObject m,JSONObject chat) {
+        return switch((int)m.optLong("type")) {
+            case 1 -> "SMS"; case 2,3 -> "MMS"; case 4 -> "RCS";
+            default -> chat!=null&&rcs(chat)?"RCS":!media(m).isEmpty()?"MMS":"SMS";
+        };
+    }
+    /** Plain-language delivery state for message details. */
+    static String statusLabel(JSONObject m) {
+        String s=status(m);
+        if(s.equals("OUTGOING_DISPLAYED"))return "Read";
+        if(s.equals("OUTGOING_DELIVERED"))return "Delivered";
+        if(s.equals("OUTGOING_COMPLETE"))return "Sent";
+        if(s.startsWith("OUTGOING_FAILED")||s.contains("FAILED"))return "Not sent";
+        if(s.startsWith("OUTGOING"))return "Sending";
+        if(s.startsWith("INCOMING"))return "Received";
+        return s.isEmpty()?"Unknown":s.toLowerCase(java.util.Locale.ROOT).replace('_',' ');
+    }
     /** Human-readable size, e.g. "2.4 MB". */
     static String size(long bytes) {
         if(bytes<=0)return "";

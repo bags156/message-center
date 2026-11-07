@@ -10,6 +10,7 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Only while you record a voice message. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <queries><package android:name="com.google.android.apps.messaging" /></queries>
     <application
         android:allowBackup="false"
@@ -51,6 +52,11 @@
         <provider android:name=".MediaProvider" android:authorities="io.github.bags156.messagecenter.media" android:exported="false" android:grantUriPermissions="true" />
         <service android:name=".PairedService" android:exported="false" android:foregroundServiceType="remoteMessaging" />
         <receiver android:name=".NotificationActions" android:exported="false" />
+        <receiver android:name=".Scheduled" android:exported="false" />
+        <receiver android:name=".MessagesWidget" android:exported="true" android:label="Messages">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_info" />
+        </receiver>
         <meta-data android:name="com.google.android.gms.car.application" android:resource="@xml/automotive_app_desc" />
         <receiver android:name=".PairedBootReceiver" android:exported="false">
             <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /><action android:name="android.intent.action.MY_PACKAGE_REPLACED" /></intent-filter>

@@ -1,6 +1,17 @@
-Sharp photos in chats.
+Quality-of-life update.
 
-- **Photos are no longer stretched.** Each photo was decoded so its longest side matched the width of its box. For portrait photos (most phone pictures) that made the image narrower than the box, so it was enlarged about 1.5× to fill it, which looked blurry even at full quality. Photos are now decoded just large enough to fill their box in both directions.
-- The same fix applies to link preview images, video preview frames, and the attachments waiting above the message box.
+- **Copy one-time codes.** Messages with a verification or login code show a "Copy code" button under the message, and the notification has a Copy code action.
+- **Swipe gestures.** Swipe a message right to reply. In the inbox, swipe a chat left to archive it (or unarchive it from Archived), and right to mark it read or unread.
+- **Jump to latest.** When you scroll up in a chat, a ↓ button appears; it shows how many new messages arrived while you were reading.
+- **GIFs and stickers from your keyboard** are added as attachments.
+- **Big emoji.** Messages with only one to three emoji are shown large, without a bubble.
+- **Search all chats.** The inbox search now also finds messages, not only chat names.
+- **Photos & files.** Chat details has a grid of every photo and video shared in the chat, plus a list of files and voice messages.
+- **Starred messages.** Long-press a message and tap Star. Open them all from the inbox menu → Starred messages.
+- **Per-contact notification sound and priority.** Chat details → Notification sound & priority opens Android's settings for that conversation.
+- **Scheduled send.** Type a message, then hold the send button to send it later today, tomorrow morning, or at a time you pick. For exact timing, allow "Alarms & reminders" when asked.
+- **Home screen widget.** Shows your top conversations (pinned first, unread in bold), with a + to start a new chat.
+- **Message details.** Long-press a message → Message details shows the type (RCS, SMS, or MMS), sender, recipients, time, and status.
+- Fixed: "Mark read" from a notification now clears the unread dot even when read receipts are off for that chat.
 
-Install over 0.6.4; the package and signing key are unchanged.
+Install over 0.6.5; the package and signing key are unchanged.

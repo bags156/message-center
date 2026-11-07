@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Home screen widget: newest (pinned first) chats; tap one to open it, + to start a chat. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/widget_root"
+    android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical"
+    android:background="@drawable/widget_background" android:paddingTop="8dp" android:paddingBottom="8dp">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="16dp" android:paddingEnd="6dp">
+        <TextView android:id="@+id/widget_title" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="Messages" android:textSize="17sp" android:textColor="@color/widget_text" />
+        <ImageView android:id="@+id/widget_new" android:layout_width="40dp" android:layout_height="40dp" android:padding="8dp" android:src="@drawable/ic_add" android:tint="@color/widget_accent" android:contentDescription="Start chat" />
+    </LinearLayout>
+    <TextView android:id="@+id/widget_empty" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:gravity="center"
+        android:text="Open Message Center to load your chats." android:textSize="14sp" android:textColor="@color/widget_muted" android:visibility="gone" />
+    <LinearLayout android:id="@+id/row0" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+        android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="12dp" android:paddingEnd="14dp" android:visibility="gone">
+        <ImageView android:id="@+id/avatar0" android:layout_width="40dp" android:layout_height="40dp" android:contentDescription="@null" />
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:paddingStart="12dp" android:paddingEnd="8dp">
+            <TextView android:id="@+id/name0" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="15sp" android:textColor="@color/widget_text" android:maxLines="1" android:ellipsize="end" />
+            <TextView android:id="@+id/preview0" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="13sp" android:textColor="@color/widget_muted" android:maxLines="1" android:ellipsize="end" />
+        </LinearLayout>
+        <TextView android:id="@+id/time0" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textSize="12sp" android:textColor="@color/widget_muted" />
+    </LinearLayout>
+    <LinearLayout android:id="@+id/row1" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+        android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="12dp" android:paddingEnd="14dp" android:visibility="gone">
+        <ImageView android:id="@+id/avatar1" android:layout_width="40dp" android:layout_height="40dp" android:contentDescription="@null" />
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:paddingStart="12dp" android:paddingEnd="8dp">
+            <TextView android:id="@+id/name1" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="15sp" android:textColor="@color/widget_text" android:maxLines="1" android:ellipsize="end" />
+            <TextView android:id="@+id/preview1" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="13sp" android:textColor="@color/widget_muted" android:maxLines="1" android:ellipsize="end" />
+        </LinearLayout>
+        <TextView android:id="@+id/time1" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textSize="12sp" android:textColor="@color/widget_muted" />
+    </LinearLayout>
+    <LinearLayout android:id="@+id/row2" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+        android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="12dp" android:paddingEnd="14dp" android:visibility="gone">
+        <ImageView android:id="@+id/avatar2" android:layout_width="40dp" android:layout_height="40dp" android:contentDescription="@null" />
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:paddingStart="12dp" android:paddingEnd="8dp">
+            <TextView android:id="@+id/name2" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="15sp" android:textColor="@color/widget_text" android:maxLines="1" android:ellipsize="end" />
+            <TextView android:id="@+id/preview2" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="13sp" android:textColor="@color/widget_muted" android:maxLines="1" android:ellipsize="end" />
+        </LinearLayout>
+        <TextView android:id="@+id/time2" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textSize="12sp" android:textColor="@color/widget_muted" />
+    </LinearLayout>
+    <LinearLayout android:id="@+id/row3" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+        android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="12dp" android:paddingEnd="14dp" android:visibility="gone">
+        <ImageView android:id="@+id/avatar3" android:layout_width="40dp" android:layout_height="40dp" android:contentDescription="@null" />
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:paddingStart="12dp" android:paddingEnd="8dp">
+            <TextView android:id="@+id/name3" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="15sp" android:textColor="@color/widget_text" android:maxLines="1" android:ellipsize="end" />
+            <TextView android:id="@+id/preview3" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="13sp" android:textColor="@color/widget_muted" android:maxLines="1" android:ellipsize="end" />
+        </LinearLayout>
+        <TextView android:id="@+id/time3" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textSize="12sp" android:textColor="@color/widget_muted" />
+    </LinearLayout>
+</LinearLayout>

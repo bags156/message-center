@@ -116,6 +116,51 @@ final class ChatText {
         return host.startsWith("www.") ? host.substring(4) : host;
     }
 
+    private static final Pattern CODE_HINT = Pattern.compile("(?i)(code|passcode|verif|otp|one[- ]time|\\bpin\\b|log ?in|sign[- ]?in|security|confirm|authenticat|2fa|is your)");
+    private static final Pattern CODE = Pattern.compile("(?<![\\d$.,-])(?:[A-Z]-)?(\\d{3}[- ]\\d{3}|\\d{4,8})(?![\\d.,]\\d|\\d|-\\d)");
+
+    /**
+     * A one-time code ("Your verification code is 482913", "G-382915 is your Google code"), or ""
+     * when the message has no code-like wording. Phone numbers, prices and long numbers are skipped.
+     */
+    static String oneTimeCode(String text) {
+        if (text == null || !CODE_HINT.matcher(text).find()) return "";
+        Matcher m = CODE.matcher(text);
+        while (m.find()) {
+            String digits = m.group(1).replaceAll("[- ]", "");
+            if (digits.length() >= 4 && digits.length() <= 8) return digits;
+        }
+        return "";
+    }
+
+    /** How many emoji the message is made of (1-3) when it is only emoji, so they can be shown large; otherwise 0. */
+    static int emojiOnly(String text) {
+        if (text == null) return 0;
+        String t = text.trim();
+        if (t.isEmpty() || t.length() > 48) return 0;
+        int count = 0, i = 0; boolean join = false, regional = false;
+        while (i < t.length()) {
+            int cp = t.codePointAt(i), n = Character.charCount(cp);
+            if (Character.isWhitespace(cp)) { i += n; continue; }
+            if (cp == 0x200D) { join = true; i += n; continue; }
+            if (cp == 0xFE0F || cp == 0xFE0E || cp == 0x20E3 || (cp >= 0x1F3FB && cp <= 0x1F3FF) || (cp >= 0xE0020 && cp <= 0xE007F)) { i += n; continue; }
+            boolean keycap = (cp == '#' || cp == '*' || (cp >= '0' && cp <= '9')) && t.indexOf(0x20E3, i) > i && t.indexOf(0x20E3, i) <= i + 2;
+            if (!keycap && !emojiBase(cp)) return 0;
+            boolean isRegional = cp >= 0x1F1E6 && cp <= 0x1F1FF;
+            if (join) join = false;
+            else if (isRegional && regional) regional = false;
+            else { count++; regional = isRegional; }
+            i += n;
+        }
+        return count >= 1 && count <= 3 ? count : 0;
+    }
+
+    private static boolean emojiBase(int cp) {
+        return (cp >= 0x1F000 && cp <= 0x1FAFF) || (cp >= 0x2600 && cp <= 0x27BF) || (cp >= 0x2300 && cp <= 0x23FF) || (cp >= 0x2B00 && cp <= 0x2BFF)
+            || (cp >= 0x2190 && cp <= 0x21FF) || cp == 0x3030 || cp == 0x303D || cp == 0x3297 || cp == 0x3299 || cp == 0x00A9 || cp == 0x00AE
+            || cp == 0x203C || cp == 0x2049 || cp == 0x2122 || cp == 0x2139 || cp == 0x24C2 || (cp >= 0x25AA && cp <= 0x25FE);
+    }
+
     /** First name for compact labels; falls back to the whole name. */
     static String firstName(String name) {
         if (name == null) return "";
