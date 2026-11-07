@@ -6,7 +6,7 @@ An experimental Android client for Google Messages, with the paired connection r
 
 ## Install and connect
 
-1. Install the signed `message-center.apk` from the latest **0.2.0** release. It updates the previous app using the same package and signing key; no uninstall is needed.
+1. Install the signed `message-center.apk` from the latest release. It updates the previous app using the same package and signing key; no uninstall is needed.
 2. Open Message Center and tap **Connect Google Messages**.
 3. Sign in to the account selected under **Google Messages → Device pairing**. Sign-in is displayed on Google's own pages inside Android WebView, using its real user agent. If Google blocks that browser, this build cannot complete pairing and does not bypass the block.
 4. Approve the matching emoji in Google Messages, then return to Message Center.
@@ -14,7 +14,7 @@ An experimental Android client for Google Messages, with the paired connection r
 6. Load conversations with **Refresh**, then open a chat. **Older messages** loads another history page; **Load older conversations** pages the inbox. Archived chats have a separate folder toggle.
 7. Test an incoming text with Google Messages notifications disabled. This client has its own connection and notification channel and does not use notification access. Keep Google Messages installed, default, and allowed to run in the background.
 
-For Obtainium, use `https://github.com/bags156/message-center`. 0.2.0 is a regular release, so **Include prereleases** is not needed. Public releases do not require a GitHub token. Use signed release assets, not unsigned CI artifacts.
+For Obtainium, use `https://github.com/bags156/message-center`. Regular releases do not need **Include prereleases**. Public releases do not require a GitHub token. Use signed release assets, not unsigned CI artifacts.
 
 ## Implemented in the test build
 

@@ -43,14 +43,17 @@ import java.util.Map;
 
 /** Experimental, phone-hosted paired client. Does not read other apps' notifications. */
 public final class PairedActivity extends Activity {
-    private static final String LOGIN="https://accounts.google.com/AccountChooser?continue=https://messages.google.com/web/config";
     private static final int BLUE=0xff2864f0;
+    private static final long LOGIN_POLL_MS=1500;
     private int bg,card,ink,muted,folder=1,limit=300;
     private PairedStore store;private LinearLayout root,items;private TextView statusView,replyView;
     private ScrollView scroll;private EditText composer;private WebView login;
     private String screen="inbox",chatId="",query="",replyId="";
     private final Map<String,String> drafts=new HashMap<>();
     private boolean registered,pairSubmitted,busy;private String shownEmoji="";
+    private TextView loginAddress;private int signedInPolls,loginSkips;
+    private final android.os.Handler loginTimer=new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable loginPoll=this::pollLogin;
     private final BroadcastReceiver receiver=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){
         if(!PairedService.emoji().isEmpty() && !shownEmoji.equals(PairedService.emoji())){destroyLogin();pairing();return;}
         if(screen.equals("pair") && PairedService.ready()){CookieManager.getInstance().removeAllCookies(null);inbox();askNotifications();return;}
@@ -190,27 +193,43 @@ public final class PairedActivity extends Activity {
     private void signIn(){remember();new AlertDialog.Builder(this).setTitle("Connect on this phone").setMessage("Sign in to the Google account selected in Google Messages → Device pairing. The app keeps the Google session on this phone, encrypted with Android Keystore after pairing, and sends it only to Google.\n\nApprove the matching emoji in Google Messages when asked. A new pairing replaces this app's synced cache. Google may reject sign-in in an embedded browser; this test does not bypass that restriction.")
         .setNegativeButton("Cancel",null).setPositiveButton("Sign in",(d,w)->login()).show();}
     @android.annotation.SuppressLint("SetJavaScriptEnabled")
-    private void login(){base("login");pairSubmitted=false;header("Connect Google",()->{destroyLogin();inbox();});
-        TextView address=text("Google sign-in • accounts.google.com",13,muted,false);root.addView(address);gap(root,8);
+    private void login(){base("login");pairSubmitted=false;signedInPolls=0;loginSkips=0;header("Connect Google",()->{destroyLogin();inbox();});
+        LinearLayout bar=row();loginAddress=text("Google sign-in • accounts.google.com",13,muted,false);loginAddress.setSingleLine(true);loginAddress.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        bar.addView(loginAddress,new LinearLayout.LayoutParams(0,-2,1));bar.addView(button("Continue ›",false,this::continueLogin));root.addView(bar);gap(root,8);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);login=new WebView(this);login.getSettings().setJavaScriptEnabled(true);login.getSettings().setDomStorageEnabled(true);
         login.getSettings().setAllowFileAccess(false);login.getSettings().setAllowContentAccess(false);login.getSettings().setMixedContentMode(android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW);login.getSettings().setSafeBrowsingEnabled(true);
         CookieManager cm=CookieManager.getInstance();cm.setAcceptCookie(true);cm.setAcceptThirdPartyCookies(login,true);
         // Keep WebView's real user agent. No browser impersonation or SSL bypass.
         login.setWebViewClient(new WebViewClient(){
-            @Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest request){Uri u=request.getUrl();String host=u.getHost();
-                boolean google="https".equals(u.getScheme())&&host!=null&&(host.equals("google.com")||host.endsWith(".google.com"));
-                if(google)return false;return true;}
-            @Override public void onPageFinished(WebView v,String url){Uri u=Uri.parse(url);address.setText("Google sign-in • "+(u.getHost()==null?"":u.getHost()));
-                if(!pairSubmitted&&"https".equals(u.getScheme())&&"messages.google.com".equals(u.getHost())&&"/web/config".equals(u.getPath())){
-                    try{JSONObject cookies=new JSONObject();for(String origin:new String[]{"https://accounts.google.com","https://www.google.com","https://messages.google.com"}){
-                        String raw=cm.getCookie(origin);if(raw==null)continue;for(String pair:raw.split(";")){int eq=pair.indexOf('=');if(eq>0){String key=pair.substring(0,eq).trim();if(cookieAllowed(key))cookies.put(key,pair.substring(eq+1));}}}
-                        if(cookies.has("SID")&&cookies.has("SAPISID")){pairSubmitted=true;PairedService.pair(PairedActivity.this,cookies.toString());destroyLogin();pairing();}
-                    }catch(Exception e){error("Google sign-in could not be completed. Try again.");}
-                }}
-        });root.addView(login,new LinearLayout.LayoutParams(-1,0,1));cm.removeAllCookies(done->{if(login!=null)login.loadUrl(LOGIN);});
+            @Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest request){
+                // Only top-level pages are restricted; Google's own frames inside a page must load or its buttons stop working.
+                if(!request.isForMainFrame())return false;Uri u=request.getUrl();
+                if(GoogleLogin.allowed(u.getScheme(),u.getHost()))return false;
+                if(loginAddress!=null)loginAddress.setText("Blocked a non-Google page • "+(u.getHost()==null?u.getScheme():u.getHost()));return true;}
+            @Override public void onPageFinished(WebView v,String url){Uri u=Uri.parse(url);
+                if(loginAddress!=null&&!pairSubmitted)loginAddress.setText("Google sign-in • "+GoogleLogin.describe(u.getHost(),u.getPath()));
+                if(GoogleLogin.isConfig(u.getScheme(),u.getHost(),u.getPath()))finishLogin();}
+        });root.addView(login,new LinearLayout.LayoutParams(-1,0,1));
+        cm.removeAllCookies(done->{if(login!=null){login.loadUrl(GoogleLogin.START);loginTimer.removeCallbacks(loginPoll);loginTimer.postDelayed(loginPoll,LOGIN_POLL_MS);}});
     }
-    private static boolean cookieAllowed(String name){return name.equals("SID")||name.equals("HSID")||name.equals("SSID")||name.equals("OSID")||name.equals("APISID")||name.equals("SAPISID")||name.startsWith("__Secure-1PSID")||name.startsWith("__Secure-3PSID")||name.equals("__Secure-1PAPISID")||name.equals("__Secure-3PAPISID");}
-    private void destroyLogin(){getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);if(login!=null){login.stopLoading();((ViewGroup)login.getParent()).removeView(login);login.destroy();login=null;}}
+    private boolean signedIn(){return GoogleLogin.signedIn(CookieManager.getInstance().getCookie("https://accounts.google.com"));}
+    /** Moves on once Google has signed the account in, so optional prompts or a stalled redirect cannot block pairing. */
+    private void pollLogin(){if(login==null||pairSubmitted)return;
+        signedInPolls=signedIn()?signedInPolls+1:0;
+        Uri u=Uri.parse(String.valueOf(login.getUrl()));boolean onConfig=GoogleLogin.isConfig(u.getScheme(),u.getHost(),u.getPath());
+        if(onConfig&&signedInPolls>=GoogleLogin.STABLE_POLLS)finishLogin();
+        else if(GoogleLogin.shouldSkipAhead(onConfig,signedInPolls,loginSkips)){loginSkips++;signedInPolls=0;loginAddress.setText("Signed in • skipping optional Google prompts…");login.loadUrl(GoogleLogin.CONFIG);}
+        if(login!=null&&!pairSubmitted)loginTimer.postDelayed(loginPoll,LOGIN_POLL_MS);}
+    private void continueLogin(){if(login==null||pairSubmitted)return;
+        if(!signedIn()){toast("Google hasn't finished signing you in yet. Finish the current step, or go back and start again.");return;}
+        loginAddress.setText("Signed in • continuing to pairing…");login.loadUrl(GoogleLogin.CONFIG);}
+    private void finishLogin(){if(pairSubmitted||login==null)return;CookieManager cm=CookieManager.getInstance();
+        try{JSONObject cookies=new JSONObject();for(String origin:new String[]{"https://accounts.google.com","https://www.google.com","https://messages.google.com"}){
+            String raw=cm.getCookie(origin);if(raw==null)continue;for(String pair:raw.split(";")){int eq=pair.indexOf('=');if(eq>0){String key=pair.substring(0,eq).trim();if(GoogleLogin.cookieAllowed(key))cookies.put(key,pair.substring(eq+1));}}}
+            if(cookies.has("SID")&&cookies.has("SAPISID")){pairSubmitted=true;loginTimer.removeCallbacks(loginPoll);PairedService.pair(PairedActivity.this,cookies.toString());destroyLogin();pairing();}
+        }catch(Exception e){pairSubmitted=true;loginTimer.removeCallbacks(loginPoll);error("Google sign-in could not be completed. Go back and try again.");}
+    }
+    private void destroyLogin(){loginTimer.removeCallbacks(loginPoll);loginAddress=null;getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);if(login!=null){login.stopLoading();((ViewGroup)login.getParent()).removeView(login);login.destroy();login=null;}}
     private void askNotifications(){if(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED && !getSharedPreferences("paired",MODE_PRIVATE).getBoolean("asked_notifications",false)){getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("asked_notifications",true).apply();requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},101);}}
     private void pairing(){base("pair");header("Pair this phone",null);connection();String emoji=PairedService.emoji();shownEmoji=emoji;TextView symbol=text(emoji.isEmpty()?"…":emoji,72,ink,false);symbol.setGravity(Gravity.CENTER);root.addView(symbol);gap(root,16);
         note(root,"Open Google Messages → Device pairing and approve the matching emoji. Return here afterward.\n\nIf Google reports no device, check that Device pairing uses the same Google account you just signed into.");root.addView(button("Open Google Messages",true,this::openGoogle));gap(root,8);root.addView(button("Back to inbox",false,this::inbox));}
