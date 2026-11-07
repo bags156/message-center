@@ -193,4 +193,15 @@ final class ChatText {
             .replace("&lt;", "<").replace("&gt;", ">").replace("&nbsp;", " ").replaceAll("\\s+", " ").trim();
     }
 
+
+    /** True when the text @-mentions one of these names (whole word, any case). */
+    static boolean mentions(String text, java.util.Collection<String> names) {
+        if (text == null || text.indexOf('@') < 0 || names == null) return false;
+        for (String name : names) {
+            if (name == null || name.trim().length() < 2) continue;
+            Pattern p = Pattern.compile("(^|[^\\w@])@" + Pattern.quote(name.trim()) + "(?![\\w])", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+            if (p.matcher(text).find()) return true;
+        }
+        return false;
+    }
 }

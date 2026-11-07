@@ -81,6 +81,7 @@ final class PairedProtocol {
     /** Text and a short label per attachment ("📷 Photo"), for previews, notifications, quotes and copying. */
     static String body(JSONObject m) {
         List<String> parts=new ArrayList<>();String text=text(m);if(!text.isEmpty())parts.add(text);
+        JSONObject place=location(m);if(place!=null){String where=placeLabel(place.optString("text"));parts.add("📍 "+(where.isEmpty()?"Location":where));}
         for(JSONObject media:media(m))parts.add(mediaLabel(media));
         return String.join("\n",parts);
     }
@@ -92,6 +93,43 @@ final class PairedProtocol {
             String text=string(part.optJSONObject("messageContent"),"content");if(!text.isEmpty())parts.add(text);
         }
         return String.join("\n",parts);
+    }
+    /**
+     * A shared location: {"text": what Google sent (an address and/or a maps link),
+     * "media": the map preview, when there is one}, or null.
+     */
+    static JSONObject location(JSONObject m) {
+        JSONArray infos=m.optJSONArray("messageInfo");if(infos==null)return null;
+        for(int i=0;i<infos.length();i++){JSONObject part=infos.optJSONObject(i);JSONObject place=part==null?null:part.optJSONObject("locationContent");if(place==null)continue;
+            JSONObject out=new JSONObject();
+            try{out.put("text",string(place.optJSONObject("messageContent"),"content"));JSONObject media=place.optJSONObject("mediaContent");
+                if(media!=null){media.put("_message",m.optString("messageID"));media.put("_part",part.optString("actionMessageID"));media.put("_index",i);out.put("media",media);}}catch(Exception ignored){}
+            return out;}
+        return null;
+    }
+    /** A location's text without its link: usually the place name or address. */
+    static String placeLabel(String text) { return text==null?"":text.replaceAll("https?://\\S+","").replaceAll("\\s+"," ").trim(); }
+    /**
+     * Group and chat events Google records as messages without text ("Sam left",
+     * "Group renamed", "Now end-to-end encrypted"), or "" for anything else.
+     */
+    static String event(JSONObject m,JSONObject chat) {
+        String s=status(m);if(!s.contains("TOMBSTONE"))return "";
+        String who=person(chat,m.optString("participantID"),m.optJSONObject("senderParticipant"));if(who.isEmpty())who="Someone";
+        String text=text(m);
+        if(s.contains("SELF_REMOVED"))return "You were removed from the group";
+        if(s.contains("PARTICIPANT_REMOVED"))return who+" was removed from the group";
+        if(s.contains("SELF_LEFT"))return "You left the group";
+        if(s.endsWith("PARTICIPANT_LEFT"))return who+" left";
+        if(s.endsWith("PARTICIPANT_JOINED"))return who+" joined";
+        if(s.contains("GROUP_RENAMED"))return text.isEmpty()?"Group renamed":"Group renamed to \u201c"+text+"\u201d";
+        if(s.contains("GROUP_NAME_CLEARED"))return "Group name removed";
+        if(s.endsWith("GROUP_CREATED"))return s.contains("ENCRYPTED")?"\uD83D\uDD12 Group created \u2022 end-to-end encrypted":"Group created";
+        if(s.endsWith("ENCRYPTED_ONE_ON_ONE_RCS_CREATED")||s.endsWith("SWITCH_TO_ENCRYPTED_RCS"))return "\uD83D\uDD12 Chat is now end-to-end encrypted";
+        if(s.endsWith("SWITCH_TO_TEXT"))return "Now texting with SMS/MMS";
+        if(s.endsWith("SWITCH_TO_RCS"))return "Now chatting with RCS";
+        if(s.endsWith("SWITCH_TO_GROUP_MMS"))return "Switched to group MMS";
+        return "";
     }
     /** Attachments in the order Google lists them. */
     static List<JSONObject> media(JSONObject m) {
@@ -145,6 +183,7 @@ final class PairedProtocol {
     static String name(JSONObject p) {
         if(p==null) return "";
         if(p.optBoolean("isMe")) return "You";
+        String nick=Nicknames.get(number(p)); if(!nick.isEmpty()) return nick;
         for(String key:new String[]{"fullName","firstName","formattedNumber"}) {
             String value=string(p,key); if(!value.isEmpty()) return value;
         }
@@ -163,6 +202,7 @@ final class PairedProtocol {
         return id.isEmpty() ? "Unknown participant":"Participant "+id;
     }
     static String title(JSONObject chat) {
+        JSONObject o=other(chat); if(o!=null){String nick=Nicknames.get(number(o)); if(!nick.isEmpty()) return nick;}
         String n=string(chat,"name"); if(!n.isEmpty()) return n;
         JSONArray ps=chat.optJSONArray("participants"); List<String> names=new ArrayList<>();
         if(ps!=null) for(int i=0;i<ps.length();i++) {
@@ -204,6 +244,10 @@ final class PairedProtocol {
         return null;
     }
     static boolean isMe(JSONObject chat,String id) { JSONObject p=participant(chat,id); return p!=null && p.optBoolean("isMe"); }
+    /** Saved in your phone's contacts (Google sends a contact ID for those). */
+    static boolean known(JSONObject p) { return p!=null && !p.optString("contactID").isEmpty(); }
+    /** Every other person in the chat is a saved contact. */
+    static boolean allKnown(JSONObject chat) { List<JSONObject> people=members(chat); if(people.isEmpty()) return false; for(JSONObject p:people) if(!known(p)) return false; return true; }
     /** People in the conversation other than you, as Google lists them. */
     static List<JSONObject> members(JSONObject chat) {
         List<JSONObject> out=new ArrayList<>(); JSONArray ps=chat==null ? null:chat.optJSONArray("participants");
@@ -230,6 +274,6 @@ final class PairedProtocol {
         return c==null || (string(c,"lastItemID").isEmpty() && c.optLong("lastItemTimestamp")==0) ? "":c.toString();
     }
     static boolean notifyLive(boolean old,boolean existed,JSONObject m) {
-        return !old && !existed && !outgoing(m) && !body(m).isEmpty() && !status(m).equals("INCOMING_DISPLAYED");
+        return !old && !existed && !outgoing(m) && !body(m).isEmpty() && !status(m).equals("INCOMING_DISPLAYED") && !status(m).contains("TOMBSTONE");
     }
 }

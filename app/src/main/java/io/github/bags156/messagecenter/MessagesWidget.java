@@ -33,6 +33,7 @@ public final class MessagesWidget extends AppWidgetProvider {
 
     /** Redraws every Message Center widget on the home screen (does nothing if there are none). */
     static void update(Context context) {
+        Nicknames.load(context);
         AppWidgetManager manager = AppWidgetManager.getInstance(context);
         int[] ids = manager.getAppWidgetIds(new ComponentName(context, MessagesWidget.class));
         if (ids == null || ids.length == 0) return;

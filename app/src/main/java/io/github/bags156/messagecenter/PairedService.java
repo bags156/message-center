@@ -92,7 +92,7 @@ public final class PairedService extends Service {
         context.stopService(new Intent(context,PairedService.class));
     }
     @Override public void onCreate() {
-        super.onCreate();current=this;store=new PairedStore(this);vault=new SessionVault(this);outbox=new Outbox(this);outbox.recover();watchWakeAndNetwork();
+        super.onCreate();current=this;Nicknames.load(this);store=new PairedStore(this);vault=new SessionVault(this);outbox=new Outbox(this);outbox.recover();watchWakeAndNetwork();
         NotificationManager manager=getSystemService(NotificationManager.class);
         manager.createNotificationChannel(new NotificationChannel(CONNECTION,"Background connection",NotificationManager.IMPORTANCE_LOW));
         NotificationChannel messages=new NotificationChannel(MESSAGES,"Incoming messages",NotificationManager.IMPORTANCE_HIGH);
@@ -220,7 +220,7 @@ public final class PairedService extends Service {
             for(String id:missed.subList(0,Math.min(5,missed.size()))){JSONObject chat=store.chat(id);long version=store.snapshot();
                 JSONArray ms=new JSONObject(source.messages(id,"")).optJSONArray("messages");if(ms==null)continue;
                 for(int j=0;j<ms.length();j++){JSONObject m=ms.getJSONObject(j);boolean existed=store.message(m,version,false);
-                    if(!existed&&!PairedProtocol.outgoing(m,chat)&&PairedProtocol.time(m)>recent&&chat!=null&&chat.optBoolean("unread")&&!settings.muted(id)){autoCopy(m);main.post(()->postConversation(id,m,false,false));}}}
+                    if(!existed&&!PairedProtocol.outgoing(m,chat)&&PairedProtocol.time(m)>recent&&chat!=null&&chat.optBoolean("unread")&&!quiet(id,m)){autoCopy(m);main.post(()->postConversation(id,m,false,false));}}}
             try{source.reactivate();}catch(Exception ignored){}
             changed("MESSAGE");
         }
@@ -323,7 +323,21 @@ public final class PairedService extends Service {
         if(!autoCopied.add(m.optString("messageID")))return;
         copiedCode=code;main.post(()->{try{NotificationActions.copyCode(this,code);}catch(Exception e){copiedCode="";}});}
     /** A conversation-style notification: who sent it, the chat (for groups), the text, and their photo when one is cached. */
-    private void notifyMessage(JSONObject m) {String id=m.optString("conversationID");if(new ChatSettings(this).muted(id))return;postConversation(id,m,false,false);}
+    private void notifyMessage(JSONObject m) {String id=m.optString("conversationID");if(quiet(id,m))return;postConversation(id,m,false,false);}
+    /** Names that count as an @mention of you: Settings → Mention alerts, plus your name as Google lists it. */
+    static List<String> mentionNames(Context context,JSONObject chat) {
+        List<String> out=new ArrayList<>();
+        for(String n:context.getSharedPreferences("paired",MODE_PRIVATE).getString("mention_name","").split(","))if(!n.trim().isEmpty())out.add(n.trim());
+        JSONArray ps=chat==null?null:chat.optJSONArray("participants");
+        if(ps!=null)for(int i=0;i<ps.length();i++){JSONObject p=ps.optJSONObject(i);if(p==null||!p.optBoolean("isMe"))continue;
+            for(String k:new String[]{"fullName","firstName"}){String v=p.optString(k).trim();if(!v.isEmpty()){out.add(v);out.add(v.split("\\s+")[0]);}}}
+        return out;
+    }
+    /** Muted or snoozed chats stay quiet, unless the message @-mentions you. */
+    private boolean quiet(String id,JSONObject m) {
+        ChatSettings s=new ChatSettings(this);if(!s.muted(id)&&!s.snoozed(id))return false;
+        return !ChatText.mentions(PairedProtocol.text(m),mentionNames(this,store.chat(id)));
+    }
     /**
      * Posts (or refreshes) a chat's notification. A new message is added to it; with
      * bubbleNow the chat opens as an expanded bubble without alerting.

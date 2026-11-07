@@ -130,4 +130,25 @@ public class ChatTextTest {
         assertEquals(0, ChatText.emojiOnly("1"));
         assertEquals(1, ChatText.emojiOnly("1\uFE0F\u20E3"));
     }
+
+    @Test public void mentionsNeedAnAtSignAndAWholeName() {
+        java.util.List<String> me = java.util.Arrays.asList("Will", "Will Bagley");
+        assertTrue(ChatText.mentions("@Will can you grab ice?", me));
+        assertTrue(ChatText.mentions("thanks @will!", me));
+        assertTrue(ChatText.mentions("cc @Will Bagley", me));
+        assertFalse(ChatText.mentions("Will you be there?", me));
+        assertFalse(ChatText.mentions("@Willow is coming", me));
+        assertFalse(ChatText.mentions("email bob@will.com", me));
+    }
+
+    @Test public void locationsAndGroupEventsAreRead() throws Exception {
+        JSONObject place = new JSONObject("{messageID:'l',messageInfo:[{actionMessageID:'a1',locationContent:{messageContent:{content:'Main Street Park https://maps.google.com/?q=36.37,-94.21'}}}]}");
+        assertEquals("Main Street Park", PairedProtocol.placeLabel(PairedProtocol.location(place).optString("text")));
+        assertEquals("\uD83D\uDCCD Main Street Park", PairedProtocol.body(place));
+        JSONObject chat = new JSONObject("{isGroupChat:true,participants:[{ID:{participantID:'p1'},fullName:'Sam Example'},{ID:{participantID:'p2'},fullName:'Dana Example'}]}");
+        assertEquals("Sam Example left", PairedProtocol.event(new JSONObject("{participantID:'p1',messageStatus:{status:'TOMBSTONE_PARTICIPANT_LEFT'}}"), chat));
+        assertEquals("Group renamed to \u201cTrip\u201d", PairedProtocol.event(new JSONObject("{participantID:'p2',messageStatus:{status:'TOMBSTONE_GROUP_RENAMED_GLOBAL'},messageInfo:[{messageContent:{content:'Trip'}}]}"), chat));
+        assertEquals("", PairedProtocol.event(new JSONObject("{messageStatus:{status:'TOMBSTONE_SHOW_LINK_PREVIEWS'}}"), chat));
+        assertEquals("", PairedProtocol.event(new JSONObject("{messageStatus:{status:'INCOMING_COMPLETE'}}"), chat));
+    }
 }

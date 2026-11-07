@@ -55,5 +55,9 @@ final class ChatSettings {
     int phoneReceipts() { return prefs.getInt("phone-receipts", -1); }
     void setPhoneReceipts(boolean on) { prefs.edit().putInt("phone-receipts", on ? 1 : 0).apply(); }
 
+    /** Notifications are paused for this chat until this time (0 when not snoozed). */
+    long snoozedUntil(String id) { return prefs.getLong("snooze:" + id, 0); }
+    boolean snoozed(String id) { return snoozedUntil(id) > System.currentTimeMillis(); }
+    void setSnooze(String id, long until) { if (until <= 0) prefs.edit().remove("snooze:" + id).apply(); else prefs.edit().putLong("snooze:" + id, until).apply(); }
     void clear() { prefs.edit().clear().apply(); }
 }

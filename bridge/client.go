@@ -156,8 +156,7 @@ func (c *Client) Start() error {
 }
 func (c *Client) Close() { c.cancel(); c.gm.Disconnect() }
 func (c *Client) ExportSession() (string, error) {
-	c.gm.AuthData.CookiesLock.RLock()
-	defer c.gm.AuthData.CookiesLock.RUnlock()
+	// AuthData locks its own cookies while it is encoded.
 	b, e := json.Marshal(c.gm.AuthData)
 	return string(b), e
 }
@@ -285,7 +284,9 @@ func (c *Client) SendMedia(chatJSON, path, fileName, mime, caption, replyID stri
 	if len(data) > maxUpload {
 		return "", errors.New("Attachments can be up to 100 MB.")
 	}
-	media, e := c.gm.UploadMedia(data, fileName, mime)
+	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Minute)
+	defer cancel()
+	media, e := c.gm.UploadMedia(ctx, data, fileName, mime)
 	if e != nil {
 		return "", errors.New("The attachment could not be uploaded. Check your connection and try again.")
 	}

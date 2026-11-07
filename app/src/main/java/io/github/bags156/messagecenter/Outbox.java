@@ -15,6 +15,8 @@ import java.util.UUID;
  */
 final class Outbox {
     static final String WAITING = "waiting", SENDING = "sending", UNSURE = "unsure", FAILED = "failed";
+    /** Held for a few seconds so it can be taken back ("Undo send"); sent once "due" passes. */
+    static final String HOLD = "hold";
     private final SharedPreferences prefs;
 
     Outbox(Context context) { prefs = context.getSharedPreferences("outbox", Context.MODE_PRIVATE); }
@@ -32,9 +34,12 @@ final class Outbox {
         return out;
     }
 
-    synchronized JSONObject add(String chat, String text, String reply) {
-        JSONObject o = new JSONObject();
-        try { o.put("id", UUID.randomUUID().toString()).put("chat", chat).put("text", text).put("reply", reply).put("created", System.currentTimeMillis()).put("state", WAITING); }
+    synchronized JSONObject add(String chat, String text, String reply) { return add(chat, text, reply, 0); }
+
+    /** With holdMillis > 0 the message waits that long (and can be undone) before it is sent. */
+    synchronized JSONObject add(String chat, String text, String reply, long holdMillis) {
+        JSONObject o = new JSONObject(); long now = System.currentTimeMillis();
+        try { o.put("id", UUID.randomUUID().toString()).put("chat", chat).put("text", text).put("reply", reply).put("created", now).put("state", holdMillis > 0 ? HOLD : WAITING).put("due", now + holdMillis); }
         catch (Exception ignored) {}
         List<JSONObject> list = all(); list.add(o); save(list);
         return o;
@@ -46,13 +51,16 @@ final class Outbox {
         save(list);
     }
 
+    synchronized JSONObject get(String id) { for (JSONObject o : all()) if (id.equals(o.optString("id"))) return o; return null; }
+
     synchronized void remove(String id) {
         List<JSONObject> list = all(); list.removeIf(o -> id.equals(o.optString("id"))); save(list);
     }
 
     /** The next message to send automatically, or null. Unsure and failed items wait for the person. */
     synchronized JSONObject next() {
-        for (JSONObject o : all()) if (WAITING.equals(o.optString("state"))) return o;
+        long now = System.currentTimeMillis();
+        for (JSONObject o : all()) { String state = o.optString("state"); if (WAITING.equals(state) || (HOLD.equals(state) && o.optLong("due") <= now)) return o; }
         return null;
     }
 
