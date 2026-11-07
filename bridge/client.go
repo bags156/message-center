@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -235,6 +237,48 @@ func parseChat(raw string) (*gmproto.Conversation, error) {
 	return p, nil
 }
 func (c *Client) SendText(chatJSON, text, replyID string) (string, error) {
+	if strings.TrimSpace(text) == "" {
+		return "", errors.New("Enter a message first.")
+	}
+	return c.send(chatJSON, replyID, []*gmproto.MessageInfo{textInfo(text)})
+}
+
+// SendMedia uploads one file and sends it, with optional caption text in the
+// same message (as Google Messages does for RCS; MMS carries both parts).
+func (c *Client) SendMedia(chatJSON, path, fileName, mime, caption, replyID string) (string, error) {
+	data, e := os.ReadFile(path)
+	if e != nil {
+		return "", errors.New("The attachment could not be read.")
+	}
+	if len(data) == 0 {
+		return "", errors.New("The attachment is empty.")
+	}
+	if len(data) > maxUpload {
+		return "", errors.New("Attachments can be up to 100 MB.")
+	}
+	media, e := c.gm.UploadMedia(data, fileName, mime)
+	if e != nil {
+		return "", errors.New("The attachment could not be uploaded. Check your connection and try again.")
+	}
+	return c.send(chatJSON, replyID, mediaInfos(media, caption))
+}
+
+const maxUpload = 100 << 20
+const maxDownload = 250 << 20
+
+func textInfo(text string) *gmproto.MessageInfo {
+	return &gmproto.MessageInfo{Data: &gmproto.MessageInfo_MessageContent{MessageContent: &gmproto.MessageContent{Content: text}}}
+}
+
+func mediaInfos(media *gmproto.MediaContent, caption string) []*gmproto.MessageInfo {
+	infos := []*gmproto.MessageInfo{{Data: &gmproto.MessageInfo_MediaContent{MediaContent: media}}}
+	if strings.TrimSpace(caption) != "" {
+		infos = append(infos, textInfo(caption))
+	}
+	return infos
+}
+
+func (c *Client) send(chatJSON, replyID string, infos []*gmproto.MessageInfo) (string, error) {
 	conv, e := parseChat(chatJSON)
 	if e != nil {
 		return "", e
@@ -243,12 +287,9 @@ func (c *Client) SendText(chatJSON, text, replyID string) (string, error) {
 	if e != nil {
 		return "", e
 	}
-	if strings.TrimSpace(text) == "" {
-		return "", errors.New("Enter a message first.")
-	}
 	tmp := uuid.NewString()
 	req := &gmproto.SendMessageRequest{ConversationID: conv.GetConversationID(), TmpID: tmp, SIMPayload: sim,
-		MessagePayload: &gmproto.MessagePayload{TmpID: tmp, TmpID2: tmp, ConversationID: conv.GetConversationID(), ParticipantID: conv.GetDefaultOutgoingID(), MessageInfo: []*gmproto.MessageInfo{{Data: &gmproto.MessageInfo_MessageContent{MessageContent: &gmproto.MessageContent{Content: text}}}}}}
+		MessagePayload: &gmproto.MessagePayload{TmpID: tmp, TmpID2: tmp, ConversationID: conv.GetConversationID(), ParticipantID: conv.GetDefaultOutgoingID(), MessageInfo: infos}}
 	if replyID != "" {
 		req.Reply = &gmproto.ReplyPayload{MessageID: replyID}
 	}
@@ -263,6 +304,58 @@ func (c *Client) SendText(chatJSON, text, replyID string) (string, error) {
 	}
 	return tmp, nil // Acceptance only. The real outgoing message arrives in history/stream.
 }
+
+// DownloadMedia saves one attachment, already decrypted, to path. keyB64 is the
+// message's decryptionKey as it appears in the JSON (base64). The file is written
+// to path+".part" first, so a failed download never leaves a broken file behind.
+func (c *Client) DownloadMedia(mediaID, keyB64, path string) error {
+	key, e := mediaKey(keyB64)
+	if mediaID == "" || e != nil {
+		return errors.New("This attachment is missing its download details.")
+	}
+	body, e := c.gm.DownloadMedia(mediaID, key)
+	if e != nil {
+		return errors.New("The attachment could not be downloaded. Check your connection and try again.")
+	}
+	defer body.Close()
+	return saveStream(body, path, maxDownload)
+}
+
+func mediaKey(keyB64 string) ([]byte, error) {
+	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.URLEncoding, base64.RawStdEncoding, base64.RawURLEncoding} {
+		if key, e := enc.DecodeString(keyB64); e == nil && len(key) > 0 {
+			return key, nil
+		}
+	}
+	return nil, errors.New("invalid key")
+}
+
+func saveStream(r io.Reader, path string, limit int64) error {
+	part := path + ".part"
+	f, e := os.Create(part)
+	if e != nil {
+		return errors.New("There is no room to save this attachment.")
+	}
+	n, e := io.Copy(f, io.LimitReader(r, limit+1))
+	if ce := f.Close(); e == nil {
+		e = ce
+	}
+	if e == nil && n > limit {
+		e = errors.New("too large")
+	}
+	if e == nil && n == 0 {
+		e = errors.New("empty")
+	}
+	if e != nil {
+		_ = os.Remove(part)
+		if n > limit {
+			return errors.New("This attachment is too large to download here.")
+		}
+		return errors.New("The attachment could not be downloaded. Check your connection and try again.")
+	}
+	return os.Rename(part, path)
+}
+
 func (c *Client) CreateChat(number string) (string, error) {
 	if len(number) < 4 || number[0] != '+' {
 		return "", errors.New("Use the full phone number with + and country code.")

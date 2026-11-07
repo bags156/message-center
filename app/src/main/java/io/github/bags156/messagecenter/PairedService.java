@@ -44,6 +44,8 @@ public final class PairedService extends Service {
     private static volatile PairedService current;
     private static volatile String pendingCookies;
     private final ExecutorService network=Executors.newSingleThreadExecutor(),events=Executors.newSingleThreadExecutor();
+    /** Attachment downloads and uploads run here so a large file never delays sending or loading. */
+    private final ExecutorService media=Executors.newFixedThreadPool(2);
     private final Handler main=new Handler(Looper.getMainLooper());
     private final AtomicInteger generation=new AtomicInteger();
     private volatile Client client;
@@ -63,10 +65,12 @@ public final class PairedService extends Service {
     static String status(Context context) {PairedService s=current;return s==null?"Connection stopped":s.status;}
     static String emoji() {PairedService s=current;return s==null?"":s.emoji;}
     static boolean ready() {PairedService s=current;return s!=null && s.ready;}
-    static void execute(Operation work,Result result) {
+    static void execute(Operation work,Result result) {run(work,result,false);}
+    static void executeMedia(Operation work,Result result) {run(work,result,true);}
+    private static void run(Operation work,Result result,boolean forMedia) {
         PairedService s=current;
         if(s==null || !s.ready || s.client==null) {result.done("","Connect to Google Messages first.");return;}
-        s.network.execute(()-> {
+        (forMedia?s.media:s.network).execute(()-> {
             String value="",error="";
             try {if(!s.ready||s.client==null)throw new IllegalStateException("The connection is not ready.");value=work.run(s.client);}
             catch(Exception e){error=e.getMessage()==null ? "This operation failed.":e.getMessage();}
@@ -315,7 +319,7 @@ public final class PairedService extends Service {
     @Override public IBinder onBind(Intent intent) {return null;}
     @Override public void onDestroy() {
         generation.incrementAndGet();ready=false;if(current==this)current=null;
-        Client old=client;client=null;network.shutdownNow();events.shutdownNow();
+        Client old=client;client=null;network.shutdownNow();events.shutdownNow();media.shutdownNow();
         if(old!=null)new Thread(old::close,"paired-disconnect").start();
         // SQLiteOpenHelper stays alive until in-flight JNI calls return; the process
         // reclaims it. Closing here races with a final incoming update.

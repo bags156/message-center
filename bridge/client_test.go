@@ -2,6 +2,8 @@ package bridge
 
 import (
 	"go.mau.fi/mautrix-gmessages/pkg/libgm/gmproto"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -86,5 +88,50 @@ func TestReactionActionsMapToGoogle(t *testing.T) {
 	}
 	if _, err := reactionAction("replace"); err == nil {
 		t.Fatal("unknown action accepted")
+	}
+}
+func TestMediaKeyAcceptsJSONBase64(t *testing.T) {
+	for _, raw := range []string{"AAECAwQ=", "AAECAwQ", "-_8="} {
+		if k, err := mediaKey(raw); err != nil || len(k) == 0 {
+			t.Fatalf("%q: %v", raw, err)
+		}
+	}
+	if _, err := mediaKey(""); err == nil {
+		t.Fatal("empty key accepted")
+	}
+}
+
+func TestMediaInfosAddCaptionOnlyWhenPresent(t *testing.T) {
+	media := &gmproto.MediaContent{MediaID: "m1", MimeType: "image/jpeg"}
+	if got := mediaInfos(media, "  "); len(got) != 1 || got[0].GetMediaContent().GetMediaID() != "m1" {
+		t.Fatalf("unexpected infos without caption: %v", got)
+	}
+	got := mediaInfos(media, "Look")
+	if len(got) != 2 || got[1].GetMessageContent().GetContent() != "Look" {
+		t.Fatalf("unexpected infos with caption: %v", got)
+	}
+}
+
+func TestSaveStreamWritesAtomicallyAndEnforcesLimit(t *testing.T) {
+	dir := t.TempDir()
+	ok := filepath.Join(dir, "ok.bin")
+	if err := saveStream(strings.NewReader("hello"), ok, 10); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(ok); string(b) != "hello" {
+		t.Fatalf("saved %q", b)
+	}
+	big := filepath.Join(dir, "big.bin")
+	if err := saveStream(strings.NewReader("hello world"), big, 5); err == nil {
+		t.Fatal("over-limit download accepted")
+	}
+	if _, err := os.Stat(big); !os.IsNotExist(err) {
+		t.Fatal("partial file left behind")
+	}
+	if _, err := os.Stat(big + ".part"); !os.IsNotExist(err) {
+		t.Fatal("temporary file left behind")
+	}
+	if err := saveStream(strings.NewReader(""), filepath.Join(dir, "empty.bin"), 5); err == nil {
+		t.Fatal("empty download accepted")
 	}
 }

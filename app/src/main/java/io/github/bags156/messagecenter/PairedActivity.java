@@ -9,6 +9,13 @@ import android.app.Dialog;
 import android.app.NotificationManager;
 import android.content.BroadcastReceiver;
 import android.content.ClipData;
+import android.content.ContentValues;
+import android.os.Environment;
+import android.provider.MediaStore;
+import android.provider.OpenableColumns;
+import android.widget.ProgressBar;
+import java.util.Date;
+import java.util.Locale;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
@@ -122,7 +129,7 @@ public class PairedActivity extends Activity {
     // ---- Shared building blocks ----
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
     private void base(String name){
-        screen=name;statusView=null;composer=null;items=null;scroll=null;searchRow=null;replyPanel=null;typingRow=null;messageViews.clear();ui.removeCallbacks(typingTick);if(typingPulse!=null){typingPulse.cancel();typingPulse=null;}
+        screen=name;statusView=null;composer=null;items=null;scroll=null;searchRow=null;attachStrip=null;attachScroll=null;replyPanel=null;typingRow=null;messageViews.clear();ui.removeCallbacks(typingTick);if(typingPulse!=null){typingPulse.cancel();typingPulse=null;}
         dark=(getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;
         bg=dark?0xff111318:0xfff8f9fc;card=dark?0xff1d2026:Color.WHITE;surface=dark?0xff23252b:0xffe9edf4;ink=dark?0xffe3e2e9:0xff1a1b20;muted=dark?0xffabaeb8:0xff5d5f67;
         fab=dark?0xff3b4766:0xffd3e3fd;onFab=dark?0xffd8e2ff:0xff0b1f3a;danger=dark?0xfff2b8b5:0xffb3261e;
@@ -339,7 +346,10 @@ public class PairedActivity extends Activity {
         LinearLayout replyTexts=vertical();replyTexts.setPadding(dp(10),0,dp(8),0);replyLabel=text("",13,theme.accent(dark),true);replyQuote=text("",14,muted,false);
         replyQuote.setSingleLine(true);replyQuote.setEllipsize(TextUtils.TruncateAt.END);replyTexts.addView(replyLabel);replyTexts.addView(replyQuote);
         replyPanel.addView(replyTexts,new LinearLayout.LayoutParams(0,-2,1));replyPanel.addView(icon(R.drawable.ic_close,muted,"Cancel reply",this::cancelReply));root.addView(replyPanel);
-        LinearLayout compose=row();compose.setPadding(dp(8),dp(4),dp(8),0);
+        if(!id.equals(outgoingChat)){for(Outgoing o:outgoing)if(!o.sending)o.file.delete();outgoing.removeIf(o->!o.sending);outgoingChat=id;}
+        attachStrip=row();attachScroll=new HorizontalScrollView(this);attachScroll.setHorizontalScrollBarEnabled(false);attachScroll.setPadding(dp(16),dp(4),dp(16),dp(6));attachScroll.addView(attachStrip);root.addView(attachScroll);
+        LinearLayout compose=row();compose.setPadding(dp(4),dp(4),dp(8),0);
+        compose.addView(icon(R.drawable.ic_add,ink,"Attach photos, videos, or files",this::attach));
         composer=new EditText(this);composer.setHint(PairedProtocol.rcs(c)?"RCS message":"Text message");composer.setTextColor(ink);composer.setHintTextColor(muted);composer.setTextSize(17);
         composer.setBackground(shape(surface,28));composer.setPadding(dp(22),dp(14),dp(22),dp(14));composer.setMaxLines(5);
         composer.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);composer.setText(drafts.getOrDefault(id,""));
@@ -347,7 +357,7 @@ public class PairedActivity extends Activity {
         compose.addView(composer,new LinearLayout.LayoutParams(0,-2,1));
         ImageView sendButton=new ImageView(this);sendButton.setImageResource(R.drawable.ic_send);sendButton.setImageTintList(ColorStateList.valueOf(theme.onAccent(dark)));sendButton.setBackground(oval(theme.accent(dark)));
         sendButton.setPadding(dp(14),dp(14),dp(14),dp(14));sendButton.setContentDescription("Send");sendButton.setOnClickListener(v->send());
-        LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(dp(52),dp(52));sl.setMarginStart(dp(8));compose.addView(sendButton,sl);root.addView(compose);
+        LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(dp(52),dp(52));sl.setMarginStart(dp(8));compose.addView(sendButton,sl);root.addView(compose);renderAttachments();
         if(!bubble())PairedService.clearNotification(this,id);renderMessages(true);if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();
         if(c!=null)requestPhotos(java.util.Collections.singletonList(c));
     }
@@ -391,9 +401,12 @@ public class PairedActivity extends Activity {
         scroll.post(()->{if(scroll==null)return;if(anchorOlder){anchorOlder=false;scroll.scrollTo(0,y+Math.max(0,scroll.getChildAt(0).getHeight()-before));}else if(atBottom)scroll.fullScroll(View.FOCUS_DOWN);else scroll.scrollTo(0,y);});
     }
     private View bubble(JSONObject m,JSONObject c,ChatTheme theme,boolean outgoing,boolean joinPrev,boolean joinNext){
-        LinearLayout wrap=vertical();String body=PairedProtocol.body(m),fallback=ChatText.replyFallbackBody(body);
+        LinearLayout wrap=vertical();String body=PairedProtocol.text(m),fallback=ChatText.replyFallbackBody(body);List<JSONObject> media=PairedProtocol.media(m);
         String target=PairedProtocol.string(m.optJSONObject("replyMessage"),"messageID");
         if(!target.isEmpty()||fallback!=null)addReplyContext(wrap,m,c,theme,outgoing,target);
+        for(int k=0;k<media.size();k++){if(k>0)gap(wrap,4);wrap.addView(mediaView(m,media.get(k),outgoing,theme),new LinearLayout.LayoutParams(-1,-2));}
+        if(!media.isEmpty()&&(fallback!=null?fallback:body).isEmpty())return wrap;
+        if(!media.isEmpty())gap(wrap,4);
         LinearLayout line=row();line.setGravity(outgoing?Gravity.END:Gravity.START);
         LinearLayout b=vertical();b.setPadding(dp(16),dp(11),dp(16),dp(11));
         float big=dp(22),small=dp(5);float top=joinPrev?small:big,bottomR=joinNext?small:big;
@@ -494,7 +507,9 @@ public class PairedActivity extends Activity {
         if(mid.isEmpty()||mid.equals(chatSettings.markedRead(id))||mid.equals(markingRead))return;markingRead=mid;
         PairedService.markRead(id,mid,(v,e)->{markingRead="";if(e.isEmpty())chatSettings.setMarkedRead(id,mid);});}
     private void send(){if(busy||composer==null)return;String body=composer.getText().toString(),id=chatId,reply=replyId;JSONObject c=store.chat(id);
-        if(body.trim().isEmpty())return;if(c==null){error("Refresh this conversation before sending.");return;}
+        boolean files=false;for(Outgoing o:outgoing)if(!o.sending)files=true;
+        if(body.trim().isEmpty()&&!files)return;if(c==null){error("Refresh this conversation before sending.");return;}
+        if(files){sendAttachments(c,body.trim(),reply);return;}
         busy=true;PairedService.execute(client->client.sendText(c.toString(),body,reply),(value,e)->{busy=false;
             if(!e.isEmpty()){error(e);return;}drafts.remove(id);if(screen.equals("chat")&&chatId.equals(id)){composer.setText("");cancelReply();}
             if(screen.equals("chat")&&chatId.equals(id))loadMessages(false);});}
@@ -518,7 +533,11 @@ public class PairedActivity extends Activity {
             t.setOnClickListener(v->{d[0].dismiss();react(m,e,selected?"remove":current.isEmpty()?"add":"switch");});emojis.addView(t,new LinearLayout.LayoutParams(0,dp(50),1));}
         content.addView(emojis);gap(content,10);
         sheetAction(content,"Reply",()->{d[0].dismiss();startReply(m);});
-        sheetAction(content,"Copy text",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Message",displayBody(m)));});
+        String typed=PairedProtocol.text(m),plain=ChatText.replyFallbackBody(typed)!=null?ChatText.replyFallbackBody(typed):typed;
+        if(!plain.isEmpty())sheetAction(content,"Copy text",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Message",plain));});
+        for(JSONObject media:PairedProtocol.media(m)){String kind=PairedProtocol.mediaKind(media),what=kind.equals("image")?"photo":kind.equals("video")?"video":kind.equals("audio")?"audio":"file";
+            sheetAction(content,"Save "+what+" to phone",()->{d[0].dismiss();withFile(media,"Downloading…",file->saveToPhone(file,media));});
+            sheetAction(content,"Share "+what,()->{d[0].dismiss();withFile(media,"Downloading…",file->share(file,media));});}
         if(!reactors.isEmpty())sheetAction(content,"See who reacted",()->{d[0].dismiss();reactionSheet(m,c);});
         d[0]=sheet(content);}
     private void sheetAction(LinearLayout parent,String label,Runnable action){TextView t=text(label,17,ink,false);t.setPadding(dp(8),dp(14),dp(8),dp(14));
@@ -564,6 +583,145 @@ public class PairedActivity extends Activity {
             if(which==0)startChat(number);
             else if(which==1){try{startActivity(new Intent(Intent.ACTION_DIAL,Uri.parse("tel:"+number)));}catch(Exception e){toast("No phone app is available.");}}
             else getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Number",number));}).show();}
+    // ---- Attachments ----
+    private static final int PICK_MEDIA=41,PICK_FILES=42;
+    private static final long MAX_ATTACHMENT=100L<<20;
+    private final java.util.concurrent.ExecutorService decoder=java.util.concurrent.Executors.newFixedThreadPool(2);
+    private final List<Outgoing> outgoing=new ArrayList<>();private String outgoingChat="";
+    private LinearLayout attachStrip;private HorizontalScrollView attachScroll;
+    /** A file picked to send, copied into this app's cache first. */
+    private static final class Outgoing{final File file;final String name,mime;boolean sending;Outgoing(File f,String n,String m){file=f;name=n;mime=m;}}
+    /** A photo or video shown in the chat at its own shape, or a file/audio card. Tap to open, long-press for options. */
+    private View mediaView(JSONObject m,JSONObject media,boolean outgoing,ChatTheme theme){
+        String kind=PairedProtocol.mediaKind(media);LinearLayout line=row();line.setGravity(outgoing?Gravity.END:Gravity.START);
+        if(kind.equals("image")||kind.equals("video")){
+            int width=Math.round(getResources().getDisplayMetrics().widthPixels*0.66f);JSONObject dims=media.optJSONObject("dimensions");
+            long w=dims==null?0:dims.optLong("width"),h=dims==null?0:dims.optLong("height");float ratio=w>0&&h>0?(float)h/w:0.75f;ratio=Math.max(0.45f,Math.min(1.5f,ratio));
+            FrameLayout box=new FrameLayout(this);box.setBackground(shape(surface,20));
+            box.setOutlineProvider(new ViewOutlineProvider(){@Override public void getOutline(View v,Outline o){o.setRoundRect(0,0,v.getWidth(),v.getHeight(),dp(20));}});box.setClipToOutline(true);
+            ImageView img=new ImageView(this);img.setScaleType(ImageView.ScaleType.CENTER_CROP);box.addView(img,new FrameLayout.LayoutParams(-1,-1));
+            if(kind.equals("video")){TextView play=text("▶",20,Color.WHITE,false);play.setGravity(Gravity.CENTER);play.setBackground(oval(0x99000000));box.addView(play,new FrameLayout.LayoutParams(dp(52),dp(52),Gravity.CENTER));}
+            box.setContentDescription(kind.equals("video")?"Video. Tap to play.":"Photo. Tap to view.");
+            box.setOnClickListener(v->openMedia(media));box.setOnLongClickListener(v->{messageSheet(m);return true;});
+            line.addView(box,new LinearLayout.LayoutParams(width,Math.round(width*ratio)));loadPreview(media,img,kind.equals("video"),width);
+        } else {
+            LinearLayout card=row();card.setPadding(dp(14),dp(12),dp(18),dp(12));card.setBackground(shape(outgoing?theme.bubble(dark):surface,22));int fg=outgoing?theme.onBubble(dark):ink;
+            card.addView(text(kind.equals("audio")?"🎤":"📄",24,fg,false));LinearLayout texts=vertical();texts.setPadding(dp(12),0,0,0);
+            String name=PairedProtocol.string(media,"mediaName");TextView title=text(name.isEmpty()?(kind.equals("audio")?"Audio message":"File"):name,15,fg,true);title.setMaxLines(2);title.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+            title.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.55f));texts.addView(title);
+            String size=PairedProtocol.size(media.optLong("size"));texts.addView(text((size.isEmpty()?"":size+" • ")+"Tap to open",13,outgoing?fg:muted,false));card.addView(texts);
+            card.setContentDescription(title.getText()+". Tap to open.");card.setOnClickListener(v->openMedia(media));card.setOnLongClickListener(v->{messageSheet(m);return true;});
+            line.addView(card,new LinearLayout.LayoutParams(-2,-2));
+        }
+        return line;
+    }
+    /** Small preview: Google's thumbnail when there is one, else the photo itself (videos over 15 MB keep the placeholder). */
+    private void loadPreview(JSONObject media,ImageView img,boolean video,int width){
+        boolean thumb=MediaCache.hasThumbnail(media);if(!thumb&&video&&media.optLong("size")>(15L<<20))return;
+        File cached=MediaCache.file(this,media,thumb);Bitmap ready=cached.isFile()?MediaCache.peek(cached,width):null;if(ready!=null){img.setImageBitmap(ready);return;}
+        if(!cached.isFile()&&!PairedService.ready())return;
+        MediaCache.fetch(this,media,thumb,(file,error)->{if(file==null)return;decoder.execute(()->{Bitmap b=MediaCache.decode(file,width,video&&!thumb);if(b!=null)img.post(()->img.setImageBitmap(b));});});
+    }
+    /** Photos open in the viewer; videos, audio and files open in another app. */
+    private void openMedia(JSONObject media){
+        if(PairedProtocol.mediaKind(media).equals("image")){viewer(media);return;}
+        withFile(media,"Downloading…",file->openExternally(file,media));
+    }
+    private interface FileAction{void run(File file);}
+    /** Downloads (or reuses) the full attachment, showing a cancellable wait for anything not cached. */
+    private void withFile(JSONObject media,String waiting,FileAction action){
+        File cached=MediaCache.file(this,media,false);if(cached.isFile()){action.run(cached);return;}
+        if(!PairedService.ready()){toast("Connect to Google Messages to download this attachment.");return;}
+        boolean[] cancelled={false};ProgressBar spinner=new ProgressBar(this);spinner.setPadding(0,dp(16),0,dp(16));
+        AlertDialog wait=new AlertDialog.Builder(this).setMessage(waiting).setView(spinner).setNegativeButton("Cancel",(d,w)->cancelled[0]=true).show();
+        MediaCache.fetch(this,media,false,(file,error)->{if(cancelled[0])return;wait.dismiss();if(file==null){error(error);return;}action.run(file);});
+    }
+    private Uri shareUri(File file,JSONObject media){return MediaProvider.uri(file,displayName(media));}
+    private String displayName(JSONObject media){String name=PairedProtocol.string(media,"mediaName");
+        return name.isEmpty()?"Message-"+new SimpleDateFormat("yyyyMMdd-HHmmss",Locale.US).format(new Date())+"."+MediaCache.extension(media):name;}
+    private void openExternally(File file,JSONObject media){
+        Intent view=new Intent(Intent.ACTION_VIEW).setDataAndType(shareUri(file,media),MediaCache.mime(media)).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try{startActivity(view);}catch(Exception e){toast("No app on this phone can open this kind of file. Try Share instead.");}
+    }
+    private void share(File file,JSONObject media){Uri uri=shareUri(file,media);
+        Intent send=new Intent(Intent.ACTION_SEND).setType(MediaCache.mime(media)).putExtra(Intent.EXTRA_STREAM,uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        send.setClipData(ClipData.newRawUri(displayName(media),uri));startActivity(Intent.createChooser(send,"Share"));}
+    /** Copies into Pictures, Movies or Downloads → "Message Center", where the gallery and Files apps can see it. */
+    private void saveToPhone(File file,JSONObject media){String kind=PairedProtocol.mediaKind(media),mime=MediaCache.mime(media);
+        decoder.execute(()->{String where;Uri collection;
+            if(kind.equals("image")){collection=MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);where=Environment.DIRECTORY_PICTURES;}
+            else if(kind.equals("video")){collection=MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);where=Environment.DIRECTORY_MOVIES;}
+            else {collection=MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);where=Environment.DIRECTORY_DOWNLOADS;}
+            ContentValues v=new ContentValues();v.put(MediaStore.MediaColumns.DISPLAY_NAME,displayName(media));v.put(MediaStore.MediaColumns.MIME_TYPE,mime);
+            v.put(MediaStore.MediaColumns.RELATIVE_PATH,where+"/Message Center");v.put(MediaStore.MediaColumns.IS_PENDING,1);
+            String result;Uri item=null;
+            try{item=getContentResolver().insert(collection,v);if(item==null)throw new java.io.IOException("insert");
+                try(java.io.InputStream in=new java.io.FileInputStream(file);java.io.OutputStream out=getContentResolver().openOutputStream(item)){if(out==null)throw new java.io.IOException("open");in.transferTo(out);}
+                v.clear();v.put(MediaStore.MediaColumns.IS_PENDING,0);getContentResolver().update(item,v,null,null);result="Saved to "+where+"/Message Center";}
+            catch(Exception e){if(item!=null)getContentResolver().delete(item,null,null);result="Could not save it to your phone.";}
+            String r=result;ui.post(()->toast(r));});}
+    /** Full screen, pinch or double-tap to zoom. Shows the preview at once and the full photo when it arrives. */
+    private void viewer(JSONObject media){
+        Dialog d=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);FrameLayout box=new FrameLayout(this);box.setBackgroundColor(Color.BLACK);
+        ZoomImageView image=new ZoomImageView(this);box.addView(image,new FrameLayout.LayoutParams(-1,-1));
+        ProgressBar spinner=new ProgressBar(this);box.addView(spinner,new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.CENTER));
+        LinearLayout bar=row();bar.setPadding(dp(8),dp(36),dp(8),dp(8));bar.setBackgroundColor(0x66000000);
+        bar.addView(icon(R.drawable.ic_close,Color.WHITE,"Close",d::dismiss));View space=new View(this);bar.addView(space,new LinearLayout.LayoutParams(0,1,1));
+        File[] full={null};
+        for(String[] a:new String[][]{{"Save"},{"Share"}}){TextView t=text(a[0],16,Color.WHITE,true);t.setPadding(dp(14),dp(10),dp(14),dp(10));
+            t.setOnClickListener(v->{if(full[0]==null){toast("Still downloading…");return;}if(a[0].equals("Save"))saveToPhone(full[0],media);else share(full[0],media);});bar.addView(t);}
+        box.addView(bar,new FrameLayout.LayoutParams(-1,-2,Gravity.TOP));image.setOnTap(()->bar.setVisibility(bar.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE));
+        d.setContentView(box);d.show();
+        File thumb=MediaCache.file(this,media,true);if(thumb.isFile()){Bitmap t=MediaCache.peek(thumb,Math.round(getResources().getDisplayMetrics().widthPixels*0.66f));if(t!=null)image.setImageBitmap(t);}
+        if(!MediaCache.file(this,media,false).isFile()&&!PairedService.ready()){spinner.setVisibility(View.GONE);toast("Connect to Google Messages to download the full photo.");return;}
+        MediaCache.fetch(this,media,false,(file,error)->{if(file==null){spinner.setVisibility(View.GONE);if(d.isShowing())toast(error);return;}full[0]=file;
+            decoder.execute(()->{Bitmap b=MediaCache.decode(file,2560,false);ui.post(()->{spinner.setVisibility(View.GONE);if(b!=null)image.setImageBitmap(b);else toast("This photo can't be shown here. Use Share to open it in another app.");});});});
+    }
+    /** + button: pick photos/videos (Android's photo picker, no storage permission needed) or any file. */
+    private void attach(){
+        new AlertDialog.Builder(this).setItems(new String[]{"Photos & videos","File"},(d,which)->{
+            if(which==0){Intent pick=new Intent(MediaStore.ACTION_PICK_IMAGES).putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX,Math.min(10,MediaStore.getPickImagesMaxLimit()));
+                try{startActivityForResult(pick,PICK_MEDIA);}catch(Exception e){startActivityForResult(new Intent(Intent.ACTION_GET_CONTENT).setType("*/*").putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"image/*","video/*"}).putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true).addCategory(Intent.CATEGORY_OPENABLE),PICK_MEDIA);}}
+            else startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true),PICK_FILES);
+        }).show();}
+    @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);
+        if((request!=PICK_MEDIA&&request!=PICK_FILES)||result!=RESULT_OK||data==null)return;List<Uri> uris=new ArrayList<>();
+        if(data.getClipData()!=null)for(int i=0;i<data.getClipData().getItemCount();i++)uris.add(data.getClipData().getItemAt(i).getUri());else if(data.getData()!=null)uris.add(data.getData());
+        decoder.execute(()->{List<String> problems=new ArrayList<>();List<Outgoing> added=new ArrayList<>();
+            for(Uri uri:uris){try{added.add(copyIn(uri));}catch(Exception e){problems.add(e.getMessage()==null?"One attachment could not be added.":e.getMessage());}}
+            ui.post(()->{outgoing.addAll(added);renderAttachments();if(!problems.isEmpty())toast(problems.get(0));});});}
+    /** Copies a picked file into the cache, so it stays readable while it uploads. */
+    private Outgoing copyIn(Uri uri) throws Exception{String name="attachment";long size=-1;
+        try(android.database.Cursor q=getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME,OpenableColumns.SIZE},null,null,null)){
+            if(q!=null&&q.moveToFirst()){if(!q.isNull(0))name=q.getString(0);if(!q.isNull(1))size=q.getLong(1);}}
+        if(size>MAX_ATTACHMENT)throw new Exception(name+" is over 100 MB, the most Google Messages sends.");
+        String mime=getContentResolver().getType(uri);if(mime==null)mime="application/octet-stream";
+        File dir=new File(getCacheDir(),"outgoing");if(!dir.isDirectory())dir.mkdirs();File target=new File(dir,java.util.UUID.randomUUID()+"-"+name.replaceAll("[^A-Za-z0-9._-]","_"));
+        long copied;try(java.io.InputStream in=getContentResolver().openInputStream(uri);java.io.OutputStream out=new java.io.FileOutputStream(target)){if(in==null)throw new Exception("That file can't be read.");copied=in.transferTo(out);}
+        if(copied>MAX_ATTACHMENT){target.delete();throw new Exception(name+" is over 100 MB, the most Google Messages sends.");}
+        return new Outgoing(target,name,mime);}
+    /** The row of picked attachments above the message box, each removable until sent. */
+    private void renderAttachments(){if(attachStrip==null)return;attachStrip.removeAllViews();attachScroll.setVisibility(outgoing.isEmpty()?View.GONE:View.VISIBLE);
+        for(Outgoing o:outgoing){FrameLayout tile=new FrameLayout(this);tile.setBackground(shape(surface,14));
+            tile.setOutlineProvider(new ViewOutlineProvider(){@Override public void getOutline(View v,Outline ol){ol.setRoundRect(0,0,v.getWidth(),v.getHeight(),dp(14));}});tile.setClipToOutline(true);
+            boolean visual=o.mime.startsWith("image/")||o.mime.startsWith("video/");
+            if(visual){ImageView img=new ImageView(this);img.setScaleType(ImageView.ScaleType.CENTER_CROP);tile.addView(img,new FrameLayout.LayoutParams(-1,-1));
+                decoder.execute(()->{Bitmap b=MediaCache.decode(o.file,dp(72)*2,o.mime.startsWith("video/"));if(b!=null)img.post(()->img.setImageBitmap(b));});}
+            else {TextView t=text("📄\n"+o.name,11,ink,false);t.setGravity(Gravity.CENTER);t.setMaxLines(3);t.setEllipsize(TextUtils.TruncateAt.END);t.setPadding(dp(4),dp(4),dp(4),dp(4));tile.addView(t,new FrameLayout.LayoutParams(-1,-1));}
+            if(o.sending){TextView s=text("Sending…",11,Color.WHITE,true);s.setGravity(Gravity.CENTER);s.setBackgroundColor(0x99000000);tile.addView(s,new FrameLayout.LayoutParams(-1,-1));}
+            else {ImageView x=new ImageView(this);x.setImageResource(R.drawable.ic_close);x.setImageTintList(ColorStateList.valueOf(Color.WHITE));x.setBackground(oval(0x99000000));x.setPadding(dp(3),dp(3),dp(3),dp(3));
+                x.setContentDescription("Remove "+o.name);x.setOnClickListener(v->{outgoing.remove(o);o.file.delete();renderAttachments();});tile.addView(x,new FrameLayout.LayoutParams(dp(22),dp(22),Gravity.TOP|Gravity.END));}
+            LinearLayout.LayoutParams tl=new LinearLayout.LayoutParams(dp(72),dp(72));tl.setMarginEnd(dp(8));attachStrip.addView(tile,tl);}}
+    /** Sends the picked attachments one message each; the typed text goes with the first as its caption. */
+    private void sendAttachments(JSONObject c,String caption,String reply){String id=chatId;List<Outgoing> batch=new ArrayList<>();for(Outgoing o:outgoing)if(!o.sending)batch.add(o);
+        if(batch.isEmpty())return;for(Outgoing o:batch)o.sending=true;renderAttachments();busy=true;
+        if(composer!=null){composer.setText("");}drafts.remove(id);cancelReply();sendNext(c,batch,0,caption,reply,id);}
+    private void sendNext(JSONObject c,List<Outgoing> batch,int index,String caption,String reply,String id){
+        if(index>=batch.size()){busy=false;if(screen.equals("chat")&&chatId.equals(id))loadMessages(false);return;}
+        Outgoing o=batch.get(index);String text=index==0?caption:"",replyTo=index==0?reply:"";
+        PairedService.executeMedia(client->client.sendMedia(c.toString(),o.file.getPath(),o.name,o.mime,text,replyTo),(value,e)->{
+            if(!e.isEmpty()){busy=false;for(Outgoing r:batch)r.sending=false;renderAttachments();if(index==0&&!caption.isEmpty()&&composer!=null&&composer.getText().length()==0)composer.setText(caption);error(o.name+": "+e);return;}
+            outgoing.remove(o);o.file.delete();renderAttachments();sendNext(c,batch,index+1,caption,reply,id);});}
     private void settings(){remember();base("settings");header("Settings",this::inbox);connection();ScrollView sc=new ScrollView(this);LinearLayout content=vertical();sc.addView(content);root.addView(sc,new LinearLayout.LayoutParams(-1,0,1));
         note(content,"Message Center "+BuildConfig.VERSION_NAME+" • experimental paired client\n\nThe connection runs on this phone and talks directly to Google. Google Messages must remain your default messaging app and have network/background access.");
         int phone=chatSettings.phoneReceipts();
@@ -626,5 +784,5 @@ public class PairedActivity extends Activity {
     private void pairing(){base("pair");header("Pair this phone",null);connection();String emoji=PairedService.emoji();shownEmoji=emoji;TextView symbol=text(emoji.isEmpty()?"…":emoji,72,ink,false);symbol.setGravity(Gravity.CENTER);root.addView(symbol);gap(root,16);
         note(root,"Open Google Messages → Device pairing and approve the matching emoji. Return here afterward.\n\nIf Google reports no device, check that Device pairing uses the same Google account you just signed into.");root.addView(button("Open Google Messages",true,this::openGoogle));gap(root,8);root.addView(button("Back to inbox",false,this::inbox));}
     private void openGoogle(){Intent intent=getPackageManager().getLaunchIntentForPackage("com.google.android.apps.messaging");if(intent!=null)startActivity(intent);else toast("Google Messages is not installed.");}
-    @Override protected void onDestroy(){destroyLogin();super.onDestroy();}
+    @Override protected void onDestroy(){destroyLogin();decoder.shutdownNow();super.onDestroy();}
 }

@@ -62,4 +62,24 @@ public class ChatTextTest {
         assertTrue(PairedProtocol.isMe(chat, "me"));
         assertFalse(PairedProtocol.isMe(chat, "p1"));
     }
+
+    @Test public void attachmentsAreListedAndLabelled() throws Exception {
+        JSONObject m = new JSONObject("{messageInfo:[{mediaContent:{mediaID:'m1',mimeType:'image/heic',mediaName:'IMG_0221.heic',size:2400000}},"
+            + "{mediaContent:{mediaID:'m2',mediaName:'clip.MOV'}},{mediaContent:{mediaID:'m3',mimeType:'application/pdf',mediaName:'Lease.pdf'}},{messageContent:{content:'Look'}}]}");
+        assertEquals(3, PairedProtocol.media(m).size());
+        assertEquals("Look", PairedProtocol.text(m));
+        assertEquals("Look\n📷 Photo\n🎥 Video\n📎 Lease.pdf", PairedProtocol.body(m));
+        assertEquals("image", PairedProtocol.mediaKind(PairedProtocol.media(m).get(0)));
+        assertEquals("video", PairedProtocol.mediaKind(PairedProtocol.media(m).get(1)));
+        assertEquals("file", PairedProtocol.mediaKind(PairedProtocol.media(m).get(2)));
+        assertEquals("audio", PairedProtocol.mediaKind(new JSONObject("{mimeType:'audio/amr'}")));
+        assertEquals("📎 File", PairedProtocol.mediaLabel(new JSONObject("{mimeType:'application/zip'}")));
+    }
+
+    @Test public void sizesReadNaturally() {
+        assertEquals("", PairedProtocol.size(0));
+        assertEquals("900 B", PairedProtocol.size(900));
+        assertEquals("2 KB", PairedProtocol.size(2048));
+        assertEquals("2.3 MB", PairedProtocol.size(2400000));
+    }
 }

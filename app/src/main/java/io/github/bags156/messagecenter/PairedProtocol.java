@@ -78,19 +78,49 @@ final class PairedProtocol {
         }
         return "#";
     }
+    /** Text and a short label per attachment ("📷 Photo"), for previews, notifications, quotes and copying. */
     static String body(JSONObject m) {
+        List<String> parts=new ArrayList<>();String text=text(m);if(!text.isEmpty())parts.add(text);
+        for(JSONObject media:media(m))parts.add(mediaLabel(media));
+        return String.join("\n",parts);
+    }
+    /** Only the typed text of a message, without attachments. */
+    static String text(JSONObject m) {
         JSONArray infos=m.optJSONArray("messageInfo"); List<String> parts=new ArrayList<>();
         if(infos!=null) for(int i=0;i<infos.length();i++) {
             JSONObject part=infos.optJSONObject(i); if(part==null) continue;
-            String text=string(part.optJSONObject("messageContent"),"content");
-            if(!text.isEmpty()) parts.add(text);
-            JSONObject media=part.optJSONObject("mediaContent");
-            if(media!=null) {
-                String name=string(media,"mediaName");
-                parts.add(name.isEmpty() ? "[Attachment — open in Google Messages]":"[Attachment: "+name+"]");
-            }
+            String text=string(part.optJSONObject("messageContent"),"content");if(!text.isEmpty())parts.add(text);
         }
         return String.join("\n",parts);
+    }
+    /** Attachments in the order Google lists them. */
+    static List<JSONObject> media(JSONObject m) {
+        List<JSONObject> out=new ArrayList<>();JSONArray infos=m.optJSONArray("messageInfo");
+        if(infos!=null) for(int i=0;i<infos.length();i++) {JSONObject part=infos.optJSONObject(i);JSONObject media=part==null?null:part.optJSONObject("mediaContent");if(media!=null)out.add(media);}
+        return out;
+    }
+    /** "image", "video", "audio" or "file", from the MIME type (or the file name when Google leaves it out). */
+    static String mediaKind(JSONObject media) {
+        String mime=string(media,"mimeType").toLowerCase(java.util.Locale.ROOT),name=string(media,"mediaName").toLowerCase(java.util.Locale.ROOT);
+        if(mime.startsWith("image/")||name.matches(".*\\.(jpe?g|png|gif|webp|heic|heif|bmp)$"))return "image";
+        if(mime.startsWith("video/")||name.matches(".*\\.(mp4|3gp|mov|webm|mkv)$"))return "video";
+        if(mime.startsWith("audio/")||name.matches(".*\\.(m4a|aac|amr|mp3|ogg|opus|wav)$"))return "audio";
+        return "file";
+    }
+    static String mediaLabel(JSONObject media) {
+        return switch(mediaKind(media)) {
+            case "image" -> string(media,"mimeType").equalsIgnoreCase("image/gif")?"GIF":"📷 Photo";
+            case "video" -> "🎥 Video";
+            case "audio" -> "🎤 Audio";
+            default -> { String name=string(media,"mediaName"); yield name.isEmpty()?"📎 File":"📎 "+name; }
+        };
+    }
+    /** Human-readable size, e.g. "2.4 MB". */
+    static String size(long bytes) {
+        if(bytes<=0)return "";
+        if(bytes<1024)return bytes+" B";
+        if(bytes<1024*1024)return Math.round(bytes/1024.0)+" KB";
+        return String.format(java.util.Locale.US,"%.1f MB",bytes/1048576.0);
     }
     static String name(JSONObject p) {
         if(p==null) return "";
