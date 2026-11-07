@@ -306,6 +306,8 @@ public final class PairedService extends Service {
         PendingIntent pending=PendingIntent.getActivity(this,2,intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_MUTABLE);
         return new Notification.BubbleMetadata.Builder(pending,Icon.createWithAdaptiveBitmap(icon)).setDesiredHeight(640).setAutoExpandBubble(expand).setSuppressNotification(expand).build();
     }
+    /** Marks an action as working in the background, the extra AndroidX writes and Android Auto reads. */
+    private static android.os.Bundle noUi() {android.os.Bundle b=new android.os.Bundle();b.putBoolean("android.support.action.showsUserInterface",false);return b;}
     /** Reply straight from the notification (also what Android Auto reads and answers). */
     private Notification.Action replyAction(String id) {
         Intent intent=new Intent(this,NotificationActions.class).setAction(NotificationActions.REPLY).setData(chatUri(id)).putExtra("chat",id);
@@ -313,13 +315,13 @@ public final class PairedService extends Service {
         PendingIntent pending=PendingIntent.getBroadcast(this,3,intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_MUTABLE);
         return new Notification.Action.Builder(Icon.createWithResource(this,R.drawable.ic_send),"Reply",pending)
             .addRemoteInput(new RemoteInput.Builder(KEY_REPLY).setLabel("Reply").build()).setSemanticAction(Notification.Action.SEMANTIC_ACTION_REPLY)
-            .setShowsUserInterface(false).setAllowGeneratedReplies(true).build();
+            .addExtras(noUi()).setAllowGeneratedReplies(true).build();
     }
     private Notification.Action readAction(String id) {
         Intent intent=new Intent(this,NotificationActions.class).setAction(NotificationActions.READ).setData(chatUri(id)).putExtra("chat",id);
         PendingIntent pending=PendingIntent.getBroadcast(this,4,intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Action.Builder(Icon.createWithResource(this,R.drawable.ic_ticks),"Mark as read",pending)
-            .setSemanticAction(Notification.Action.SEMANTIC_ACTION_MARK_AS_READ).setShowsUserInterface(false).build();
+            .setSemanticAction(Notification.Action.SEMANTIC_ACTION_MARK_AS_READ).addExtras(noUi()).build();
     }
     /** Sends a reply typed into a notification, or saves it to send once connected. */
     static void replyFromNotification(Context context,String chat,String text,Runnable done) {
