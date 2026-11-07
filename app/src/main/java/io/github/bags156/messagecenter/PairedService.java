@@ -254,6 +254,14 @@ public final class PairedService extends Service {
         },done);
     }
     /** Downloads contact photos for these participant IDs into the private photo cache. */
+    /** Asks the phone (once per attachment) to send the full-size copy of an attachment that arrived as a preview. */
+    private static final java.util.Set<String> fullRequested=java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());
+    static void requestFullMedia(JSONObject media,boolean again,Result done) {
+        String message=media.optString("_message"),part=media.optString("_part");
+        if(message.isEmpty()||part.isEmpty()){done.done("","This attachment can't be requested from your phone.");return;}
+        if(!fullRequested.add(message+":"+part)&&!again){done.done("","");return;}
+        execute(c->{c.requestFullMedia(message,part);return "";},(v,e)->{if(!e.isEmpty())fullRequested.remove(message+":"+part);done.done(v,e);});
+    }
     static void loadPhotos(java.util.List<String> ids,Result done) {
         execute(c->{JSONObject photos=new JSONObject(c.thumbnails(String.join(",",ids)));
             for(java.util.Iterator<String> keys=photos.keys();keys.hasNext();){String id=keys.next();

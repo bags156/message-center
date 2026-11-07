@@ -43,11 +43,19 @@ final class MediaCache {
     /** The cached file for an attachment, or for its small preview when thumb is true. */
     static File file(Context context, JSONObject media, boolean thumb) {
         String id = thumb ? PairedProtocol.string(media, "thumbnailMediaID") : PairedProtocol.string(media, "mediaID");
+        // Attachments without a download ID yet (preview only, or sent inline) are named by message and part.
+        if (id.isEmpty()) id = "msg:" + media.optString("_message") + ":" + media.optString("_index") + (thumb ? ":thumb" : "");
         String ext = thumb ? "jpg" : extension(media);
         return new File(dir(context), hash(id) + (thumb ? "-thumb." : ".") + ext);
     }
 
     static boolean hasThumbnail(JSONObject media) { return !PairedProtocol.string(media, "thumbnailMediaID").isEmpty(); }
+    /** The full attachment can be downloaded now (or was sent inside the message itself). */
+    static boolean hasFull(JSONObject media) {
+        return (!PairedProtocol.string(media, "mediaID").isEmpty() && !PairedProtocol.string(media, "decryptionKey").isEmpty()) || !PairedProtocol.string(media, "mediaData").isEmpty();
+    }
+    /** Only a preview arrived; the phone sends the full file when asked. */
+    static boolean previewOnly(JSONObject media) { return !hasFull(media) && hasThumbnail(media); }
 
     static String extension(JSONObject media) {
         String name = PairedProtocol.string(media, "mediaName");
@@ -72,6 +80,16 @@ final class MediaCache {
         }
         String id = thumb ? PairedProtocol.string(media, "thumbnailMediaID") : PairedProtocol.string(media, "mediaID");
         String secret = thumb ? PairedProtocol.string(media, "thumbnailDecryptionKey") : PairedProtocol.string(media, "decryptionKey");
+        String inline = thumb ? "" : PairedProtocol.string(media, "mediaData");
+        if (!inline.isEmpty() && (id.isEmpty() || secret.isEmpty())) {
+            // Small attachments can come inside the message itself.
+            PairedService.executeMedia(c -> { byte[] data = android.util.Base64.decode(inline, android.util.Base64.DEFAULT);
+                File part = new File(target.getPath() + ".part"); try (java.io.FileOutputStream out = new java.io.FileOutputStream(part)) { out.write(data); }
+                if (!part.renameTo(target)) throw new Exception("There is no room to save this attachment."); return target.getPath(); }, (value, error) -> {
+                List<Done> list; synchronized (waiting) { list = waiting.remove(key); } if (list == null) return;
+                for (Done d : list) d.done(error.isEmpty() ? target : null, error); });
+            return;
+        }
         PairedService.executeMedia(c -> { c.downloadMedia(id, secret, target.getPath()); return target.getPath(); }, (value, error) -> {
             List<Done> list;
             synchronized (waiting) { list = waiting.remove(key); }

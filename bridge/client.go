@@ -350,6 +350,21 @@ func (c *Client) DownloadMedia(mediaID, keyB64, path string) error {
 	return saveStream(body, path, maxDownload)
 }
 
+// RequestFullMedia asks the phone to send the full-size version of an attachment
+// that arrived with only a preview. The phone uploads it and the message is
+// updated with a download ID and key a few seconds later.
+func (c *Client) RequestFullMedia(messageID, actionMessageID string) error {
+	if messageID == "" || actionMessageID == "" {
+		return errors.New("This attachment can't be requested from your phone.")
+	}
+	ctx, cancel := c.requestContext()
+	defer cancel()
+	if _, e := c.gm.GetFullSizeImage(ctx, messageID, actionMessageID); e != nil {
+		return errors.New("Your phone didn't respond. Try again in a moment.")
+	}
+	return nil
+}
+
 func mediaKey(keyB64 string) ([]byte, error) {
 	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.URLEncoding, base64.RawStdEncoding, base64.RawURLEncoding} {
 		if key, e := enc.DecodeString(keyB64); e == nil && len(key) > 0 {

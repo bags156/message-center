@@ -501,13 +501,21 @@ public class PairedActivity extends Activity {
         LinearLayout quoteLine=row();quoteLine.setGravity(outgoing?Gravity.END:Gravity.START);
         TextView q=text(quote,14,originalOut?theme.onBubble(dark):ink,false);q.setMaxLines(2);q.setEllipsize(TextUtils.TruncateAt.END);q.setPadding(dp(14),dp(8),dp(14),dp(8));
         q.setBackground(shape(originalOut?theme.bubble(dark):surface,18));q.setAlpha(original==null?0.45f:0.6f);q.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.62f));
-        if(original!=null){q.setContentDescription("Original message: "+quote+". Tap to show it.");q.setOnClickListener(v->jumpTo(target));}
+        if(original!=null){q.setContentDescription("Original message: "+quote+". Tap to show it.");q.setOnClickListener(v->{if(messageViews.containsKey(target))jumpTo(target);else showMessage(original);});}
+        else if(!target.isEmpty()){q.setContentDescription("Original message not loaded. Tap to find it.");q.setOnClickListener(v->findOriginal(target,6));}
+        else q.setOnClickListener(v->toast("The sender's phone didn't say which message this replies to."));
         LinearLayout.LayoutParams ql=new LinearLayout.LayoutParams(-2,-2);if(outgoing)ql.setMarginEnd(dp(22));else ql.setMarginStart(dp(22));quoteLine.addView(q,ql);
         wrap.addView(quoteLine,new LinearLayout.LayoutParams(-1,-2));
         View thread=new View(this){final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);{paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(2));paint.setStrokeCap(Paint.Cap.ROUND);paint.setColor(muted);paint.setAlpha(120);}
             @Override protected void onDraw(Canvas canvas){float x=outgoing?getWidth()-dp(36):dp(36);canvas.drawLine(x,dp(1),x,getHeight()-dp(1),paint);}};
         wrap.addView(thread,new LinearLayout.LayoutParams(-1,dp(10)));
     }
+    /** Loads older history page by page (up to a limit) until a replied-to message is found, then shows it. */
+    private void findOriginal(String target,int pagesLeft){if(!screen.equals("chat"))return;JSONObject o=store.message(target);if(o!=null){showMessage(o);return;}
+        String id=chatId,cursor=store.page("messages:"+id,false);
+        if(pagesLeft<=0||cursor.isEmpty()||!PairedService.ready()){toast("The original message isn't in the synced history.");return;}
+        if(busy){toast("Still loading. Try again in a moment.");return;}if(pagesLeft==6)toast("Finding the original message…");
+        busy=true;PairedService.loadMessages(id,cursor,(v,e)->{busy=false;if(!e.isEmpty()){toast(e);return;}if(screen.equals("chat")&&chatId.equals(id))findOriginal(target,pagesLeft-1);});}
     private void jumpTo(String id){View v=messageViews.get(id);
         if(v==null||scroll==null){toast("That message isn't loaded here. Scroll up to load older messages.");return;}
         scroll.smoothScrollTo(0,Math.max(0,v.getTop()-dp(96)));
@@ -731,7 +739,9 @@ public class PairedActivity extends Activity {
      */
     private void loadPreview(JSONObject media,ImageView img,boolean video,int width,int height){
         boolean thumb=MediaCache.hasThumbnail(media);long size=media.optLong("size");
-        boolean wantFull=!video&&(!thumb||(fullPhotos()&&size<=(25L<<20)));File full=MediaCache.file(this,media,false);
+        boolean wantFull=!video&&MediaCache.hasFull(media)&&(!thumb||(fullPhotos()&&size<=(25L<<20)));File full=MediaCache.file(this,media,false);
+        // A photo that arrived as a preview only: ask the phone for the full one (it updates the message when sent).
+        if(!video&&MediaCache.previewOnly(media)&&fullPhotos()&&PairedService.ready())PairedService.requestFullMedia(media,false,(v,e)->{});
         if(wantFull&&full.isFile()){Bitmap b=MediaCache.peekCover(full,width,height);if(b!=null){img.setTag("full");img.setImageBitmap(b);return;}}
         if(thumb){File t=MediaCache.file(this,media,true);Bitmap b=t.isFile()?MediaCache.peekCover(t,width,height):null;
             if(b!=null)img.setImageBitmap(b);
@@ -754,7 +764,13 @@ public class PairedActivity extends Activity {
         File cached=MediaCache.file(this,media,false);if(cached.isFile()){action.run(cached);return;}
         if(!PairedService.ready()){toast("Connect to Google Messages to download this attachment.");return;}
         boolean[] cancelled={false};ProgressBar spinner=new ProgressBar(this);spinner.setPadding(0,dp(16),0,dp(16));
-        AlertDialog wait=new AlertDialog.Builder(this).setMessage(waiting).setView(spinner).setNegativeButton("Cancel",(d,w)->cancelled[0]=true).show();
+        boolean ask=MediaCache.previewOnly(media);
+        AlertDialog wait=new AlertDialog.Builder(this).setMessage(ask?"Getting it from your phone…":waiting).setView(spinner).setNegativeButton("Cancel",(d,w)->cancelled[0]=true).show();
+        if(ask){PairedService.requestFullMedia(media,true,(v,e)->{if(!e.isEmpty()&&!cancelled[0]){cancelled[0]=true;wait.dismiss();error(e);}});
+            awaitFull(media,60_000,updated->{if(cancelled[0])return;if(updated==null){wait.dismiss();toast("Your phone hasn't sent it yet. Try again in a moment.");return;}
+                MediaCache.fetch(this,updated,false,(file,error)->{if(cancelled[0])return;wait.dismiss();if(file==null){error(error);return;}action.run(file);});});
+            return;}
+        if(!MediaCache.hasFull(media)){wait.dismiss();toast("This attachment wasn't sent with download details.");return;}
         MediaCache.fetch(this,media,false,(file,error)->{if(cancelled[0])return;wait.dismiss();if(file==null){error(error);return;}action.run(file);});
     }
     private Uri shareUri(File file,JSONObject media){return MediaProvider.uri(file,displayName(media));}
@@ -795,6 +811,24 @@ public class PairedActivity extends Activity {
         d.setContentView(box);d.show();
         File thumb=MediaCache.file(this,media,true);if(thumb.isFile()){Bitmap t=MediaCache.peek(thumb,Math.round(getResources().getDisplayMetrics().widthPixels*0.66f));if(t!=null)image.setImageBitmap(t);}
         if(!MediaCache.file(this,media,false).isFile()&&!PairedService.ready()){spinner.setVisibility(View.GONE);toast("Connect to Google Messages to download the full photo.");return;}
+        if(!MediaCache.hasFull(media)&&!MediaCache.file(this,media,false).isFile()){
+            if(!MediaCache.hasThumbnail(media)){spinner.setVisibility(View.GONE);toast("This photo wasn't sent with download details.");return;}
+            TextView note=text("Getting the full photo from your phone…",14,Color.WHITE,false);note.setPadding(dp(14),dp(8),dp(14),dp(8));note.setBackground(shape(0x99000000,16));
+            FrameLayout.LayoutParams nl=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);nl.bottomMargin=dp(48);box.addView(note,nl);
+            PairedService.requestFullMedia(media,true,(v,e)->{if(!e.isEmpty()&&d.isShowing()){note.setText(e);spinner.setVisibility(View.GONE);}});
+            awaitFull(media,45_000,updated->{if(!d.isShowing())return;
+                if(updated==null){spinner.setVisibility(View.GONE);note.setText("Your phone hasn't sent the full photo yet. Showing the preview.");if(thumb.isFile())full[0]=thumb;return;}
+                box.removeView(note);showFullPhoto(updated,d,image,spinner,full);});
+            return;}
+        showFullPhoto(media,d,image,spinner,full);
+    }
+    /** Waits (up to timeout) for the phone to update a preview-only attachment with its download details. */
+    private void awaitFull(JSONObject media,long timeout,java.util.function.Consumer<JSONObject> done){long until=android.os.SystemClock.uptimeMillis()+timeout;String id=media.optString("_message");int index=media.optInt("_index",-1);
+        Runnable[] check=new Runnable[1];check[0]=()->{JSONObject m=store.message(id);
+            if(m!=null)for(JSONObject part:PairedProtocol.media(m))if(part.optInt("_index",-2)==index&&MediaCache.hasFull(part)){done.accept(part);return;}
+            if(android.os.SystemClock.uptimeMillis()>until){done.accept(null);return;}ui.postDelayed(check[0],1500);};
+        ui.postDelayed(check[0],1500);}
+    private void showFullPhoto(JSONObject media,Dialog d,ZoomImageView image,ProgressBar spinner,File[] full){
         MediaCache.fetch(this,media,false,(file,error)->{if(file==null){spinner.setVisibility(View.GONE);if(d.isShowing())toast(error);return;}full[0]=file;
             decoder.execute(()->{Bitmap b=MediaCache.decode(file,2560,false);ui.post(()->{spinner.setVisibility(View.GONE);if(b!=null)image.setImageBitmap(b);else toast("This photo can't be shown here. Use Share to open it in another app.");});});});
     }
