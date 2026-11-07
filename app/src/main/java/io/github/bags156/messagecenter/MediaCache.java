@@ -54,6 +54,8 @@ final class MediaCache {
     static boolean hasFull(JSONObject media) {
         return (!PairedProtocol.string(media, "mediaID").isEmpty() && !PairedProtocol.string(media, "decryptionKey").isEmpty()) || !PairedProtocol.string(media, "mediaData").isEmpty();
     }
+    /** The full file isn't downloadable yet; the phone sends it when asked (with or without a preview). */
+    static boolean needsPhone(JSONObject media) { return !hasFull(media); }
     /** Only a preview arrived; the phone sends the full file when asked. */
     static boolean previewOnly(JSONObject media) { return !hasFull(media) && hasThumbnail(media); }
 

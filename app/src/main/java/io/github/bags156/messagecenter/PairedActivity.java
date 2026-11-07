@@ -142,6 +142,8 @@ public class PairedActivity extends Activity {
     // ---- Shared building blocks ----
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
     private void base(String name){
+        // Screenshots are always allowed (an older version could leave them blocked after signing in).
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);if(!name.equals("login"))setRecentsScreenshotEnabled(true);
         if(recorder!=null)cancelRecording();recordBar=null;composeRow=null;sendButton=null;recordClock=null;screen=name;batteryCard=null;jumpButton=null;statusView=null;composer=null;items=null;scroll=null;searchRow=null;attachStrip=null;attachScroll=null;replyPanel=null;typingRow=null;messageViews.clear();ui.removeCallbacks(typingTick);if(typingPulse!=null){typingPulse.cancel();typingPulse=null;}
         dark=(getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;
         bg=dark?0xff111318:0xfff8f9fc;card=dark?0xff1d2026:Color.WHITE;surface=dark?0xff23252b:0xffe9edf4;ink=dark?0xffe3e2e9:0xff1a1b20;muted=dark?0xffabaeb8:0xff5d5f67;
@@ -749,8 +751,10 @@ public class PairedActivity extends Activity {
             box.setOutlineProvider(new ViewOutlineProvider(){@Override public void getOutline(View v,Outline o){o.setRoundRect(0,0,v.getWidth(),v.getHeight(),dp(20));}});box.setClipToOutline(true);
             ImageView img=new ImageView(this);img.setScaleType(ImageView.ScaleType.CENTER_CROP);box.addView(img,new FrameLayout.LayoutParams(-1,-1));
             if(kind.equals("video")){TextView play=text("▶",20,Color.WHITE,false);play.setGravity(Gravity.CENTER);play.setBackground(oval(0x99000000));box.addView(play,new FrameLayout.LayoutParams(dp(52),dp(52),Gravity.CENTER));}
+            TextView state=text("",13,Color.WHITE,false);state.setPadding(dp(12),dp(6),dp(12),dp(6));state.setBackground(shape(0x99000000,14));state.setVisibility(View.GONE);
+            box.addView(state,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));img.setTag(R.id.tile_state,state);
             box.setContentDescription(kind.equals("video")?"Video. Tap to play.":"Photo. Tap to view.");
-            box.setOnClickListener(v->openMedia(media));box.setOnLongClickListener(v->{messageSheet(m);return true;});
+            box.setOnClickListener(v->{String problem=mediaErrors.get(mediaKey(media));if(problem!=null&&!MediaCache.file(this,media,false).isFile())mediaProblem(media,problem,img,kind.equals("video"),box);else openMedia(media);});box.setOnLongClickListener(v->{messageSheet(m);return true;});
             int height=Math.round(width*ratio);line.addView(box,new LinearLayout.LayoutParams(width,height));loadPreview(media,img,kind.equals("video"),width,height);
         } else {
             LinearLayout card=row();card.setPadding(dp(14),dp(12),dp(18),dp(12));card.setBackground(shape(outgoing?theme.bubble(dark):surface,22));int fg=outgoing?theme.onBubble(dark):ink;
@@ -777,8 +781,11 @@ public class PairedActivity extends Activity {
     private void loadPreview(JSONObject media,ImageView img,boolean video,int width,int height){
         boolean thumb=MediaCache.hasThumbnail(media);long size=media.optLong("size");
         boolean wantFull=!video&&MediaCache.hasFull(media)&&(!thumb||(fullPhotos()&&size<=(25L<<20)));File full=MediaCache.file(this,media,false);
-        // A photo that arrived as a preview only: ask the phone for the full one (it updates the message when sent).
-        if(!video&&MediaCache.previewOnly(media)&&fullPhotos()&&PairedService.ready())PairedService.requestFullMedia(media,false,(v,e)->{});
+        // Google sometimes sends a photo without its download details (end-to-end encrypted chats do this on
+        // linked devices); the phone sends the full photo when asked, and the message updates by itself.
+        boolean ask=!video&&MediaCache.needsPhone(media)&&(fullPhotos()||!thumb)&&!full.isFile();
+        if(ask&&!thumb)tileState(img,media,"Getting photo from your phone…",null);
+        if(ask&&PairedService.ready())PairedService.requestFullMedia(media,false,(v,e)->{if(!e.isEmpty())tileState(img,media,"Couldn't get this photo • Tap for details",e);});
         if(wantFull&&full.isFile()){Bitmap b=MediaCache.peekCover(full,width,height);if(b!=null){img.setTag("full");img.setImageBitmap(b);return;}}
         if(thumb){File t=MediaCache.file(this,media,true);Bitmap b=t.isFile()?MediaCache.peekCover(t,width,height):null;
             if(b!=null)img.setImageBitmap(b);
@@ -787,9 +794,23 @@ public class PairedActivity extends Activity {
         else if(video&&size>(15L<<20))return;
         if(!wantFull&&thumb)return;
         if(!full.isFile()&&!PairedService.ready())return;
-        MediaCache.fetch(this,media,false,(file,err)->{if(file==null)return;
-            decoder.execute(()->{Bitmap d=MediaCache.decodeToCover(file,width,height,video&&!thumb);if(d!=null)img.post(()->{img.setTag("full");img.setImageBitmap(d);});});});
+        if(!full.isFile()&&!MediaCache.hasFull(media))return; // waiting for the phone (above); nothing to download yet
+        MediaCache.fetch(this,media,false,(file,err)->{if(file==null){if(!thumb)tileState(img,media,"Couldn't load • Tap for details",err);return;}
+            decoder.execute(()->{Bitmap d=MediaCache.decodeToCover(file,width,height,video&&!thumb);img.post(()->{if(d!=null){img.setTag("full");img.setImageBitmap(d);tileState(img,media,null,null);}
+                else if(!thumb)tileState(img,media,"Can't show this photo here • Tap for details","The file downloaded but Android couldn't read it as a picture.");});});});
     }
+    /** Why a photo couldn't load, by attachment, so tapping it can explain and retry. */
+    private final Map<String,String> mediaErrors=new HashMap<>();
+    private static String mediaKey(JSONObject media){return media.optString("_message")+":"+media.optInt("_index",-1);}
+    private void tileState(ImageView img,JSONObject media,String label,String error){Object tag=img.getTag(R.id.tile_state);if(!(tag instanceof TextView))return;TextView state=(TextView)tag;
+        if(error!=null)mediaErrors.put(mediaKey(media),error);else if(label==null)mediaErrors.remove(mediaKey(media));
+        if(label==null){state.setVisibility(View.GONE);return;}state.setText(label);state.setVisibility(View.VISIBLE);}
+    private void mediaProblem(JSONObject media,String problem,ImageView img,boolean video,FrameLayout box){
+        new AlertDialog.Builder(this).setTitle("This photo didn't load").setMessage(problem+"\n\nRetry asks your phone to send it again.")
+            .setPositiveButton("Retry",(d,w)->{mediaErrors.remove(mediaKey(media));tileState(img,media,"Getting photo from your phone…",null);
+                if(MediaCache.needsPhone(media))PairedService.requestFullMedia(media,true,(v,e)->{if(!e.isEmpty())tileState(img,media,"Couldn't get this photo • Tap for details",e);});
+                else loadPreview(media,img,video,box.getWidth(),box.getHeight());})
+            .setNegativeButton("Close",null).show();}
     /** Photos open in the viewer; videos, audio and files open in another app. */
     private void openMedia(JSONObject media){
         if(PairedProtocol.mediaKind(media).equals("image")){viewer(media);return;}
@@ -801,7 +822,7 @@ public class PairedActivity extends Activity {
         File cached=MediaCache.file(this,media,false);if(cached.isFile()){action.run(cached);return;}
         if(!PairedService.ready()){toast("Connect to Google Messages to download this attachment.");return;}
         boolean[] cancelled={false};ProgressBar spinner=new ProgressBar(this);spinner.setPadding(0,dp(16),0,dp(16));
-        boolean ask=MediaCache.previewOnly(media);
+        boolean ask=MediaCache.needsPhone(media);
         AlertDialog wait=new AlertDialog.Builder(this).setMessage(ask?"Getting it from your phone…":waiting).setView(spinner).setNegativeButton("Cancel",(d,w)->cancelled[0]=true).show();
         if(ask){PairedService.requestFullMedia(media,true,(v,e)->{if(!e.isEmpty()&&!cancelled[0]){cancelled[0]=true;wait.dismiss();error(e);}});
             awaitFull(media,60_000,updated->{if(cancelled[0])return;if(updated==null){wait.dismiss();toast("Your phone hasn't sent it yet. Try again in a moment.");return;}
@@ -849,7 +870,6 @@ public class PairedActivity extends Activity {
         File thumb=MediaCache.file(this,media,true);if(thumb.isFile()){Bitmap t=MediaCache.peek(thumb,Math.round(getResources().getDisplayMetrics().widthPixels*0.66f));if(t!=null)image.setImageBitmap(t);}
         if(!MediaCache.file(this,media,false).isFile()&&!PairedService.ready()){spinner.setVisibility(View.GONE);toast("Connect to Google Messages to download the full photo.");return;}
         if(!MediaCache.hasFull(media)&&!MediaCache.file(this,media,false).isFile()){
-            if(!MediaCache.hasThumbnail(media)){spinner.setVisibility(View.GONE);toast("This photo wasn't sent with download details.");return;}
             TextView note=text("Getting the full photo from your phone…",14,Color.WHITE,false);note.setPadding(dp(14),dp(8),dp(14),dp(8));note.setBackground(shape(0x99000000,16));
             FrameLayout.LayoutParams nl=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);nl.bottomMargin=dp(48);box.addView(note,nl);
             PairedService.requestFullMedia(media,true,(v,e)->{if(!e.isEmpty()&&d.isShowing()){note.setText(e);spinner.setVisibility(View.GONE);}});
@@ -1404,7 +1424,7 @@ public class PairedActivity extends Activity {
     private void login(){base("login");pairSubmitted=false;signedInPolls=0;loginSkips=0;header("Connect Google",()->{destroyLogin();inbox();});
         LinearLayout bar=row();loginAddress=text("Google sign-in • accounts.google.com",13,muted,false);loginAddress.setSingleLine(true);loginAddress.setEllipsize(android.text.TextUtils.TruncateAt.END);
         bar.addView(loginAddress,new LinearLayout.LayoutParams(0,-2,1));bar.addView(button("Continue ›",false,this::continueLogin));root.addView(bar);gap(root,8);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);login=new WebView(this);login.getSettings().setJavaScriptEnabled(true);login.getSettings().setDomStorageEnabled(true);
+        setRecentsScreenshotEnabled(false);login=new WebView(this);login.getSettings().setJavaScriptEnabled(true);login.getSettings().setDomStorageEnabled(true);
         login.getSettings().setAllowFileAccess(false);login.getSettings().setAllowContentAccess(false);login.getSettings().setMixedContentMode(android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW);login.getSettings().setSafeBrowsingEnabled(true);
         CookieManager cm=CookieManager.getInstance();cm.setAcceptCookie(true);cm.setAcceptThirdPartyCookies(login,true);
         // Keep WebView's real user agent. No browser impersonation or SSL bypass.
@@ -1437,7 +1457,7 @@ public class PairedActivity extends Activity {
             if(cookies.has("SID")&&cookies.has("SAPISID")){pairSubmitted=true;loginTimer.removeCallbacks(loginPoll);PairedService.pair(PairedActivity.this,cookies.toString());destroyLogin();pairing();}
         }catch(Exception e){pairSubmitted=true;loginTimer.removeCallbacks(loginPoll);error("Google sign-in could not be completed. Go back and try again.");}
     }
-    private void destroyLogin(){loginTimer.removeCallbacks(loginPoll);loginAddress=null;getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);if(login!=null){login.stopLoading();((ViewGroup)login.getParent()).removeView(login);login.destroy();login=null;}}
+    private void destroyLogin(){loginTimer.removeCallbacks(loginPoll);loginAddress=null;getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);setRecentsScreenshotEnabled(true);if(login!=null){login.stopLoading();((ViewGroup)login.getParent()).removeView(login);login.destroy();login=null;}}
     private void askNotifications(){if(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED && !getSharedPreferences("paired",MODE_PRIVATE).getBoolean("asked_notifications",false)){getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("asked_notifications",true).apply();requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},101);}}
     private void pairing(){base("pair");header("Pair this phone",null);connection();String emoji=PairedService.emoji();shownEmoji=emoji;TextView symbol=text(emoji.isEmpty()?"…":emoji,72,ink,false);symbol.setGravity(Gravity.CENTER);root.addView(symbol);gap(root,16);
         note(root,"Open Google Messages → Device pairing and approve the matching emoji. Return here afterward.\n\nIf Google reports no device, check that Device pairing uses the same Google account you just signed into.");root.addView(button("Open Google Messages",true,this::openGoogle));gap(root,8);root.addView(button("Back to inbox",false,this::inbox));}

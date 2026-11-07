@@ -46,7 +46,7 @@ public final class PairedService extends Service {
     private static volatile String pendingCookies;
     private final ExecutorService network=Executors.newSingleThreadExecutor(),events=Executors.newSingleThreadExecutor();
     /** Attachment downloads and uploads run here so a large file never delays sending or loading. */
-    private final ExecutorService media=Executors.newFixedThreadPool(2);
+    private final ExecutorService media=Executors.newFixedThreadPool(2),phoneRequests=Executors.newSingleThreadExecutor();
     private final Handler main=new Handler(Looper.getMainLooper());
     private final AtomicInteger generation=new AtomicInteger();
     private volatile Client client;
@@ -256,11 +256,19 @@ public final class PairedService extends Service {
     /** Downloads contact photos for these participant IDs into the private photo cache. */
     /** Asks the phone (once per attachment) to send the full-size copy of an attachment that arrived as a preview. */
     private static final java.util.Set<String> fullRequested=java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());
+    private static final Map<String,Long> fullFailedAt=new ConcurrentHashMap<>();private static final Map<String,String> fullFailure=new ConcurrentHashMap<>();
     static void requestFullMedia(JSONObject media,boolean again,Result done) {
         String message=media.optString("_message"),part=media.optString("_part");
         if(message.isEmpty()||part.isEmpty()){done.done("","This attachment can't be requested from your phone.");return;}
-        if(!fullRequested.add(message+":"+part)&&!again){done.done("","");return;}
-        execute(c->{c.requestFullMedia(message,part);return "";},(v,e)->{if(!e.isEmpty())fullRequested.remove(message+":"+part);done.done(v,e);});
+        String key=message+":"+part;Long failed=fullFailedAt.get(key);
+        // After a failure, wait a couple of minutes before asking again on its own (Retry asks right away).
+        if(!again&&failed!=null&&System.currentTimeMillis()-failed<120_000){done.done("",fullFailure.getOrDefault(key,"Your phone didn't send it."));return;}
+        if(!fullRequested.add(key)&&!again){done.done("","");return;}
+        // Its own queue: the phone can take a while to answer, and that must not hold up sending or downloads.
+        PairedService s=current;if(s==null||!s.ready||s.client==null){fullRequested.remove(message+":"+part);done.done("","Connect to Google Messages first.");return;}
+        s.phoneRequests.execute(()->{String err="";try{s.client.requestFullMedia(message,part);}catch(Exception e){err=e.getMessage()==null?"Your phone didn't respond.":e.getMessage();}
+            String fe=err;if(!fe.isEmpty()){fullRequested.remove(key);fullFailedAt.put(key,System.currentTimeMillis());fullFailure.put(key,fe);}else fullFailedAt.remove(key);
+            s.main.post(()->done.done("",fe));});
     }
     static void loadPhotos(java.util.List<String> ids,Result done) {
         execute(c->{JSONObject photos=new JSONObject(c.thumbnails(String.join(",",ids)));
