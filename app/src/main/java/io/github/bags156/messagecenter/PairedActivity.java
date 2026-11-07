@@ -1353,11 +1353,20 @@ public class PairedActivity extends Activity {
     private View linkCard(String url,boolean outgoing){LinearLayout line=row();line.setGravity(outgoing?Gravity.END:Gravity.START);line.setVisibility(View.GONE);
         LinearLayout card=vertical();card.setBackground(shape(surface,18));card.setOutlineProvider(new ViewOutlineProvider(){@Override public void getOutline(View v,Outline o){o.setRoundRect(0,0,v.getWidth(),v.getHeight(),dp(18));}});card.setClipToOutline(true);
         int width=Math.round(getResources().getDisplayMetrics().widthPixels*0.66f);line.addView(card,new LinearLayout.LayoutParams(width,-2));
-        LinkPreviews.Done fill=p->{card.removeAllViews();String image=p.optString("image");
-            if(!image.isEmpty()){ImageView img=new ImageView(this);img.setScaleType(ImageView.ScaleType.CENTER_CROP);card.addView(img,new LinearLayout.LayoutParams(-1,dp(150)));
-                decoder.execute(()->{Bitmap b=MediaCache.decodeToCover(new File(image),width,dp(150),false);if(b!=null)img.post(()->img.setImageBitmap(b));});}
-            LinearLayout texts=vertical();texts.setPadding(dp(14),dp(10),dp(14),dp(12));TextView title=text(p.optString("title"),15,ink,true);title.setMaxLines(2);title.setEllipsize(TextUtils.TruncateAt.END);texts.addView(title);
-            String site=p.optString("site");texts.addView(text(site.isEmpty()?ChatText.domain(url):site,13,muted,false));card.addView(texts);line.setVisibility(View.VISIBLE);};
+        LinkPreviews.Done fill=p->{card.removeAllViews();String image=p.optString("image");int iw=p.optInt("imageW"),ih=p.optInt("imageH");
+            // Big pictures go on top; small ones (logos, square product shots under 300px) sit beside the title instead of being stretched.
+            boolean hero=!image.isEmpty()&&iw>=300&&ih>=150,thumb=!image.isEmpty()&&!hero;int heroH=hero?Math.max(dp(110),Math.min(dp(190),Math.round(width*(float)ih/iw))):0;
+            if(hero){ImageView img=new ImageView(this);img.setScaleType(ImageView.ScaleType.CENTER_CROP);img.setVisibility(View.GONE);card.addView(img,new LinearLayout.LayoutParams(-1,heroH));
+                decoder.execute(()->{Bitmap b=MediaCache.decodeToCover(new File(image),width,heroH,false);if(b!=null)img.post(()->{img.setImageBitmap(b);img.setVisibility(View.VISIBLE);});});}
+            LinearLayout body=row();body.setGravity(Gravity.CENTER_VERTICAL);body.setPadding(dp(14),dp(10),dp(14),dp(12));
+            if(thumb){ImageView img=new ImageView(this);img.setScaleType(ImageView.ScaleType.CENTER_CROP);img.setBackground(shape(bg,10));
+                img.setOutlineProvider(new ViewOutlineProvider(){@Override public void getOutline(View v,Outline o){o.setRoundRect(0,0,v.getWidth(),v.getHeight(),dp(10));}});img.setClipToOutline(true);
+                LinearLayout.LayoutParams tl=new LinearLayout.LayoutParams(dp(56),dp(56));tl.setMarginEnd(dp(12));body.addView(img,tl);
+                decoder.execute(()->{Bitmap b=MediaCache.decodeToCover(new File(image),dp(56),dp(56),false);if(b!=null)img.post(()->img.setImageBitmap(b));});}
+            LinearLayout texts=vertical();TextView title=text(p.optString("title"),15,ink,true);title.setMaxLines(2);title.setEllipsize(TextUtils.TruncateAt.END);texts.addView(title);
+            String desc=p.optString("description");if(!desc.isEmpty()&&!desc.equals(p.optString("title"))){TextView d=text(desc,13,ink,false);d.setAlpha(0.8f);d.setMaxLines(2);d.setEllipsize(TextUtils.TruncateAt.END);d.setPadding(0,dp(2),0,0);texts.addView(d);}
+            String site=p.optString("site");TextView sv=text(site.isEmpty()?ChatText.domain(url):site,13,muted,false);sv.setPadding(0,dp(2),0,0);texts.addView(sv);
+            body.addView(texts,new LinearLayout.LayoutParams(0,-2,1));card.addView(body);line.setVisibility(View.VISIBLE);};
         card.setOnClickListener(v->{try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));}catch(Exception e){toast("No browser is available.");}});
         JSONObject ready=LinkPreviews.peek(url);if(ready!=null){if(!ready.optString("title").isEmpty())fill.done(ready);}else LinkPreviews.load(this,url,fill);
         return line;}

@@ -204,4 +204,33 @@ final class ChatText {
         }
         return false;
     }
+
+    private static final Pattern GENERIC_TITLE = Pattern.compile(
+        "(?i)^(robot check|access denied|just a moment\\.*|attention required!?.*|sorry[!,.].*|page not found|not found|forbidden|error|404.*|403.*|503.*|captcha.*|verify.*human.*|are you a robot\\??)$");
+    private static final Pattern PRODUCT_SLUG = Pattern.compile("/([^/?#]{6,})/(?:dp|gp/product)/[A-Z0-9]{10}");
+
+    /**
+     * A usable title for a link preview, or "" when the page only gave a generic one (a site
+     * name, or a bot check like Amazon's). Shopping titles lose their store prefix and
+     * category suffix; a product link can fall back to the name in its address.
+     */
+    static String previewTitle(String title, String site, String finalUrl) {
+        String host = domain(finalUrl == null ? "" : finalUrl).toLowerCase(Locale.ROOT);
+        String t = title == null ? "" : title.trim();
+        boolean amazon = host.matches("(.*\\.)?amazon\\.[a-z.]+") || host.equals("a.co");
+        if (amazon) t = t.replaceFirst("(?i)^amazon(\\.[a-z]+)+\\s*:\\s*", "").replaceFirst("\\s+:\\s+[^:]{1,40}$", "").trim();
+        String lower = t.toLowerCase(Locale.ROOT), bare = host.startsWith("www.") ? host.substring(4) : host;
+        boolean generic = lower.isEmpty() || lower.equals(bare) || lower.equals("www." + bare) || lower.equals(bare.replaceFirst("\\.[a-z.]+$", ""))
+            || (site != null && lower.equals(site.trim().toLowerCase(Locale.ROOT))) || GENERIC_TITLE.matcher(lower).matches()
+            || (amazon && lower.startsWith("amazon"));
+        if (!generic) return t;
+        Matcher slug = PRODUCT_SLUG.matcher(finalUrl == null ? "" : finalUrl.replaceFirst("(?i)^https?://[^/]+", "")); // the path only
+        if (slug.find()) {
+            String name;
+            try { name = java.net.URLDecoder.decode(slug.group(1), "UTF-8"); } catch (Exception e) { name = slug.group(1); }
+            name = name.replace('-', ' ').replace('_', ' ').replaceAll("\\s+", " ").trim();
+            if (name.length() >= 6 && !name.equalsIgnoreCase("ref")) return name;
+        }
+        return "";
+    }
 }

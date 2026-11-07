@@ -49,7 +49,7 @@ final class LinkPreviews {
             if (hit != null) { if (!hit.optString("title").isEmpty()) done.done(hit); return; }
             if (!loading.add(url)) return;
         }
-        File dir = new File(context.getCacheDir(), "links");
+        File dir = new File(context.getCacheDir(), "links-v2"); // v2: earlier results could be bot-check pages
         pool.execute(() -> {
             JSONObject preview = cached(dir, url);
             if (preview == null) { preview = fetch(dir, url); save(dir, url, preview); }
@@ -76,22 +76,34 @@ final class LinkPreviews {
             out.put("url", url);
             String target = url.replaceFirst("(?i)^http://", "https://"); // this app only makes encrypted connections
             HttpURLConnection c = open(target);
+            int code = c.getResponseCode();
+            String finalUrl = c.getURL().toString(); // after redirects (short links like a.co)
             String type = c.getContentType() == null ? "" : c.getContentType().toLowerCase();
-            if (c.getResponseCode() >= 400 || !type.contains("html")) { c.disconnect(); return out; }
+            if (code >= 400 || !type.contains("html")) {
+                // Blocked or not a page; a product link can still be named from its address.
+                c.disconnect(); String named = ChatText.previewTitle("", "", finalUrl);
+                if (!named.isEmpty()) { out.put("title", limit(named, 140)); out.put("site", siteFor(finalUrl, "")); }
+                return out;
+            }
             String html;
             try (InputStream in = c.getInputStream()) { html = new String(read(in, MAX_PAGE), charset(type)); }
             finally { c.disconnect(); }
             Map<String, String> meta = ChatText.metaTags(html);
-            String title = first(meta, "og:title", "twitter:title");
+            String site = first(meta, "og:site_name");
+            String title = first(meta, "og:title", "twitter:title", "title");
             if (title.isEmpty()) { Matcher t = Pattern.compile("(?is)<title[^>]*>(.*?)</title>").matcher(html); if (t.find()) title = ChatText.clean(t.group(1)); }
+            title = ChatText.previewTitle(title, site, finalUrl);
             out.put("title", limit(title, 140));
             out.put("description", limit(first(meta, "og:description", "twitter:description", "description"), 200));
-            out.put("site", first(meta, "og:site_name"));
-            String image = first(meta, "og:image", "og:image:url", "twitter:image");
-            if (!image.isEmpty() && !out.optString("title").isEmpty()) {
-                String imageUrl = URI.create(c.getURL().toString()).resolve(image.trim()).toString().replaceFirst("(?i)^http://", "https://");
+            out.put("site", siteFor(finalUrl, site));
+            String image = first(meta, "og:image:secure_url", "og:image", "og:image:url", "twitter:image", "twitter:image:src");
+            if (!image.isEmpty() && !title.isEmpty()) {
+                String imageUrl = URI.create(finalUrl).resolve(image.trim()).toString().replaceFirst("(?i)^http://", "https://");
                 File file = new File(dir, MediaCache.hash(url) + ".img");
-                if (download(imageUrl, file)) out.put("image", file.getPath());
+                int[] size = download(imageUrl, file);
+                // Tiny images (placeholders, icons) would be blown up into a blurry banner: keep only real pictures.
+                if (size != null && Math.min(size[0], size[1]) >= 64) { out.put("image", file.getPath()); out.put("imageW", size[0]); out.put("imageH", size[1]); }
+                else file.delete();
             }
         } catch (Exception ignored) {}
         return out;
@@ -100,22 +112,38 @@ final class LinkPreviews {
     private static HttpURLConnection open(String url) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         c.setConnectTimeout(6000); c.setReadTimeout(8000); c.setInstanceFollowRedirects(true);
-        c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) MessageCenterLinkPreview/1.0");
-        c.setRequestProperty("Accept", "text/html,image/*;q=0.8");
+        // Sites send their preview details (title, picture) to messaging apps' link previews but
+        // often block unknown apps; Amazon, for one, returns a bot check. This names the app too.
+        c.setRequestProperty("User-Agent", "WhatsApp/2 (compatible; MessageCenter link preview; +https://github.com/bags156/message-center)");
+        c.setRequestProperty("Accept", "text/html,application/xhtml+xml,image/*;q=0.8");
+        c.setRequestProperty("Accept-Language", java.util.Locale.getDefault().toLanguageTag() + ",en;q=0.7");
         return c;
     }
 
-    private static boolean download(String url, File file) {
+    /** Saves an image and returns its {width, height}, or null if it isn't a readable image. */
+    private static int[] download(String url, File file) {
         try {
-            if (!url.startsWith("https://")) return false;
+            if (!url.startsWith("https://")) return null;
             HttpURLConnection c = open(url);
-            try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(file)) {
-                if (c.getResponseCode() >= 400) return false;
-                byte[] data = read(in, MAX_IMAGE);
-                if (data.length == 0 || data.length >= MAX_IMAGE) return false;
-                out.write(data); return true;
+            try {
+                String type = c.getContentType() == null ? "" : c.getContentType().toLowerCase();
+                if (c.getResponseCode() >= 400 || (!type.isEmpty() && !type.startsWith("image/"))) return null;
+                byte[] data;
+                try (InputStream in = c.getInputStream()) { data = read(in, MAX_IMAGE); }
+                if (data.length == 0 || data.length >= MAX_IMAGE) return null;
+                android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options(); o.inJustDecodeBounds = true;
+                android.graphics.BitmapFactory.decodeByteArray(data, 0, data.length, o);
+                if (o.outWidth <= 0 || o.outHeight <= 0) return null;
+                try (FileOutputStream out = new FileOutputStream(file)) { out.write(data); }
+                return new int[]{o.outWidth, o.outHeight};
             } finally { c.disconnect(); }
-        } catch (Exception e) { file.delete(); return false; }
+        } catch (Exception e) { file.delete(); return null; }
+    }
+
+    /** The site's own name, or its address without "www.". */
+    private static String siteFor(String finalUrl, String site) {
+        if (site != null && !site.trim().isEmpty()) return site.trim();
+        String host = ChatText.domain(finalUrl); return host.startsWith("www.") ? host.substring(4) : host;
     }
 
     private static byte[] read(InputStream in, int max) throws Exception {

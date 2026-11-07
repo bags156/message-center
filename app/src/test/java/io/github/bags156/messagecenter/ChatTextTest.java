@@ -151,4 +151,14 @@ public class ChatTextTest {
         assertEquals("", PairedProtocol.event(new JSONObject("{messageStatus:{status:'TOMBSTONE_SHOW_LINK_PREVIEWS'}}"), chat));
         assertEquals("", PairedProtocol.event(new JSONObject("{messageStatus:{status:'INCOMING_COMPLETE'}}"), chat));
     }
+
+    @Test public void previewTitlesSkipBotPagesAndStoreNames() {
+        assertEquals("Stanley Quencher 40 oz Tumbler", ChatText.previewTitle("Amazon.com: Stanley Quencher 40 oz Tumbler : Home & Kitchen", "", "https://www.amazon.com/dp/B0CJZMP7L1"));
+        assertEquals("", ChatText.previewTitle("Amazon.com", "", "https://www.amazon.com/dp/B0CJZMP7L1"));
+        assertEquals("Stanley Quencher H2 0 Tumbler", ChatText.previewTitle("Amazon.com", "", "https://www.amazon.com/Stanley-Quencher-H2-0-Tumbler/dp/B0CJZMP7L1?ref_=x"));
+        assertEquals("", ChatText.previewTitle("Robot Check", "", "https://www.amazon.com/dp/B0CJZMP7L1"));
+        assertEquals("", ChatText.previewTitle("Just a moment...", "", "https://example.com/post"));
+        assertEquals("", ChatText.previewTitle("example.com", "", "https://example.com/post"));
+        assertEquals("How to brew coffee", ChatText.previewTitle("How to brew coffee", "Example", "https://example.com/post"));
+    }
 }
