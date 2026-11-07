@@ -29,15 +29,19 @@ public final class OnDeviceSmoke extends Instrumentation {
             JSONObject reply=new JSONObject("{messageID:'reply',conversationID:'c1',timestamp:'1794000001000000',type:4,messageStatus:{status:'INCOMING_COMPLETE'},messageInfo:[{messageContent:{content:'Synthetic answer'}}],replyMessage:{messageID:'external-original-id'}}");
             store.message(original,0,true);store.message(reply,0,true);
             check("origin".equals(store.replyTarget(reply)),"Provider reply alias did not resolve to original");
-            check("origin".equals(store.messageByReference("c1","external-original-id").optString("messageID")),"Reply alias cannot navigate after paging");
+            JSONObject byReference=store.messageByReference("c1","external-original-id");
+            check(byReference!=null&&"origin".equals(byReference.optString("messageID")),"Reply alias cannot navigate after paging");
             store.message(new JSONObject("{messageID:'reply',conversationID:'c1',messageStatus:{status:'INCOMING_DISPLAYED'}}"),0,true);
             check("origin".equals(store.replyTarget(store.message("reply")))&&PairedProtocol.body(store.message("reply")).equals("Synthetic answer"),"Read update erased reply metadata or content");
             JSONObject fallback=new JSONObject("{messageID:'fallback',conversationID:'c1',timestamp:'1794000002000000',type:4,messageStatus:{status:'INCOMING_COMPLETE'},messageInfo:[{messageContent:{content:'Replied to a message: Another synthetic answer'}}]}");
             store.message(fallback,0,true);check(store.replyTarget(fallback).isEmpty(),"Reply without an ID was guessed");
             store.linkReply(fallback,"origin");check("origin".equals(store.replyTarget(fallback)),"Explicit original selection was not retained");
             ReadReceiptQueue receipts=new ReadReceiptQueue(getTargetContext());receipts.clear();ChatSettings settings=new ChatSettings(getTargetContext());settings.setReceipts("c1",true);
+            // Read requests are only queued for chats the app knows, so the test chat must exist.
+            store.chat(new JSONObject("{conversationID:'c1',type:2,participants:[{ID:{participantID:'p9'},isMe:true},{ID:{participantID:'p1'},fullName:'Sam Example'}]}"));
             PairedService.markReadFromNotification(getTargetContext(),"c1",()->{});
-            check("fallback".equals(new ReadReceiptQueue(getTargetContext()).get("c1").optString("messageID")),"Offline notification read was lost instead of queued");
+            JSONObject queued=new ReadReceiptQueue(getTargetContext()).get("c1");
+            check(queued!=null&&"fallback".equals(queued.optString("messageID")),"Offline notification read was lost instead of queued");
             settings.setReceipts("c1",false);receipts.clear();store.clear();
         }
         Activity activity=startActivitySync(new Intent(getTargetContext(),PairedActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
