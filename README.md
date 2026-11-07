@@ -2,7 +2,7 @@
 
 An experimental Android client for Google Messages, with the paired connection running **on the phone**. No additional server, Matrix account, or Beeper account is required. Google Messages remains the default SMS/RCS app and must stay installed and online.
 
-**0.2.0 is the paired-client release.** It replaces the notification-based approach in 0.1.x. Compiling and offline device tests do not verify Google sign-in, live RCS delivery, complete history, or ColorOS background reliability. Those require testing on a paired phone.
+**Current release: 0.8.4. The paired-client architecture began in 0.2.0.** It replaces the notification-based approach in 0.1.x. Compiling and offline device tests do not verify Google sign-in, live RCS delivery, complete history, or ColorOS background reliability. Those require testing on a paired phone.
 
 ## Install and connect
 
@@ -34,7 +34,11 @@ This is an unofficial integration using an undocumented Google protocol. Sign-in
 
 History paging follows the responses Google supplies; reaching the end is **not proof of a complete phone archive**. SMS fallback reaction text can still be present when Google exposes it as a regular SMS instead of structured reaction metadata. Structured reactions use exact IDs and do not guess matches from quoted text.
 
-Attachments appear as labels; viewing or sending media is not implemented in this test build. New group creation, custom reaction entry, calls, scheduled messages, and an unread launcher number are not implemented. There is no durable offline outbox. Ambiguous send outcomes are not automatically retried.
+Media viewing/sending, voice messages, new groups, scheduled text sending, and a durable offline text outbox are implemented. An unread launcher number remains outside the agreed scope. Ambiguous message-send outcomes are not automatically retried.
+
+Reply navigation uses provider message IDs and exact identity aliases, with saved references retained across read/delivery updates. Tap an unlinked reply to refresh its source page. Native Google Messages may have a quote that its paired connection does not expose; when no usable reference is supplied, you can choose the actual earlier message and save that link locally. The app does not infer the original from nearby messages or similar text.
+
+Read receipts are off per chat unless enabled. Enable Google's own **RCS chats → Send read receipts** setting too. Viewed-message read requests are persisted and retried; chat details show queued, failed/retrying, setting-blocked, and Google-accepted status. An accepted request does not prove the other phone displayed a receipt. SMS/MMS has no sender read receipts.
 
 ## Privacy
 

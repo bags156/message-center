@@ -46,13 +46,15 @@ public final class PairedService extends Service {
     private static volatile String pendingCookies;
     private final ExecutorService network=Executors.newSingleThreadExecutor(),events=Executors.newSingleThreadExecutor();
     /** Attachment downloads and uploads run here so a large file never delays sending or loading. */
-    private final ExecutorService media=Executors.newFixedThreadPool(2),phoneRequests=Executors.newSingleThreadExecutor();
+    private final ExecutorService media=Executors.newFixedThreadPool(2),phoneRequests=Executors.newSingleThreadExecutor(),readRequests=Executors.newSingleThreadExecutor();
     private final Handler main=new Handler(Looper.getMainLooper());
     private final AtomicInteger generation=new AtomicInteger();
     private volatile Client client;
     private volatile boolean ready;
     private volatile String status="Disconnected",emoji="";
     private PairedStore store; private SessionVault vault; private Outbox outbox; private boolean flushing,syncing,inactive;
+    private ReadReceiptQueue receipts;private boolean readingReceipt;
+    private final Runnable receiptRetry=this::flushReadReceipts;
     private long lastSync;private final Runnable syncTick=()->requestSync(false);
     /** Backstop checks: every minute while you're using the phone, every 5 minutes with the screen off. */
     private static final long SYNC_SCREEN_ON_MS=60_000,SYNC_SCREEN_OFF_MS=5*60_000,SYNC_MIN_GAP_MS=10_000;
@@ -87,12 +89,12 @@ public final class PairedService extends Service {
     }
     static void disconnect(Context context,boolean forget) {
         context.getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("enabled",false).apply();
-        if(forget) {new SessionVault(context).clear();try(PairedStore db=new PairedStore(context)){db.clear();}Avatars.clear(context);new ChatSettings(context).clear();}
+        if(forget) {new SessionVault(context).clear();try(PairedStore db=new PairedStore(context)){db.clear();}Avatars.clear(context);new ChatSettings(context).clear();new ReadReceiptQueue(context).clear();}
         PairedService s=current;if(s!=null){s.generation.incrementAndGet();s.ready=false;}
         context.stopService(new Intent(context,PairedService.class));
     }
     @Override public void onCreate() {
-        super.onCreate();current=this;Nicknames.load(this);store=new PairedStore(this);vault=new SessionVault(this);outbox=new Outbox(this);outbox.recover();watchWakeAndNetwork();
+        super.onCreate();current=this;Nicknames.load(this);store=new PairedStore(this);vault=new SessionVault(this);outbox=new Outbox(this);receipts=new ReadReceiptQueue(this);outbox.recover();watchWakeAndNetwork();
         NotificationManager manager=getSystemService(NotificationManager.class);
         manager.createNotificationChannel(new NotificationChannel(CONNECTION,"Background connection",NotificationManager.IMPORTANCE_LOW));
         NotificationChannel messages=new NotificationChannel(MESSAGES,"Incoming messages",NotificationManager.IMPORTANCE_HIGH);
@@ -121,7 +123,7 @@ public final class PairedService extends Service {
                 fresh.pair(cookies);
                 if(generation.get()!=token)return;
                 // A newly paired phone/account must not inherit another session's IDs.
-                store.clear();Avatars.clear(this);vault.save(fresh.exportSession());emoji="";
+                store.clear();receipts.clear();Avatars.clear(this);vault.save(fresh.exportSession());emoji="";
                 getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("enabled",true).apply();
                 update("Paired. Connecting…");
             }
@@ -138,11 +140,13 @@ public final class PairedService extends Service {
                 case "PAIR_EMOJI" -> {emoji=new JSONObject(payload).optString("emoji");update("Approve the matching emoji in Google Messages");}
                 case "READY" -> {
                     ready=true;emoji="";update("Connected to Google Messages");
-                    saveSession(token);main.post(this::flushOutbox);scheduleSync();
+                    saveSession(token);main.post(this::flushOutbox);main.post(this::flushReadReceipts);scheduleSync();
                     network.execute(()->{if(generation.get()==token)try{chats(client,"",1);}catch(Exception e){update("Connected • tap Refresh to load conversations");}});
                 }
                 case "SAVE_SESSION" -> saveSession(token);
-                case "SETTINGS" -> {JSONObject rcs=new JSONObject(payload);new ChatSettings(this).setPhoneReceipts(rcs.optBoolean("rcsEnabled") && rcs.optBoolean("sendReadReceipts"));changed(kind);}
+                case "SETTINGS" -> {JSONObject rcs=new JSONObject(payload);ChatSettings settings=new ChatSettings(this);int previous=settings.receiptAvailability();
+                    settings.setPhoneRcs(rcs.optBoolean("rcsEnabled"));settings.setPhoneReceipts(rcs.optBoolean("sendReadReceipts"));
+                    if(previous==0&&settings.receiptAvailability()==1)receipts.googleEnabled();main.post(this::flushReadReceipts);changed(kind);}
                 case "CONVERSATION" -> {applyChat(new JSONObject(payload));changed(kind);}
                 case "MESSAGE" -> {
                     JSONObject envelope=new JSONObject(payload),message=envelope.getJSONObject("message");
@@ -162,7 +166,7 @@ public final class PairedService extends Service {
                 case "AUTH_REQUIRED" -> {ready=false;getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("enabled",false).apply();update("Google session expired. Sign in again.");}
                 case "DISCONNECTED" -> {ready=false;update("Connection ended. Tap Reconnect in Settings.");}
                 case "RECONNECTING" -> {ready=false;update("Waiting for Google Messages • check network and battery settings");}
-                case "RECOVERED" -> {ready=true;update("Connected to Google Messages");main.post(this::flushOutbox);main.post(()->requestSync(false));}
+                case "RECOVERED" -> {ready=true;update("Connected to Google Messages");main.post(this::flushOutbox);main.post(this::flushReadReceipts);main.post(()->requestSync(false));}
                 case "STALE" -> main.post(()->requestSync(true));
                 case "INACTIVE" -> {inactive=true;update("Google Messages for web is open somewhere else. Open Message Center to switch back.");}
                 default -> { }
@@ -244,7 +248,7 @@ public final class PairedService extends Service {
     }
     static void loadMessages(String id,String cursor,Result done) {
         execute(c->{PairedService s=current;long version=s.store.snapshot();JSONObject response=new JSONObject(c.messages(id,cursor));
-            JSONArray messages=response.optJSONArray("messages");if(messages!=null)for(int i=0;i<messages.length();i++)s.store.message(messages.getJSONObject(i),version,false);
+            JSONArray messages=response.optJSONArray("messages");if(messages!=null)for(int i=0;i<messages.length();i++){JSONObject m=messages.getJSONObject(i);s.store.message(m,version,false);s.store.page("source-page:"+m.optString("messageID"),cursor,"known");}
             String next=PairedProtocol.cursor(response),note="";
             if(!next.isEmpty() && next.equals(cursor)){next="";note="Google repeated a history cursor; stopped to prevent a loop.";}
             if(next.isEmpty() && note.isEmpty())note=response.optString("someBytes","").isEmpty()?"End of the history pages Google supplied. This does not prove the full phone archive was shared.":"Google returned a history format this version cannot page. More messages may exist in Google Messages.";
@@ -253,6 +257,17 @@ public final class PairedService extends Service {
             try{s.store.chat(new JSONObject(c.chat(id)));}catch(Exception ignored){}s.changed("MESSAGE");return "";
         },done);
     }
+    /** Refresh the provider page containing a reply, without rewinding the user's older-history cursor. */
+    static void refreshReply(String chat,String message,Result done){execute(c->{PairedService s=current;
+        boolean known="known".equals(s.store.page("source-page:"+message,true));String cursor=known?s.store.page("source-page:"+message,false):"";
+        java.util.Set<String> visited=new java.util.HashSet<>();
+        for(int page=0;page<(known?1:8);page++){if(!visited.add(cursor))break;long version=s.store.snapshot();JSONObject response=new JSONObject(c.messages(chat,cursor));
+            JSONArray messages=response.optJSONArray("messages");boolean found=false;
+            if(messages!=null)for(int i=0;i<messages.length();i++){JSONObject m=messages.getJSONObject(i);s.store.message(m,version,false);s.store.page("source-page:"+m.optString("messageID"),cursor,"known");if(message.equals(m.optString("messageID")))found=true;}
+            if(found){s.changed("MESSAGE");return "";}String next=PairedProtocol.cursor(response);if(next.isEmpty()||next.equals(cursor))break;cursor=next;
+        }
+        s.changed("MESSAGE");return "";
+    },done);}
     /** Downloads contact photos for these participant IDs into the private photo cache. */
     /** Asks the phone (once per attachment) to send the full-size copy of an attachment that arrived as a preview. */
     private static final java.util.Set<String> fullRequested=java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());
@@ -279,6 +294,26 @@ public final class PairedService extends Service {
     /** Marks the conversation read on the phone up to this message; Google Messages then sends RCS read receipts if its own setting allows. */
     static void markRead(String conversationID,String messageID,Result done) {
         execute(c->{c.markRead(conversationID,messageID);return "";},done);
+    }
+    /** Persist the exact message viewed even when disconnected. Read requests are idempotent. */
+    static void viewedForReceipts(Context context,JSONObject chat,JSONObject message,boolean force){
+        if(chat==null||message==null||!new ChatSettings(context).receipts(chat.optString("conversationID")))return;
+        ReadReceiptQueue queue=new ReadReceiptQueue(context);boolean changed=queue.viewed(chat,message,force);PairedService s=current;
+        if(s!=null){if(changed)s.changed("READ_RECEIPT");s.main.post(s::flushReadReceipts);}
+    }
+    static void refreshReceiptSettings(){PairedService s=current;if(s==null||!s.ready)return;
+        s.readRequests.execute(()->{try{if(s.client!=null)s.client.reactivate();}catch(Exception ignored){}s.main.post(s::flushReadReceipts);});}
+    private void flushReadReceipts(){
+        main.removeCallbacks(receiptRetry);if(readingReceipt||!ready||client==null||readRequests.isShutdown())return;
+        ChatSettings settings=new ChatSettings(this);int google=settings.receiptAvailability();
+        java.util.function.Predicate<String> enabled=id->settings.receipts(id)&&store.chat(id)!=null;
+        JSONObject next=receipts.next(System.currentTimeMillis(),google,enabled);
+        if(next==null){long delay=receipts.retryDelay(System.currentTimeMillis(),google,enabled);if(delay>=0)main.postDelayed(receiptRetry,Math.max(500,delay));return;}
+        String chat=next.optString("chat"),message=next.optString("messageID");long revision=next.optLong("revision");int token=generation.get();Client source=client;readingReceipt=true;
+        readRequests.execute(()->{String error="";try{source.markRead(chat,message);}catch(Exception e){error="Could not deliver the read request to Google Messages.";}
+            String failure=error;main.post(()->{readingReceipt=false;if(generation.get()!=token){main.post(receiptRetry);return;}
+                if(failure.isEmpty())receipts.accepted(chat,message,revision,System.currentTimeMillis());else receipts.failed(chat,message,revision,failure,System.currentTimeMillis());
+                changed("READ_RECEIPT");main.post(receiptRetry);});});
     }
     /** Phone numbers currently typing in this conversation; expired entries are dropped. */
     static List<String> typing(String conversationID) {
@@ -472,11 +507,10 @@ public final class PairedService extends Service {
         context.getSystemService(NotificationManager.class).cancel("chat:"+chat,1);
         ChatSettings settings=new ChatSettings(context);settings.setMarkedUnread(chat,false);
         // Clear the unread dot here even when no read receipt goes to the sender.
-        PairedStore own=s==null?new PairedStore(context):null,store=own!=null?own:s.store;JSONObject c=store.chat(chat),latest=null;for(JSONObject m:store.messages(chat,50))if(!PairedProtocol.outgoing(m,c))latest=m;if(own!=null)own.close();
+        PairedStore own=s==null?new PairedStore(context):null,store=own!=null?own:s.store;JSONObject c=store.chat(chat),latest=store.latestIncoming(chat);if(own!=null)own.close();
         long seenAt=Math.max(c==null?0:PairedProtocol.time(c),latest==null?0:PairedProtocol.time(latest));if(seenAt>0)settings.markSeen(chat,seenAt);
-        if(s==null||!s.ready||!settings.receipts(chat)||latest==null){if(s!=null)s.changed("CONVERSATION");done.run();return;}
-        String mid=latest.optString("messageID");
-        markRead(chat,mid,(v,e)->{if(e.isEmpty())settings.setMarkedRead(chat,mid);s.changed("CONVERSATION");done.run();});
+        if(settings.receipts(chat)&&latest!=null){viewedForReceipts(context,c,latest,false);if(s==null&&new SessionVault(context).exists())try{start(context);}catch(RuntimeException ignored){}}
+        if(s!=null)s.changed("CONVERSATION");done.run();
     }
     /** Sends saved messages one at a time, oldest first, while connected. */
     private void flushOutbox() {
@@ -522,10 +556,10 @@ public final class PairedService extends Service {
         if(kind.equals("CONVERSATION")||kind.equals("MESSAGE")){main.removeCallbacks(widgetRefresh);main.postDelayed(widgetRefresh,2000);}}
     @Override public IBinder onBind(Intent intent) {return null;}
     @Override public void onDestroy() {
-        generation.incrementAndGet();ready=false;main.removeCallbacks(syncTick);if(current==this)current=null;
+        generation.incrementAndGet();ready=false;main.removeCallbacks(syncTick);main.removeCallbacks(receiptRetry);if(current==this)current=null;
         try{if(screenReceiver!=null)unregisterReceiver(screenReceiver);}catch(Exception ignored){}
         try{if(networkCallback!=null)getSystemService(android.net.ConnectivityManager.class).unregisterNetworkCallback(networkCallback);}catch(Exception ignored){}
-        Client old=client;client=null;network.shutdownNow();events.shutdownNow();media.shutdownNow();
+        Client old=client;client=null;network.shutdownNow();events.shutdownNow();media.shutdownNow();phoneRequests.shutdownNow();readRequests.shutdownNow();
         if(old!=null)new Thread(old::close,"paired-disconnect").start();
         // SQLiteOpenHelper stays alive until in-flight JNI calls return; the process
         // reclaims it. Closing here races with a final incoming update.

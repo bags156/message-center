@@ -24,7 +24,21 @@ public final class OnDeviceSmoke extends Instrumentation {
             long before=store.snapshot();store.message(message.put("subject","live reaction update"),0,true);
             store.message(new JSONObject(message.toString()).put("subject","stale history response"),before,false);
             check(store.message("m1").optString("subject").equals("live reaction update"),"History overwrote a live update");
-            check(store.message(message,0,true),"Message ID did not deduplicate");store.clear();
+            check(store.message(message,0,true),"Message ID did not deduplicate");
+            JSONObject original=new JSONObject("{messageID:'origin',conversationID:'c1',timestamp:'1794000000000000',type:4,messageStatus:{status:'INCOMING_COMPLETE'},messageInfo:[{messageContent:{content:'Synthetic original'}}],anotherMessageID:{messageID:'external-original-id'}}");
+            JSONObject reply=new JSONObject("{messageID:'reply',conversationID:'c1',timestamp:'1794000001000000',type:4,messageStatus:{status:'INCOMING_COMPLETE'},messageInfo:[{messageContent:{content:'Synthetic answer'}}],replyMessage:{messageID:'external-original-id'}}");
+            store.message(original,0,true);store.message(reply,0,true);
+            check("origin".equals(store.replyTarget(reply)),"Provider reply alias did not resolve to original");
+            check("origin".equals(store.messageByReference("c1","external-original-id").optString("messageID")),"Reply alias cannot navigate after paging");
+            store.message(new JSONObject("{messageID:'reply',conversationID:'c1',messageStatus:{status:'INCOMING_DISPLAYED'}}"),0,true);
+            check("origin".equals(store.replyTarget(store.message("reply")))&&PairedProtocol.body(store.message("reply")).equals("Synthetic answer"),"Read update erased reply metadata or content");
+            JSONObject fallback=new JSONObject("{messageID:'fallback',conversationID:'c1',timestamp:'1794000002000000',type:4,messageStatus:{status:'INCOMING_COMPLETE'},messageInfo:[{messageContent:{content:'Replied to a message: Another synthetic answer'}}]}");
+            store.message(fallback,0,true);check(store.replyTarget(fallback).isEmpty(),"Reply without an ID was guessed");
+            store.linkReply(fallback,"origin");check("origin".equals(store.replyTarget(fallback)),"Explicit original selection was not retained");
+            ReadReceiptQueue receipts=new ReadReceiptQueue(getTargetContext());receipts.clear();ChatSettings settings=new ChatSettings(getTargetContext());settings.setReceipts("c1",true);
+            PairedService.markReadFromNotification(getTargetContext(),"c1",()->{});
+            check("fallback".equals(new ReadReceiptQueue(getTargetContext()).get("c1").optString("messageID")),"Offline notification read was lost instead of queued");
+            settings.setReceipts("c1",false);receipts.clear();store.clear();
         }
         Activity activity=startActivitySync(new Intent(getTargetContext(),PairedActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         waitForIdleSync();check(activity!=null,"Activity did not launch");
@@ -91,6 +105,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         bubble.getWindow().getDecorView().findViewsWithText(found,"Scheduled for",android.view.View.FIND_VIEWS_WITH_TEXT);check(!found.isEmpty(),"Scheduled message is missing");found.clear();
         bubble.getWindow().getDecorView().findViewsWithText(found,"Main Street Park",android.view.View.FIND_VIEWS_WITH_TEXT);check(!found.isEmpty(),"Shared location is missing");found.clear();
         bubble.getWindow().getDecorView().findViewsWithText(found,"Sam Example left",android.view.View.FIND_VIEWS_WITH_TEXT);check(!found.isEmpty(),"Group event is missing");found.clear();
+        bubble.getWindow().getDecorView().findViewsWithText(found,"Find the original message for this reply",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);check(!found.isEmpty(),"Reply without a reference has no refresh action");found.clear();
         // A photo sent without download details says it's being fetched from the phone (not a blank box).
         bubble.getWindow().getDecorView().findViewsWithText(found,"Loading full photo",android.view.View.FIND_VIEWS_WITH_TEXT);check(!found.isEmpty(),"Placeholder-only photo doesn't say the full photo is loading");found.clear();
         bubble.getWindow().getDecorView().findViewsWithText(found,"Getting photo from your phone",android.view.View.FIND_VIEWS_WITH_TEXT);check(!found.isEmpty(),"Photo without download details shows nothing");found.clear();

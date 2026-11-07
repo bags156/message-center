@@ -48,6 +48,32 @@ func NewClient(saved string, sink Sink) (*Client, error) {
 }
 func marshal(p proto.Message) (string, error) {
 	b, e := protojson.MarshalOptions{EmitDefaultValues: true}.Marshal(p)
+	if e != nil {
+		return "", e
+	}
+	// protojson drops unknown protobuf fields. Keep opaque IDs from the known
+	// reply container so Android can match them against real message identities.
+	switch value := p.(type) {
+	case *gmproto.Message:
+		b, e = enrichReplyJSON(value, b)
+	case *gmproto.ListMessagesResponse:
+		var response map[string]json.RawMessage
+		if e = json.Unmarshal(b, &response); e != nil {
+			return "", e
+		}
+		messages := make([]json.RawMessage, 0, len(value.GetMessages()))
+		for _, m := range value.GetMessages() {
+			raw, err := marshal(m)
+			if err != nil {
+				return "", err
+			}
+			messages = append(messages, json.RawMessage(raw))
+		}
+		response["messages"], e = json.Marshal(messages)
+		if e == nil {
+			b, e = json.Marshal(response)
+		}
+	}
 	return string(b), e
 }
 func (c *Client) emit(kind, payload string) {

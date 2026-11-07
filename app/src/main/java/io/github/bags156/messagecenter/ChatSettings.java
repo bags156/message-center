@@ -54,6 +54,9 @@ final class ChatSettings {
     /** The phone's own RCS "Send read receipts" switch: 1 on, 0 off, -1 not reported yet. */
     int phoneReceipts() { return prefs.getInt("phone-receipts", -1); }
     void setPhoneReceipts(boolean on) { prefs.edit().putInt("phone-receipts", on ? 1 : 0).apply(); }
+    int phoneRcs() { return prefs.getInt("phone-rcs",-1); }
+    void setPhoneRcs(boolean on) { prefs.edit().putInt("phone-rcs",on?1:0).apply(); }
+    int receiptAvailability() { return phoneReceipts()==0||phoneRcs()==0?0:phoneReceipts()==1&&phoneRcs()==1?1:-1; }
 
     /** Notifications are paused for this chat until this time (0 when not snoozed). */
     long snoozedUntil(String id) { return prefs.getLong("snooze:" + id, 0); }

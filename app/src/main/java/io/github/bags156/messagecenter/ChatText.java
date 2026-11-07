@@ -13,7 +13,7 @@ final class ChatText {
     private static final Pattern MEDIA_REACTION = Pattern.compile(
         "^(Loved|Liked|Disliked|Laughed at|Emphasized|Questioned) (an image|a photo|a video|a movie|an attachment|an audio message|a sticker|a GIF|a link)$");
 
-    /** iPhones send a reply to a non-iPhone chat as "Replied to a message:" plus the text, with no link to the original. */
+    /** A text reply notice can arrive without a usable structured reference in the paired feed. */
     static String replyFallbackBody(String body) {
         if (body == null) return null;
         Matcher m = REPLY_FALLBACK.matcher(body.trim());

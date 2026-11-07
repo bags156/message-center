@@ -91,8 +91,8 @@ public class PairedActivity extends Activity {
     private boolean dark;
     private PairedStore store;private ChatSettings chatSettings;
     private FrameLayout frame;private LinearLayout root,items,replyPanel,typingRow;private TextView statusView,replyLabel,replyQuote,typingLabel;private ObjectAnimator typingPulse;
-    private ScrollView scroll;private EditText composer;private WebView login;private LinearLayout searchRow;
-    private String screen="inbox",chatId="",query="",replyId="",markingRead="";
+    private ScrollView scroll;private EditText composer;private WebView login;private LinearLayout searchRow;private TextView receiptStatusView;
+    private String screen="inbox",chatId="",query="",replyId="";
     private final Map<String,String> drafts=new HashMap<>();
     private final Map<String,Bitmap> photos=new HashMap<>();
     private final Set<String> photosRequested=new HashSet<>();
@@ -113,6 +113,7 @@ public class PairedActivity extends Activity {
         if(!bubble() && !PairedService.emoji().isEmpty() && !shownEmoji.equals(PairedService.emoji())){destroyLogin();pairing();return;}
         if(screen.equals("pair") && PairedService.ready()){CookieManager.getInstance().removeAllCookies(null);inbox();askNotifications();return;}
         updateStatus();
+        updateReceiptStatus();
         if(screen.equals("inbox"))renderInbox();else if(screen.equals("chat")){renderMessages(false);markReadIfAllowed();updateTyping();}
     }};
     @Override public void onCreate(Bundle state) {
@@ -136,12 +137,14 @@ public class PairedActivity extends Activity {
             else if(screen.equals("inbox")){if(batteryCard!=null&&!showBatteryCard()){root.removeView(batteryCard);batteryCard=null;}renderInbox();refreshInbox(false);
                 if(!bubble()&&PairedService.ready()&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED)askContactPhotos();}}}
     @Override protected void onPause(){resumed=false;remember();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&player.isPlaying()){player.pause();updatePlayLabel();}if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
+    @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);if(focused&&store!=null){markReadIfAllowed();updateReceiptStatus();}}
     @Override protected void onSaveInstanceState(Bundle out){remember();if(pendingCapture!=null)out.putString("capture",pendingCapture.getPath());out.putString("chat",chatId);out.putString("reply",replyId);out.putString("draft",drafts.getOrDefault(chatId,""));super.onSaveInstanceState(out);}
     @Override public void onBackPressed(){if(screen.equals("media")){details();return;}if(screen.equals("details")){thread(chatId);return;}if(bubble()){super.onBackPressed();return;}if(login!=null){destroyLogin();inbox();}else if(screen.equals("inbox")&&(folder!=1||unknownOnly)){folder=1;unknownOnly=false;inbox();}else if(!screen.equals("inbox")){remember();inbox();}else super.onBackPressed();}
 
     // ---- Shared building blocks ----
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
     private void base(String name){
+        receiptStatusView=null;
         // Screenshots are always allowed (an older version could leave them blocked after signing in).
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);if(!name.equals("login"))setRecentsScreenshotEnabled(true);
         if(recorder!=null)cancelRecording();recordBar=null;composeRow=null;sendButton=null;recordClock=null;screen=name;batteryCard=null;jumpButton=null;statusView=null;composer=null;items=null;scroll=null;searchRow=null;attachStrip=null;attachScroll=null;replyPanel=null;typingRow=null;messageViews.clear();ui.removeCallbacks(typingTick);if(typingPulse!=null){typingPulse.cancel();typingPulse=null;}
@@ -362,9 +365,15 @@ public class PairedActivity extends Activity {
             r.setOnClickListener(v->{chatSettings.setTheme(id,t.key);dialog[0].dismiss();if(screen.equals("chat")&&chatId.equals(id))thread(id);else if(screen.equals("details"))details();});list.addView(r);}
         dialog[0]=sheet(list);}
     private void toggleReceipts(String id){boolean on=!chatSettings.receipts(id);chatSettings.setReceipts(id,on);
-        if(!on)toast("Read receipts off for this chat. Opening it here won't mark it read, so it stays unread in Google Messages.");
-        else if(chatSettings.phoneReceipts()==0)toast("Read receipts on for this chat, but Google Messages' own \"Send read receipts\" setting is off, so none are sent.");
-        else {toast("Read receipts on for this chat.");markReadIfAllowed();}
+        if(!on){new ReadReceiptQueue(this).cancel(id);toast("Read receipts off for this chat.");}
+        else {JSONObject latest=store.latestIncoming(id),chat=store.chat(id);
+            if(latest!=null&&chatSettings.seen(id)>=PairedProtocol.time(latest))PairedService.viewedForReceipts(this,chat,latest,true);
+            PairedService.refreshReceiptSettings();
+            if(chatSettings.receiptAvailability()==0)new AlertDialog.Builder(this).setTitle("Google Messages setting required")
+                .setMessage("This chat is enabled here. In Google Messages → Messages settings → RCS chats, turn on RCS and Send read receipts. Message Center cannot override Google's master switch.\n\nMessage Center only requests receipts for chats you enable here. Opening a chat in Google Messages itself follows Google's setting.")
+                .setPositiveButton("Open Google Messages",(d,w)->openGoogle()).setNegativeButton("Close",null).show();
+            else toast("Read receipts enabled. Viewed messages will be requested, including after reconnection.");
+            markReadIfAllowed();}
         if(screen.equals("details"))details();}
     private void loadChats(boolean more){if(busy)return;busy=true;int selected=folder;String cursor=more?store.page("folder:"+selected,false):"";
         PairedService.loadChats(cursor,selected,(v,e)->{busy=false;if(!e.isEmpty()&&!more)toast(e);if(screen.equals("inbox"))renderInbox();});}
@@ -442,7 +451,7 @@ public class PairedActivity extends Activity {
         for(int i=0;i<n;i++){JSONObject m=messages.get(i);out[i]=PairedProtocol.outgoing(m,c);who[i]=out[i]?"":m.optString("participantID");at[i]=PairedProtocol.time(m);
             line[i]=ChatText.reactionLine(out[i]?"You":ChatText.firstName(senderName(m,c)),PairedProtocol.body(m));
             ev[i]=PairedProtocol.event(m,c);if(!ev[i].isEmpty())line[i]=ev[i];
-            replyTo[i]=!PairedProtocol.string(m.optJSONObject("replyMessage"),"messageID").isEmpty()||ChatText.replyFallbackBody(PairedProtocol.body(m))!=null;
+            replyTo[i]=ReplyReferences.isReply(m);
             reacted[i]=!PairedProtocol.reactors(m).isEmpty();}
         int lastOut=-1;for(int i=n-1;i>=0;i--)if(out[i]&&line[i]==null){lastOut=i;break;}
         // Link previews open the page, which tells its owner you looked; only do that for people you know or have written to.
@@ -481,8 +490,8 @@ public class PairedActivity extends Activity {
     }
     private View bubble(JSONObject m,JSONObject c,ChatTheme theme,boolean outgoing,boolean joinPrev,boolean joinNext){
         LinearLayout wrap=vertical();String body=PairedProtocol.text(m),fallback=ChatText.replyFallbackBody(body);List<JSONObject> media=PairedProtocol.media(m);
-        String target=PairedProtocol.string(m.optJSONObject("replyMessage"),"messageID");
-        if(!target.isEmpty()||fallback!=null)addReplyContext(wrap,m,c,theme,outgoing,target);
+        String target=store.replyTarget(m);
+        if(ReplyReferences.isReply(m))addReplyContext(wrap,m,c,theme,outgoing,target);
         for(int k=0;k<media.size();k++){if(k>0)gap(wrap,4);wrap.addView(mediaView(m,media.get(k),outgoing,theme),new LinearLayout.LayoutParams(-1,-2));}
         JSONObject place=PairedProtocol.location(m);if(place!=null){if(!media.isEmpty())gap(wrap,4);wrap.addView(locationCard(m,place,outgoing,theme),new LinearLayout.LayoutParams(-1,-2));}
         if((!media.isEmpty()||place!=null)&&(fallback!=null?fallback:body).isEmpty())return wrap;
@@ -506,18 +515,20 @@ public class PairedActivity extends Activity {
      * line down to the reply. Tapping the original scrolls to it.
      */
     private void addReplyContext(LinearLayout wrap,JSONObject m,JSONObject c,ChatTheme theme,boolean outgoing,String target){
-        JSONObject original=target.isEmpty()?null:store.message(target);boolean originalOut=original!=null&&PairedProtocol.outgoing(original,c);
+        JSONObject original=target.isEmpty()?null:store.messageByReference(chatId,target);boolean originalOut=original!=null&&PairedProtocol.outgoing(original,c);
         String from=outgoing?"You":ChatText.firstName(senderName(m,c));
         String to=original==null?"":" to "+(originalOut?(outgoing?"yourself":"you"):ChatText.firstName(senderName(original,c)));
         TextView label=text("↩ "+from+" replied"+to,12,muted,false);label.setGravity(outgoing?Gravity.END:Gravity.START);label.setPadding(dp(14),0,dp(14),dp(4));
         wrap.addView(label,new LinearLayout.LayoutParams(-1,-2));
-        String quote=original!=null?displayBody(original):(target.isEmpty()?"Original message not included":"Original message not loaded yet");
+        String quote=original!=null?displayBody(original):(target.isEmpty()?"Find original message":"Original message not loaded yet");
         LinearLayout quoteLine=row();quoteLine.setGravity(outgoing?Gravity.END:Gravity.START);
         TextView q=text(quote,14,originalOut?theme.onBubble(dark):ink,false);q.setMaxLines(2);q.setEllipsize(TextUtils.TruncateAt.END);q.setPadding(dp(14),dp(8),dp(14),dp(8));
         q.setBackground(shape(originalOut?theme.bubble(dark):surface,18));q.setAlpha(original==null?0.45f:0.6f);q.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.62f));
         if(original!=null){q.setContentDescription("Original message: "+quote+". Tap to show it.");q.setOnClickListener(v->{if(messageViews.containsKey(target))jumpTo(target);else showMessage(original);});}
         else if(!target.isEmpty()){q.setContentDescription("Original message not loaded. Tap to find it.");q.setOnClickListener(v->findOriginal(target,6));}
-        else q.setOnClickListener(v->toast("The sender's phone didn't say which message this replies to."));
+        else {q.setContentDescription("Find the original message for this reply");q.setOnClickListener(v->refreshReply(m));}
+        if(!store.page("reply-link:"+m.optString("messageID"),false).isEmpty())q.setOnLongClickListener(v->{
+            menuSheet("Original linked on this phone",java.util.Arrays.asList("Choose a different original","Remove this local link"),java.util.Arrays.<Runnable>asList(()->chooseReplyOriginal(m),()->{store.page("reply-link:"+m.optString("messageID"),"","");renderMessages(false);}));return true;});
         LinearLayout.LayoutParams ql=new LinearLayout.LayoutParams(-2,-2);if(outgoing)ql.setMarginEnd(dp(22));else ql.setMarginStart(dp(22));quoteLine.addView(q,ql);
         wrap.addView(quoteLine,new LinearLayout.LayoutParams(-1,-2));
         View thread=new View(this){final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);{paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(2));paint.setStrokeCap(Paint.Cap.ROUND);paint.setColor(muted);paint.setAlpha(120);}
@@ -525,11 +536,45 @@ public class PairedActivity extends Activity {
         wrap.addView(thread,new LinearLayout.LayoutParams(-1,dp(10)));
     }
     /** Loads older history page by page (up to a limit) until a replied-to message is found, then shows it. */
-    private void findOriginal(String target,int pagesLeft){if(!screen.equals("chat"))return;JSONObject o=store.message(target);if(o!=null){showMessage(o);return;}
+    private void findOriginal(String target,int pagesLeft){if(!screen.equals("chat"))return;JSONObject o=store.messageByReference(chatId,target);if(o!=null){showMessage(o);return;}
         String id=chatId,cursor=store.page("messages:"+id,false);
         if(pagesLeft<=0||cursor.isEmpty()||!PairedService.ready()){toast("The original message isn't in the synced history.");return;}
         if(busy){toast("Still loading. Try again in a moment.");return;}if(pagesLeft==6)toast("Finding the original message…");
         busy=true;PairedService.loadMessages(id,cursor,(v,e)->{busy=false;if(!e.isEmpty()){toast(e);return;}if(screen.equals("chat")&&chatId.equals(id))findOriginal(target,pagesLeft-1);});}
+    private void refreshReply(JSONObject message){
+        if(busy){toast("Still loading. Try again in a moment.");return;}String id=chatId,mid=message.optString("messageID");
+        if(!PairedService.ready()){unlinkedReply(message);return;}
+        busy=true;toast("Refreshing this reply from Google Messages…");
+        PairedService.refreshReply(id,mid,(v,e)->{busy=false;if(!screen.equals("chat")||!chatId.equals(id))return;
+            JSONObject current=store.message(mid);if(current==null)current=message;
+            String target=store.replyTarget(current);renderMessages(false);
+            if(!target.isEmpty()){findOriginal(target,12);return;}
+            if(!e.isEmpty())toast(e);unlinkedReply(current);});
+    }
+    private void unlinkedReply(JSONObject message){
+        new AlertDialog.Builder(this).setTitle("Reply reference unavailable")
+            .setMessage("Google Messages may show the original on your phone, but this paired copy does not currently contain a usable link. You can select the original from this conversation and keep that link on this phone.")
+            .setPositiveButton("Choose original",(d,w)->chooseReplyOriginal(message))
+            .setNeutralButton("Connection details",(d,w)->replyDiagnostics(message)).setNegativeButton("Close",null).show();
+    }
+    private void replyDiagnostics(JSONObject message){String report=ReplyReferences.diagnostics(message);
+        new AlertDialog.Builder(this).setTitle("Reply connection details").setMessage(report+"\n\nThis report contains no message text, names, phone numbers, account details, or message IDs.")
+            .setPositiveButton("Copy",(d,w)->{getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Reply connection details",report));toast("Connection details copied");})
+            .setNegativeButton("Close",null).show();
+    }
+    private void chooseReplyOriginal(JSONObject reply){
+        LinearLayout content=vertical();TextView heading=text("Choose the original message",18,ink,true);content.addView(heading);gap(content,8);
+        TextView info=text("This selection links the reply only in Message Center on this phone.",13,muted,false);content.addView(info);gap(content,8);
+        EditText search=input("Search earlier synced messages");search.setSingleLine(true);content.addView(search);gap(content,8);
+        ScrollView sc=new ScrollView(this);LinearLayout choices=vertical();sc.addView(choices);content.addView(sc,new LinearLayout.LayoutParams(-1,dp(320)));
+        Dialog[] dialog=new Dialog[1];Runnable show=()->{choices.removeAllViews();List<JSONObject> candidates=store.replyCandidates(reply,search.getText().toString(),100);
+            for(JSONObject original:candidates){String label=(PairedProtocol.outgoing(original,store.chat(chatId))?"You":senderName(original,store.chat(chatId)))+" · "+displayBody(original);
+                TextView option=text(label,15,ink,false);option.setMaxLines(3);option.setEllipsize(TextUtils.TruncateAt.END);option.setPadding(dp(12),dp(12),dp(12),dp(12));option.setBackground(ripple());
+                option.setOnClickListener(v->{store.linkReply(reply,original.optString("messageID"));dialog[0].dismiss();renderMessages(false);showMessage(original);});choices.addView(option);}
+            if(candidates.isEmpty())choices.addView(text("No earlier synced messages match. Load more history in the chat, then try again.",14,muted,false));};
+        search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int c,int n){}public void onTextChanged(CharSequence s,int a,int b,int c){show.run();}public void afterTextChanged(Editable e){}});
+        show.run();dialog[0]=sheet(content);
+    }
     /** A shared location: the map preview (when sent), the place, and a tap to open it in a maps app. */
     private View locationCard(JSONObject m,JSONObject place,boolean outgoing,ChatTheme theme){
         LinearLayout line=row();line.setGravity(outgoing?Gravity.END:Gravity.START);int w=Math.round(getResources().getDisplayMetrics().widthPixels*0.72f);
@@ -610,11 +655,25 @@ public class PairedActivity extends Activity {
      * read receipts if its own setting allows them.
      */
     private void markReadIfAllowed(){if(!resumed||!screen.equals("chat")||chatId.isEmpty())return;String id=chatId;
-        JSONObject c=store.chat(id),latest=null;for(JSONObject m:store.messages(id,50))if(!PairedProtocol.outgoing(m,c))latest=m;
+        if(!hasWindowFocus())return;
+        JSONObject c=store.chat(id),latest=store.latestIncoming(id);
         long seenAt=Math.max(c==null?0:PairedProtocol.time(c),latest==null?0:PairedProtocol.time(latest));if(seenAt>0)chatSettings.markSeen(id,seenAt);
-        if(latest==null||!chatSettings.receipts(id)||!PairedService.ready())return;String mid=latest.optString("messageID");
-        if(mid.isEmpty()||mid.equals(chatSettings.markedRead(id))||mid.equals(markingRead))return;markingRead=mid;
-        PairedService.markRead(id,mid,(v,e)->{markingRead="";if(e.isEmpty())chatSettings.setMarkedRead(id,mid);});}
+        if(latest==null||!chatSettings.receipts(id))return;
+        PairedService.viewedForReceipts(this,c,latest,false);}
+    private void updateReceiptStatus(){if(receiptStatusView==null||chatId.isEmpty()||chatSettings==null)return;
+        JSONObject entry=new ReadReceiptQueue(this).get(chatId);int google=chatSettings.receiptAvailability();
+        String state=ReadReceiptQueue.state(entry,chatSettings.receipts(chatId),PairedService.ready(),google);
+        String value=switch(state){
+            case "off" -> "No read requests are sent for this chat.";
+            case "no_message" -> "Enable this chat, then view an incoming message. Its read request status will appear here.";
+            case "sms" -> "The last viewed incoming message is SMS/MMS. Sender read receipts require RCS.";
+            case "google_off" -> chatSettings.phoneRcs()==0?"Blocked: Google Messages reports RCS is off. Enable RCS and Send read receipts there.":"Blocked: Google's Send read receipts setting is off. Enable it in Google Messages → Messages settings → RCS chats.";
+            case "waiting" -> "Viewed message saved. Its read request will retry when the connection returns.";
+            case "retrying" -> "Read request failed and is queued for retry. "+entry.optString("error");
+            case "accepted" -> "Read request accepted by Google Messages at "+DateFormat.getTimeFormat(this).format(new Date(entry.optLong("requestedAt")))+". This is not confirmation that the other phone displayed it."+(google<0?" Google's master setting has not been reported; check Send read receipts in Google Messages.":"");
+            default -> "Read request queued for Google Messages.";};
+        receiptStatusView.setText(value);
+    }
     private void send(){if(busy||composer==null)return;String body=composer.getText().toString(),id=chatId,reply=replyId;JSONObject c=store.chat(id);
         boolean files=false;for(Outgoing o:outgoing)if(!o.sending)files=true;
         if(body.trim().isEmpty()&&!files)return;if(c==null){error("Refresh this conversation before sending.");return;}
@@ -718,6 +777,10 @@ public class PairedActivity extends Activity {
         sheetAction(content,chatSettings.pinned(c)?"Unpin":"Pin to top",()->{togglePin(c);details();});
         sheetAction(content,"Chat theme: "+chatSettings.theme(id).label,()->chooseTheme(id));
         sheetAction(content,"Read receipts: "+(chatSettings.receipts(id)?"on":"off"),()->toggleReceipts(id));
+        receiptStatusView=text("",13,muted,false);receiptStatusView.setPadding(dp(16),0,dp(16),dp(8));content.addView(receiptStatusView);updateReceiptStatus();
+        if(chatSettings.receipts(id)){sheetAction(content,"Retry read request / refresh Google setting",()->{JSONObject latest=store.latestIncoming(id);
+            if(latest!=null&&chatSettings.seen(id)>=PairedProtocol.time(latest))PairedService.viewedForReceipts(this,store.chat(id),latest,true);
+            PairedService.refreshReceiptSettings();updateReceiptStatus();});}
         sheetAction(content,chatSettings.muted(id)?"Notifications: muted (tap to unmute)":"Notifications: on (tap to mute)",()->toggleMute(id));
         sheetAction(content,chatSettings.snoozed(id)?"Snoozed until "+snoozeLabel(id)+" (tap to change)":"Snooze notifications…",()->snoozeMenu(id));
         sheetAction(content,"Search in chat",()->{thread(id);searchChat();});

@@ -86,6 +86,7 @@ final class PairedStore extends SQLiteOpenHelper {
             boolean existed=false;long version=0;
             try(Cursor c=db.rawQuery("SELECT version FROM items WHERE id=?",new String[]{id})){if(c.moveToFirst()){existed=true;version=c.getLong(0);}}
             if(!live && existed && version>requestVersion) {db.setTransactionSuccessful();return true;}
+            data=ReplyReferences.preserve(message(id),data);
             long next=snapshot()+1;db.execSQL("UPDATE meta SET value=? WHERE id=1",new Object[]{next});
             ContentValues v=new ContentValues();v.put("id",id);v.put("chat",chat);v.put("data",data.toString());v.put("time",PairedProtocol.time(data));v.put("version",next);
             db.insertWithOnConflict("items",null,v,SQLiteDatabase.CONFLICT_REPLACE);
@@ -99,6 +100,50 @@ final class PairedStore extends SQLiteOpenHelper {
         }return out;
     }
     synchronized JSONObject message(String id) {try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM items WHERE id=?",new String[]{id})){return c.moveToFirst()?json(c.getString(0)):null;}}
+    synchronized JSONObject latestIncoming(String chat) {
+        JSONObject conversation=chat(chat);
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM items WHERE chat=? ORDER BY time DESC,id DESC",new String[]{chat})){
+            while(c.moveToNext()){JSONObject m=json(c.getString(0));if(ReadReceiptQueue.eligible(m,conversation))return m;}}
+        return null;
+    }
+    /** Match known provider identities within this conversation; ambiguous references are not linked. */
+    synchronized String replyTarget(JSONObject reply) {
+        if(!ReplyReferences.isReply(reply))return "";
+        String chat=reply.optString("conversationID"),self=reply.optString("messageID");long before=PairedProtocol.time(reply);
+        java.util.Set<String> found=new java.util.LinkedHashSet<>();
+        String primary=ReplyReferences.primary(reply);
+        for(String ref:ReplyReferences.references(reply)) {
+            JSONObject direct=message(ref);
+            if(validOriginal(direct,chat,self,before)) {if(ref.equals(primary))return ref;found.add(ref);}
+            String pattern="%\""+ref.replace("\\","\\\\").replace("%","\\%").replace("_","\\_").replace("\"","\\\"")+"\"%";
+            try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM items WHERE chat=? AND time<=? AND data LIKE ? ESCAPE '\\' LIMIT 200",new String[]{chat,String.valueOf(before),pattern})){
+                while(c.moveToNext()){JSONObject m=json(c.getString(0));if(validOriginal(m,chat,self,before)&&ReplyReferences.identities(m).contains(ref))found.add(m.optString("messageID"));}}
+        }
+        if(found.size()==1)return found.iterator().next();
+        JSONObject explicit=primary.isEmpty()?null:message(primary);
+        if(!primary.isEmpty()&&!primary.equals(self)&&(explicit==null||chat.equals(explicit.optString("conversationID"))))return primary;
+        String manual=page("reply-link:"+self,false);JSONObject original=manual.isEmpty()?null:message(manual);
+        return validOriginal(original,chat,self,before)?manual:"";
+    }
+    private static boolean validOriginal(JSONObject m,String chat,String self,long before){return m!=null&&!self.equals(m.optString("messageID"))&&chat.equals(m.optString("conversationID"))&&PairedProtocol.time(m)<=before;}
+    synchronized JSONObject messageByReference(String chat,String reference){
+        JSONObject direct=message(reference);if(direct!=null&&chat.equals(direct.optString("conversationID")))return direct;
+        String pattern="%\""+reference.replace("\\","\\\\").replace("%","\\%").replace("_","\\_").replace("\"","\\\"")+"\"%";
+        JSONObject found=null;
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM items WHERE chat=? AND data LIKE ? ESCAPE '\\' LIMIT 200",new String[]{chat,pattern})){
+            while(c.moveToNext()){JSONObject m=json(c.getString(0));if(ReplyReferences.identities(m).contains(reference)){if(found!=null)return null;found=m;}}}
+        return found;
+    }
+    synchronized void linkReply(JSONObject reply,String original) {
+        if(!validOriginal(message(original),reply.optString("conversationID"),reply.optString("messageID"),PairedProtocol.time(reply)))throw new IllegalArgumentException("Choose an earlier message in this conversation.");
+        page("reply-link:"+reply.optString("messageID"),original,"Selected on this phone");
+    }
+    synchronized List<JSONObject> replyCandidates(JSONObject reply,String query,int max){
+        List<JSONObject> out=new ArrayList<>();String q=query.trim().toLowerCase(java.util.Locale.ROOT);
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM items WHERE chat=? AND time<=? AND id!=? ORDER BY time DESC,id DESC",new String[]{reply.optString("conversationID"),String.valueOf(PairedProtocol.time(reply)),reply.optString("messageID")})){
+            while(c.moveToNext()&&out.size()<max){JSONObject m=json(c.getString(0));String body=PairedProtocol.body(m);if(!body.isEmpty()&&(q.isEmpty()||body.toLowerCase(java.util.Locale.ROOT).contains(q)))out.add(m);}}
+        return out;
+    }
     synchronized void page(String id,String cursor,String note) {
         ContentValues v=new ContentValues();v.put("id",id);v.put("cursor",cursor);v.put("note",note);getWritableDatabase().insertWithOnConflict("pages",null,v,SQLiteDatabase.CONFLICT_REPLACE);
     }
