@@ -267,7 +267,9 @@ public final class PairedService extends Service {
             .setCategory(Notification.CATEGORY_MESSAGE).setVisibility(Notification.VISIBILITY_PRIVATE).setContentIntent(openIntent(id)).setAutoCancel(true)
             .setWhen(recent.isEmpty()?System.currentTimeMillis():PairedProtocol.time(recent.get(recent.size()-1))).setShowWhen(true).setNumber(m==null?0:recent.size());
         if(!group&&lastPhoto!=null)builder.setLargeIcon(lastPhoto);
-        if(bubbleNow)builder.setSilent(true);
+        // Opening a bubble yourself should not ring. A lone notification in its own group with
+        // GROUP_ALERT_SUMMARY never alerts (this is what AndroidX's setSilent does).
+        if(bubbleNow)builder.setGroup("bubble-"+id).setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY).setOnlyAlertOnce(true);
         // A long-lived shortcut makes this a "conversation" notification, which Android requires for bubbles.
         Bitmap icon=chatIcon(chat,title);String shortcut=publishShortcut(id,title,icon);
         if(shortcut!=null){builder.setShortcutId(shortcut);builder.setBubbleMetadata(bubble(id,icon,bubbleNow));}
