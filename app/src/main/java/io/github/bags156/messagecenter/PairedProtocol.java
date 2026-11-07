@@ -17,9 +17,66 @@ final class PairedProtocol {
     }
     static long time(JSONObject m) { return millis(m.optLong("timestamp",m.optLong("lastMessageTimestamp",0))); }
     static String status(JSONObject m) { return string(m.optJSONObject("messageStatus"),"status"); }
-    static boolean outgoing(JSONObject m) {
+    /**
+     * Direction comes from the message status first: Google numbers outgoing
+     * statuses 1-99 and incoming 100-199. The sender's isMe flag is not reliable
+     * for incoming history, so it is only a fallback when the status says nothing.
+     */
+    static boolean outgoing(JSONObject m) { return outgoing(m,null); }
+    static boolean outgoing(JSONObject m,JSONObject chat) {
+        Boolean byStatus=outgoingStatus(status(m)); if(byStatus!=null) return byStatus;
+        String id=m.optString("participantID","");
+        if(!id.isEmpty() && chat!=null) {
+            JSONArray ps=chat.optJSONArray("participants");
+            if(ps!=null) for(int i=0;i<ps.length();i++) {
+                JSONObject p=ps.optJSONObject(i);
+                if(p!=null && id.equals(string(p.optJSONObject("ID"),"participantID"))) return p.optBoolean("isMe");
+            }
+        }
         JSONObject sender=m.optJSONObject("senderParticipant");
-        return (sender!=null && sender.optBoolean("isMe")) || status(m).startsWith("OUTGOING");
+        return sender!=null && sender.optBoolean("isMe");
+    }
+    static Boolean outgoingStatus(String s) {
+        if(s.startsWith("OUTGOING") || s.startsWith("MESSAGE_STATUS_OUTGOING")) return true;
+        if(s.startsWith("INCOMING")) return false;
+        try { int n=Integer.parseInt(s); if(n>=1 && n<100) return true; if(n>=100 && n<200) return false; }
+        catch(NumberFormatException ignored) { }
+        return null;
+    }
+    static boolean failed(JSONObject m) { String s=status(m); return s.contains("FAILED") || s.equals("OUTGOING_CANCELED"); }
+    /** The other person in a one-to-one chat, or null for groups and unknown chats. */
+    static JSONObject other(JSONObject chat) {
+        if(chat==null || chat.optBoolean("isGroupChat")) return null;
+        JSONArray ps=chat.optJSONArray("participants"); JSONObject found=null; int count=0;
+        if(ps!=null) for(int i=0;i<ps.length();i++) {
+            JSONObject p=ps.optJSONObject(i); if(p==null || p.optBoolean("isMe") || !p.optBoolean("isVisible",true)) continue;
+            count++; if(found==null) found=p;
+        }
+        return count==1 ? found:null;
+    }
+    static String participantID(JSONObject p) { return p==null ? "":string(p.optJSONObject("ID"),"participantID"); }
+    static String number(JSONObject p) { return p==null ? "":string(p.optJSONObject("ID"),"number"); }
+    static boolean rcs(JSONObject chat) { return chat!=null && "RCS".equals(chat.optString("type")); }
+    static boolean latestFromMe(JSONObject chat) {
+        JSONObject latest=chat==null ? null:chat.optJSONObject("latestMessage");
+        return latest!=null && latest.optLong("fromMe")!=0;
+    }
+    /** Google's "#RRGGBB" / "RRGGBB" / "AARRGGBB" avatar colors, or fallback. */
+    static int color(String hex,int fallback) {
+        if(hex==null) return fallback; String h=hex.trim(); if(h.startsWith("#")) h=h.substring(1);
+        try {
+            if(h.length()==6) return 0xff000000 | Integer.parseInt(h,16);
+            if(h.length()==8) return (int)Long.parseLong(h,16);
+        } catch(NumberFormatException ignored) { }
+        return fallback;
+    }
+    static String initial(String title) {
+        for(int i=0;i<title.length();) {
+            int cp=title.codePointAt(i);
+            if(Character.isLetterOrDigit(cp)) return new String(Character.toChars(Character.toUpperCase(cp)));
+            i+=Character.charCount(cp);
+        }
+        return "#";
     }
     static String body(JSONObject m) {
         JSONArray infos=m.optJSONArray("messageInfo"); List<String> parts=new ArrayList<>();
@@ -44,7 +101,8 @@ final class PairedProtocol {
         return string(p.optJSONObject("ID"),"number");
     }
     static String person(JSONObject chat,String id,JSONObject supplied) {
-        String direct=name(supplied); if(!direct.isEmpty()) return direct;
+        // Only trust the supplied sender for a name; its isMe flag can be wrong on incoming messages.
+        String direct=supplied==null || supplied.optBoolean("isMe") ? "":name(supplied); if(!direct.isEmpty()) return direct;
         JSONArray participants=chat==null ? null:chat.optJSONArray("participants");
         if(participants!=null) for(int i=0;i<participants.length();i++) {
             JSONObject p=participants.optJSONObject(i);

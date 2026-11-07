@@ -56,7 +56,7 @@ public final class PairedService extends Service {
     }
     static void disconnect(Context context,boolean forget) {
         context.getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("enabled",false).apply();
-        if(forget) {new SessionVault(context).clear();try(PairedStore db=new PairedStore(context)){db.clear();}}
+        if(forget) {new SessionVault(context).clear();try(PairedStore db=new PairedStore(context)){db.clear();}Avatars.clear(context);new ChatSettings(context).clear();}
         PairedService s=current;if(s!=null){s.generation.incrementAndGet();s.ready=false;}
         context.stopService(new Intent(context,PairedService.class));
     }
@@ -90,7 +90,7 @@ public final class PairedService extends Service {
                 fresh.pair(cookies);
                 if(generation.get()!=token)return;
                 // A newly paired phone/account must not inherit another session's IDs.
-                store.clear();vault.save(fresh.exportSession());emoji="";
+                store.clear();Avatars.clear(this);vault.save(fresh.exportSession());emoji="";
                 getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("enabled",true).apply();
                 update("Paired. Connecting…");
             }
@@ -111,6 +111,7 @@ public final class PairedService extends Service {
                     network.execute(()->{if(generation.get()==token)try{chats(client,"",1);}catch(Exception e){update("Connected • tap Refresh to load conversations");}});
                 }
                 case "SAVE_SESSION" -> saveSession(token);
+                case "SETTINGS" -> {JSONObject rcs=new JSONObject(payload);new ChatSettings(this).setPhoneReceipts(rcs.optBoolean("rcsEnabled") && rcs.optBoolean("sendReadReceipts"));changed(kind);}
                 case "CONVERSATION" -> {store.chat(new JSONObject(payload));changed(kind);}
                 case "MESSAGE" -> {
                     JSONObject envelope=new JSONObject(payload),message=envelope.getJSONObject("message");
@@ -161,6 +162,17 @@ public final class PairedService extends Service {
             try{s.store.chat(new JSONObject(c.chat(id)));}catch(Exception ignored){}s.changed("MESSAGE");return "";
         },done);
     }
+    /** Downloads contact photos for these participant IDs into the private photo cache. */
+    static void loadPhotos(java.util.List<String> ids,Result done) {
+        execute(c->{JSONObject photos=new JSONObject(c.thumbnails(String.join(",",ids)));
+            for(java.util.Iterator<String> keys=photos.keys();keys.hasNext();){String id=keys.next();
+                try{Avatars.save(current,id,android.util.Base64.decode(photos.getString(id),android.util.Base64.DEFAULT));}catch(Exception ignored){}}
+            return "";},done);
+    }
+    /** Marks the conversation read on the phone up to this message; Google Messages then sends RCS read receipts if its own setting allows. */
+    static void markRead(String conversationID,String messageID,Result done) {
+        execute(c->{c.markRead(conversationID,messageID);return "";},done);
+    }
     private PendingIntent openIntent(String id) {
         Intent intent=new Intent(this,PairedActivity.class).setFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TOP).putExtra("chat",id);
         return PendingIntent.getActivity(this,id.hashCode(),intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
@@ -173,8 +185,9 @@ public final class PairedService extends Service {
         if(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return;
         String id=m.optString("conversationID");JSONObject chat=store.chat(id);String title=chat==null?"New message":PairedProtocol.title(chat);
         String sender=PairedProtocol.person(chat,m.optString("participantID"),m.optJSONObject("senderParticipant"));
+        String line=PairedProtocol.other(chat)!=null ? PairedProtocol.body(m):sender+": "+PairedProtocol.body(m);
         Notification notification=new Notification.Builder(this,MESSAGES).setSmallIcon(R.drawable.ic_app).setContentTitle(title)
-            .setContentText(sender+": "+PairedProtocol.body(m)).setStyle(new Notification.BigTextStyle().bigText(sender+": "+PairedProtocol.body(m)))
+            .setContentText(line).setStyle(new Notification.BigTextStyle().bigText(line))
             .setCategory(Notification.CATEGORY_MESSAGE).setVisibility(Notification.VISIBILITY_PRIVATE).setContentIntent(openIntent(id)).setAutoCancel(true).setWhen(PairedProtocol.time(m)).build();
         getSystemService(NotificationManager.class).notify("chat:"+id,1,notification);
     }

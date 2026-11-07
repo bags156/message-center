@@ -13,3 +13,4 @@ Message Center's Android and Go integration code is maintained in this repositor
 Go's standard library and golang.org/x modules use BSD-style licenses.
 Google protobuf uses a BSD-style license; zerolog uses MIT; google/uuid uses BSD.
 Their source and notices are included in the dependency-source release archive.
+Some interface icon shapes follow Material Design icons by Google, licensed Apache-2.0.

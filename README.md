@@ -21,7 +21,9 @@ For Obtainium, use `https://github.com/bags156/message-center`. Regular releases
 - Direct on-device pairing and protocol connection through `mautrix-gmessages/pkg/libgm`.
 - Native conversation and text composer screens, including a new one-to-one conversation by full phone number.
 - Paged conversations/history, cached using Google's actual conversation/message IDs.
-- Reactions attached to their actual message IDs. Tap a badge to see participants reported by Google; reply/react actions use the paired protocol.
+- Reactions attached to their actual message IDs. Tap a badge to see participants reported by Google; long-press a message to reply or react.
+- Pinned chats (Google's pins plus local pin/unpin), per-chat color themes, and per-chat read receipts.
+- Contact photos, unread state, time separators, and delivery ticks in a Material-style inbox and chat.
 - An independent foreground connection and incoming-message notifications, including a boot receiver for an enabled saved connection.
 - Google-reported send/delivery/read status. Request acceptance is labeled separately from delivery.
 - Authenticated encryption of the paired session with Android Keystore, private app storage for synced messages, and disabled cloud backup.

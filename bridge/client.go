@@ -4,6 +4,7 @@ package bridge
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -71,6 +72,10 @@ func (c *Client) handle(evt any) {
 			c.emitProto("CONVERSATION", conv)
 		}
 		c.emit("READY", "{}")
+	case *gmproto.Settings:
+		if payload, ok := settingsPayload(e); ok {
+			c.emit("SETTINGS", payload)
+		}
 	case *events.AuthTokenRefreshed:
 		c.emit("SAVE_SESSION", "{}")
 	case *events.GaiaLoggedOut:
@@ -310,4 +315,64 @@ func (c *Client) React(chatJSON, messageID, emoji string, remove bool) error {
 		return errors.New("Google did not accept this reaction.")
 	}
 	return nil
+}
+
+// settingsPayload forwards only the phone's RCS read-receipt switch. Settings
+// events also describe SIM cards, which the app does not need.
+func settingsPayload(s *gmproto.Settings) (string, bool) {
+	rcs := s.GetRCSSettings()
+	if rcs == nil {
+		return "", false
+	}
+	b, _ := json.Marshal(map[string]bool{"rcsEnabled": rcs.GetIsEnabled(), "sendReadReceipts": rcs.GetSendReadReceipts()})
+	return string(b), true
+}
+
+// MarkRead marks a conversation read on the phone up to messageID. Google
+// Messages sends RCS read receipts for it when its own setting allows them.
+func (c *Client) MarkRead(conversationID, messageID string) error {
+	if conversationID == "" || messageID == "" {
+		return errors.New("Nothing to mark as read.")
+	}
+	ctx, cancel := c.requestContext()
+	defer cancel()
+	if e := c.gm.MarkRead(ctx, conversationID, messageID); e != nil {
+		return errors.New("Could not mark this conversation as read.")
+	}
+	return nil
+}
+
+// Thumbnails returns {participantID: base64 image} for the comma-separated
+// participant IDs. Participants without a photo are omitted.
+func (c *Client) Thumbnails(participantIDs string) (string, error) {
+	ids := splitIDs(participantIDs)
+	if len(ids) == 0 {
+		return "{}", nil
+	}
+	ctx, cancel := c.requestContext()
+	defer cancel()
+	r, e := c.gm.GetParticipantThumbnail(ctx, ids...)
+	if e != nil {
+		return "", errors.New("Could not load contact photos.")
+	}
+	return thumbnailJSON(r), nil
+}
+func splitIDs(raw string) []string {
+	var ids []string
+	for _, id := range strings.Split(raw, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+func thumbnailJSON(r *gmproto.GetThumbnailResponse) string {
+	out := map[string]string{}
+	for _, t := range r.GetThumbnail() {
+		if b := t.GetData().GetImageBuffer(); len(b) > 0 && t.GetIdentifier() != "" {
+			out[t.GetIdentifier()] = base64.StdEncoding.EncodeToString(b)
+		}
+	}
+	b, _ := json.Marshal(out)
+	return string(b)
 }
