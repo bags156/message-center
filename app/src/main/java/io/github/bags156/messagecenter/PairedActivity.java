@@ -98,6 +98,8 @@ public class PairedActivity extends Activity {
     private final Set<String> photosRequested=new HashSet<>();
     private boolean registered,pairSubmitted,busy,resumed,anchorOlder;private String shownEmoji="";
     private long lastInboxRefresh,lastTypingSent;
+    /** True while the chat is scrolled to the newest message, so late layout changes keep it there. */
+    private boolean pinnedBottom=true;
     private final Map<String,View> messageViews=new HashMap<>();
     private final android.os.Handler ui=new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable typingTick=this::updateTyping;
@@ -354,7 +356,11 @@ public class PairedActivity extends Activity {
         ImageView more=icon(R.drawable.ic_more,ink,"More options",null);more.setBackground(getDrawable(android.R.drawable.list_selector_background));more.setOnClickListener(this::chatMenu);bar.addView(more);
         root.addView(bar,new LinearLayout.LayoutParams(-1,dp(64)));connection();
         scroll=new ScrollView(this);scroll.setVerticalScrollBarEnabled(false);items=vertical();items.setPadding(dp(12),dp(8),dp(12),dp(8));scroll.addView(items);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-        scroll.setOnScrollChangeListener((v,x,y,ox,oy)->{if(y==0&&oy>0)loadOlderMessages();});
+        // Chats never animate on their own; only an explicit jump (search, reply quote) scrolls smoothly.
+        scroll.setSmoothScrollingEnabled(false);pinnedBottom=true;
+        scroll.setOnScrollChangeListener((v,x,y,ox,oy)->{View ch=scroll.getChildAt(0);pinnedBottom=ch!=null&&ch.getHeight()-scroll.getHeight()-y<dp(80);if(y==0&&oy>0)loadOlderMessages();});
+        ScrollView chatScroll=scroll;View.OnLayoutChangeListener keepBottom=(v,l,t,r,b,ol,ot,or,ob)->{if(pinnedBottom&&scroll==chatScroll&&(b-t)!=(ob-ot))chatScroll.scrollTo(0,items.getHeight());};
+        items.addOnLayoutChangeListener(keepBottom);scroll.addOnLayoutChangeListener(keepBottom);
         typingRow=row();typingRow.setPadding(dp(14),dp(2),dp(14),dp(6));typingRow.setVisibility(View.GONE);
         TextView dots=text("• • •",13,muted,true);dots.setPadding(dp(14),dp(6),dp(14),dp(6));dots.setBackground(shape(surface,16));typingRow.addView(dots);
         typingLabel=text("",13,muted,false);typingLabel.setPadding(dp(10),0,0,0);typingRow.addView(typingLabel);root.addView(typingRow);
@@ -423,7 +429,12 @@ public class PairedActivity extends Activity {
             if(i==lastOut||(out[i]&&PairedProtocol.failed(m)))items.addView(statusRow(m,theme));
         }
         renderOutbox(theme);
-        scroll.post(()->{if(scroll==null)return;if(anchorOlder){anchorOlder=false;scroll.scrollTo(0,y+Math.max(0,scroll.getChildAt(0).getHeight()-before));}else if(atBottom)scroll.fullScroll(View.FOCUS_DOWN);else scroll.scrollTo(0,y);});
+        // Position before the next frame is drawn, so the chat appears already at the right place instead of sliding there.
+        ScrollView sv=scroll;android.view.ViewTreeObserver.OnPreDrawListener[] once=new android.view.ViewTreeObserver.OnPreDrawListener[1];
+        once[0]=()->{sv.getViewTreeObserver().removeOnPreDrawListener(once[0]);if(scroll!=sv||sv.getChildAt(0)==null)return true;
+            if(anchorOlder){anchorOlder=false;sv.scrollTo(0,y+Math.max(0,sv.getChildAt(0).getHeight()-before));}
+            else if(atBottom){sv.scrollTo(0,sv.getChildAt(0).getHeight());pinnedBottom=true;}else sv.scrollTo(0,y);return true;};
+        sv.getViewTreeObserver().addOnPreDrawListener(once[0]);
     }
     private View bubble(JSONObject m,JSONObject c,ChatTheme theme,boolean outgoing,boolean joinPrev,boolean joinNext){
         LinearLayout wrap=vertical();String body=PairedProtocol.text(m),fallback=ChatText.replyFallbackBody(body);List<JSONObject> media=PairedProtocol.media(m);
@@ -557,7 +568,9 @@ public class PairedActivity extends Activity {
         sheetAction(content,"Reply",()->{d[0].dismiss();startReply(m);});
         String typed=PairedProtocol.text(m),plain=ChatText.replyFallbackBody(typed)!=null?ChatText.replyFallbackBody(typed):typed;
         if(!plain.isEmpty())sheetAction(content,"Copy text",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Message",plain));});
-        for(JSONObject media:PairedProtocol.media(m)){String kind=PairedProtocol.mediaKind(media),what=kind.equals("image")?"photo":kind.equals("video")?"video":kind.equals("audio")?"audio":"file";
+        for(JSONObject media:PairedProtocol.media(m)){String transcript=Transcriber.saved(this,PairedProtocol.string(media,"mediaID"));
+            if(transcript!=null)sheetAction(content,"Copy transcript",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Transcript",transcript));});
+            String kind=PairedProtocol.mediaKind(media),what=kind.equals("image")?"photo":kind.equals("video")?"video":kind.equals("audio")?"audio":"file";
             sheetAction(content,"Save "+what+" to phone",()->{d[0].dismiss();withFile(media,"Downloading…",file->saveToPhone(file,media));});
             sheetAction(content,"Share "+what,()->{d[0].dismiss();withFile(media,"Downloading…",file->share(file,media));});}
         if(!reactors.isEmpty())sheetAction(content,"See who reacted",()->{d[0].dismiss();reactionSheet(m,c);});
@@ -641,6 +654,7 @@ public class PairedActivity extends Activity {
             if(audio&&PairedProtocol.string(media,"mediaID").equals(playingId)){playingLabel=status;updatePlayLabel();}
             card.setContentDescription(title.getText()+". Tap to open.");card.setOnClickListener(v->{if(audio)playAudio(media,status);else openMedia(media);});card.setOnLongClickListener(v->{messageSheet(m);return true;});
             line.addView(card,new LinearLayout.LayoutParams(-2,-2));
+            if(audio){LinearLayout col=vertical();col.addView(line,new LinearLayout.LayoutParams(-1,-2));col.addView(transcriptView(m,media,outgoing,theme),new LinearLayout.LayoutParams(-1,-2));return col;}
         }
         return line;
     }
@@ -751,6 +765,24 @@ public class PairedActivity extends Activity {
         PairedService.executeMedia(client->client.sendMedia(c.toString(),o.file.getPath(),o.name,o.mime,text,replyTo),(value,e)->{
             if(!e.isEmpty()){busy=false;for(Outgoing r:batch)r.sending=false;renderAttachments();if(index==0&&!caption.isEmpty()&&composer!=null&&composer.getText().length()==0)composer.setText(caption);error(o.name+": "+e);return;}
             outgoing.remove(o);o.file.delete();renderAttachments();sendNext(c,batch,index+1,caption,reply,id);});}
+    // ---- Voice message transcripts ----
+    private final Set<String> transcribing=new HashSet<>();private JSONObject pendingTranscription;
+    /** Under a voice message: a Transcribe link, "Transcribing…", or the saved transcript. */
+    private View transcriptView(JSONObject m,JSONObject media,boolean outgoing,ChatTheme theme){String id=PairedProtocol.string(media,"mediaID"),saved=Transcriber.saved(this,id);
+        LinearLayout line=row();line.setGravity(outgoing?Gravity.END:Gravity.START);line.setPadding(dp(14),dp(5),dp(14),0);TextView t;
+        if(saved!=null){t=text(saved,14,ink,false);t.setTypeface(Typeface.create(Typeface.DEFAULT,Typeface.ITALIC));t.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));
+            t.setGravity(outgoing?Gravity.END:Gravity.START);t.setContentDescription("Transcript: "+saved);t.setOnLongClickListener(v->{messageSheet(m);return true;});}
+        else if(transcribing.contains(id))t=text("Transcribing…",13,muted,false);
+        else if(id.isEmpty())return line;
+        else {t=text("Transcribe",14,theme.accent(dark),true);t.setPadding(0,dp(2),0,dp(2));t.setContentDescription("Transcribe this voice message");t.setOnClickListener(v->transcribe(media));}
+        line.addView(t);return line;}
+    private void transcribe(JSONObject media){
+        if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){pendingTranscription=media;
+            toast("Android's speech recognizer needs microphone access, even to read a message. Nothing is recorded.");requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},78);return;}
+        String id=PairedProtocol.string(media,"mediaID");if(id.isEmpty()||transcribing.contains(id))return;
+        withFile(media,"Downloading…",file->{transcribing.add(id);renderMessages(false);
+            Transcriber.transcribe(this,file,id,(text,err)->{transcribing.remove(id);renderMessages(false);if(!err.isEmpty())error(err);});});}
+
     // ---- 0.6: reliability, outbox, contacts, management, search, voice, sharing, links ----
     private Outbox outbox;
     private JSONObject contacts;private boolean groupMode;private String contactQuery="";private final Map<String,String> picked=new LinkedHashMap<>();
@@ -898,7 +930,8 @@ public class PairedActivity extends Activity {
     private void cancelRecording(){if(recorder==null)return;ui.removeCallbacks(recordTick);try{recorder.stop();}catch(Exception ignored){}recorder.release();recorder=null;recording.delete();
         if(recordBar!=null){recordBar.setVisibility(View.GONE);composeRow.setVisibility(View.VISIBLE);}}
     @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] results){super.onRequestPermissionsResult(request,permissions,results);
-        if(request==77){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)startRecording();else toast("Message Center needs the microphone to record voice messages.");}}
+        if(request==77){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)startRecording();else toast("Message Center needs the microphone to record voice messages.");}
+        if(request==78){JSONObject pending=pendingTranscription;pendingTranscription=null;if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED&&pending!=null)transcribe(pending);else if(pending!=null)toast("Transcription needs microphone access.");}}
     /** Plays an audio attachment in place; tap again to pause. */
     private void playAudio(JSONObject media,TextView label){String id=PairedProtocol.string(media,"mediaID");
         if(player!=null&&id.equals(playingId)){if(player.isPlaying())player.pause();else player.start();playingLabel=label;updatePlayLabel();return;}
