@@ -30,6 +30,9 @@ final class Nicknames {
         return d.length() > 10 ? d.substring(d.length() - 10) : d;
     }
 
+    /** Reads the saved nicknames again (after restoring a backup). */
+    static void reload(Context context) { synchronized (Nicknames.class) { names.clear(); loaded = false; } load(context); }
+
     /** The nickname for this number, or "". */
     static String get(String number) {
         String k = key(number);

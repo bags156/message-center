@@ -1,10 +1,10 @@
-Reply references and outgoing read requests.
+Forwarding, selecting, themes, and backups.
 
-- Preserve an original-message reference when a later read/delivery update omits it. Read/delivery-only updates also retain the saved reply text.
-- Keep message references carried in the protocol's reply metadata on both live updates and history pages, and resolve exact IDs/aliases within the same conversation.
-- Tapping an unlinked reply refreshes its source page instead of blaming the sender's phone. If Google's paired data still supplies no usable reference, **Choose original** lets you select the actual earlier message and keep that link on this phone. Connection details can be copied without message text, names, numbers, credentials, or message IDs. Native Google Messages can have information the paired connection does not expose; automatic recovery is not guaranteed for that case.
-- Read requests for chats you enable are now saved when you view a message, including offline. They retry after failures and reconnection. An older request cannot clear a newer viewed message or an explicit retry. The app no longer silently drops failed read requests.
-- Chat details show whether a read request is queued, retrying, blocked by Google's setting, or accepted by Google, with a retry/refresh action. **Accepted by Google is not confirmation that the other phone displayed a read receipt.**
-- Read receipts require RCS, **Google Messages → Messages settings → RCS chats → Send read receipts** to be on, and this app's per-chat receipt setting to be on. SMS/MMS does not support sender read receipts. Google keeps control of that master setting.
+- **Forward messages and photos.** Long-press a message → Forward…, then pick the chat. The text and attachments are added to that chat's message box so you can check them before sending.
+- **Select several messages.** Long-press → Select messages, then tap others. Copy, forward, star, or delete them together; Back or ← stops selecting.
+- **Mark all as read:** ⋮ in the chat list → Mark all as read. Read receipts still go only to chats where you turned them on.
+- **Theme:** Settings → Theme switches between matching your phone, Light, and Dark.
+- **Text size:** Settings → Text size (Small, Default, Large, Larger) for messages, the message box, and the chat list.
+- **Back up and restore app data.** Settings → Back up app data saves starred messages, nicknames, reminders, scheduled messages, chat settings (themes, pins, read receipts, mutes), and app settings to Downloads/Message Center. Restore from a backup brings them back, for example on a new phone. Your messages stay in Google Messages, and your Google sign-in is never included. The file contains starred messages' text, so keep it private.
 
-Install over 0.8.3; the package and signing key are unchanged. No re-pairing is required. Confirm reply navigation and receipt arrival on your own phone after installing; automated checks use synthetic messages and do not send real texts or receipts.
+Install over 0.8.4; the package and signing key are unchanged.
