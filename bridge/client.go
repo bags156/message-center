@@ -343,7 +343,9 @@ func (c *Client) DownloadMedia(mediaID, keyB64, path string) error {
 	if mediaID == "" || e != nil {
 		return errors.New("This attachment is missing its download details.")
 	}
-	body, e := c.gm.DownloadMedia(mediaID, key)
+	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Minute)
+	defer cancel()
+	body, e := c.gm.DownloadMedia(ctx, mediaID, key)
 	if e != nil {
 		return errors.New("The attachment could not be downloaded. Check your connection and try again.")
 	}
