@@ -94,6 +94,9 @@ func (c *Client) Pair(cookies string) error {
 		}
 	}
 	c.gm.AuthData.SetCookies(values)
+	// Gaia pairing opens a temporary long poll. Close it before the Android
+	// owner starts the authenticated message connection (also on pairing failure).
+	defer c.gm.Disconnect()
 	ctx, cancel := context.WithTimeout(c.ctx, 3*time.Minute)
 	defer cancel()
 	emoji, ps, err := c.gm.StartGaiaPairing(ctx, c.ctx)

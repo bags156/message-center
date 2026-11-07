@@ -66,7 +66,8 @@ public final class PairedActivity extends Activity {
     }
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);String id=intent.getStringExtra("chat");if(id!=null&&!id.isEmpty())thread(id);}
     @Override protected void onResume(){super.onResume();if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
-        if(!PairedService.emoji().isEmpty()&&login==null)pairing();
+        if(PairedService.ready()&&screen.equals("pair")){CookieManager.getInstance().removeAllCookies(null);inbox();askNotifications();}
+        else if(!PairedService.emoji().isEmpty()&&login==null)pairing();
         else if(statusView!=null)statusView.setText(PairedService.status(this));}
     @Override protected void onPause(){remember();if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
     @Override protected void onSaveInstanceState(Bundle out){remember();out.putString("chat",chatId);out.putString("reply",replyId);out.putString("draft",drafts.getOrDefault(chatId,""));super.onSaveInstanceState(out);}

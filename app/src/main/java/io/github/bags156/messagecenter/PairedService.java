@@ -178,7 +178,7 @@ public final class PairedService extends Service {
             .setCategory(Notification.CATEGORY_MESSAGE).setVisibility(Notification.VISIBILITY_PRIVATE).setContentIntent(openIntent(id)).setAutoCancel(true).setWhen(PairedProtocol.time(m)).build();
         getSystemService(NotificationManager.class).notify("chat:"+id,1,notification);
     }
-    private void update(String value) {status=value;getSystemService(NotificationManager.class).notify(FOREGROUND_ID,connectionNotification());changed("STATUS");}
+    private void update(String value) {status=value;if(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED)getSystemService(NotificationManager.class).notify(FOREGROUND_ID,connectionNotification());changed("STATUS");}
     private void changed(String kind) {sendBroadcast(new Intent(CHANGED).setPackage(getPackageName()).putExtra("kind",kind));}
     @Override public IBinder onBind(Intent intent) {return null;}
     @Override public void onDestroy() {
