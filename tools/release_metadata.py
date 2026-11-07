@@ -12,8 +12,8 @@ def metadata(properties: str, certificate: str, previous=None):
     values = dict(line.strip().split("=", 1) for line in properties.splitlines()
                   if line.strip() and not line.lstrip().startswith("#"))
     version = values["versionName"]
-    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
-        raise ValueError("versionName must have the form 0.1.0")
+    if not re.fullmatch(r"\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?", version):
+        raise ValueError("versionName must have the form 0.1.0 or 0.2.0-beta.1")
     code = int(values["versionCode"])
     if not 0 < code <= 2100000000:
         raise ValueError("versionCode must be a positive Android version code")

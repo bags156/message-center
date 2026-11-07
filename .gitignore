@@ -12,3 +12,6 @@ local.properties
 out/
 __pycache__/
 *.pyc
+app/libs/*.aar
+bridge/vendor/
+bridge/dependencies-source.tar.gz

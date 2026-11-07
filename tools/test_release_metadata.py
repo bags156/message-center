@@ -5,6 +5,8 @@ CERT = "ab" * 32
 
 
 class ReleaseMetadataTest(unittest.TestCase):
+    def test_prerelease_version(self):
+        self.assertEqual("0.2.0-beta.1", metadata("versionName=0.2.0-beta.1\nversionCode=3", CERT)["versionName"])
     def test_first_release(self):
         self.assertEqual(1, metadata("versionName=0.1.0\nversionCode=1", CERT)["versionCode"])
 

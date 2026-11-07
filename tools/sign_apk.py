@@ -24,11 +24,12 @@ def main():
         cert.write_bytes(base64.b64decode(key["certificate"], validate=True))
         private.chmod(0o600)
         aligned = Path(temp) / "aligned.apk"
-        subprocess.run([str(build_tools / "zipalign"), "-p", "-f", "4", str(unsigned), str(aligned)], check=True)
+        subprocess.run([str(build_tools / "zipalign"), "-P", "16", "-f", "4", str(unsigned), str(aligned)], check=True)
         target = out / "message-center.apk"
         subprocess.run([str(build_tools / "apksigner"), "sign", "--key", str(private), "--cert", str(cert),
                         "--out", str(target), str(aligned)], check=True)
         result = subprocess.check_output([str(build_tools / "apksigner"), "verify", "--verbose", "--print-certs", str(target)], text=True)
+        subprocess.run([str(build_tools / "zipalign"), "-c", "-P", "16", "4", str(target)], check=True)
         import re
         actual = re.search(r"Signer #1 certificate SHA-256 digest: ([a-fA-F0-9]+)", result)
         expected = Path("signing-certificate.sha256").read_text().strip().lower()

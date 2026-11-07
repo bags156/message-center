@@ -20,11 +20,11 @@ Keep a private backup of the signing material. A different key cannot update ins
 6. The workflow builds/tests the app, signs the APK, verifies package/version/signature, and creates a GitHub Release with `message-center.apk`, checksum, public signing fingerprint, and version metadata.
 7. Check for updates in Obtainium. The repository URL stays the same.
 
-The first release is an alpha for device testing, even though it is on the normal release feed so Obtainium can find it without extra filters. Do not claim that compiled code or unit tests verify live carrier RCS behavior.
+Versions such as `0.2.0-beta.1` are published as prereleases and require Obtainium Include prereleases. Release publication waits for both build and offline emulator checks. These checks do not verify live carrier RCS or Google-account pairing.
 
 ## Release troubleshooting
 
 - **Missing signing key:** configure `ANDROID_SIGNING_KEY` as an Actions repository secret.
 - **Version code did not increase:** update `version.properties` and commit before rerunning.
 - **Certificate mismatch:** restore the original private signing material; do not substitute a new key.
-- **Quick reply unavailable:** Google Messages may have removed the notification action. Open that conversation in Google Messages.
+- **Pairing rejected:** the embedded Google sign-in or private protocol may be unsupported. Do not impersonate a browser or bypass a Google sign-in block.

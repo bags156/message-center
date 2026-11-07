@@ -1,56 +1,62 @@
 # Message Center
 
-A native Android companion for **Google Messages**, with signed APK updates through **Obtainium**.
+An experimental Android client for Google Messages, with the paired connection running **on the phone**. No additional server, Matrix account, or Beeper account is required. Google Messages remains the default SMS/RCS app and must stay installed and online.
 
-Requires Android 13 or newer.
+**0.2.0-beta.1 is a new paired-client test build.** It replaces the notification-based approach in 0.1.x. Compiling and offline device tests do not verify Google sign-in, live RCS delivery, complete history, or ColorOS background reliability. Those require testing on a paired phone.
 
-**Status: first alpha.** This is a notification-based companion, not an independent RCS client or a complete skin of Google Messages. Device testing is required, particularly on OnePlus / ColorOS.
+## Install and connect
 
-## What the first version does
+1. Install the signed `message-center.apk` from the **0.2.0-beta.1 prerelease**. It updates the previous app using the same package and signing key; no uninstall is needed.
+2. Open Message Center and tap **Connect Google Messages**.
+3. Sign in to the account selected under **Google Messages → Device pairing**. Sign-in is displayed on Google's own pages inside Android WebView, using its real user agent. If Google blocks that browser, this build cannot complete pairing and does not bypass the block.
+4. Approve the matching emoji in Google Messages, then return to Message Center.
+5. Allow Message Center notifications. In ColorOS, allow background activity / auto-launch for both apps and check their battery settings.
+6. Load conversations with **Refresh**, then open a chat. **Older messages** loads another history page; **Load older conversations** pages the inbox. Archived chats have a separate folder toggle.
+7. Test an incoming text with Google Messages notifications disabled. This client has its own connection and notification channel and does not use notification access. Keep Google Messages installed, default, and allowed to run in the background.
 
-- Collects message text exposed in Google Messages notifications into a clean, searchable inbox.
-- Replies through a live Google Messages notification reply action, when available. Google Messages chooses RCS or SMS and handles transmission.
-- Converts recognized fallback reactions, including `❤️ to “quoted text”`, into attached emoji when the original message has one exact match in the captured conversation. Tap the emoji to see the sender reported by the notification.
-- When a reaction quotes an uncaptured or ambiguous original, displays a **labeled quote card** with the reaction. This is quoted context from the reaction, not recovered message history or an inferred original sender/time.
-- Labels Android-redacted notification content clearly and provides a refresh of currently available notifications. It cannot unredact protected text or import older chats.
-- Opens Google Messages for full conversation history, new messages, media, and features not available through notifications.
-- Includes light/dark appearance and an explicitly labeled design preview.
+For Obtainium, use `https://github.com/bags156/message-center` and enable **Include prereleases** for this experimental build. Public releases do not require a GitHub token. Use signed release assets, not unsigned CI artifacts.
 
-It does **not** import the complete Google Messages RCS database, promise iPhone feature compatibility, verify delivery/read receipts, or mark messages read in Google Messages. No unread icon count is implemented.
+## Implemented in the test build
 
-## Install with Obtainium
+- Direct on-device pairing and protocol connection through `mautrix-gmessages/pkg/libgm`.
+- Native conversation and text composer screens, including a new one-to-one conversation by full phone number.
+- Paged conversations/history, cached using Google's actual conversation/message IDs.
+- Reactions attached to their actual message IDs. Tap a badge to see participants reported by Google; reply/react actions use the paired protocol.
+- An independent foreground connection and incoming-message notifications, including a boot receiver for an enabled saved connection.
+- Google-reported send/delivery/read status. Request acceptance is labeled separately from delivery.
+- Authenticated encryption of the paired session with Android Keystore, private app storage for synced messages, and disabled cloud backup.
 
-After the first release is published:
+## Current limits
 
-1. In Obtainium, choose **Add app**.
-2. Enter `https://github.com/bags156/message-center`.
-3. Select `message-center.apk` if prompted, then install.
-4. Open Message Center and choose **Connect Google Messages**. Allow notification access in Android settings.
-5. Keep Google Messages as your default messaging app, with its message notifications enabled.
+This is an unofficial integration using an undocumented Google protocol. Sign-in can be rejected and protocol changes can require an update or re-pairing. Pairing and sustained background operation have not yet been verified on the user's OnePlus 15 / ColorOS 17.
 
-On Android builds that restrict notification access for sideloaded apps, enable **App info → ⋮ → Allow restricted settings** for Message Center first. Menu wording depends on ColorOS. If capture stops, check the app's background/battery settings.
+History paging follows the responses Google supplies; reaching the end is **not proof of a complete phone archive**. SMS fallback reaction text can still be present when Google exposes it as a regular SMS instead of structured reaction metadata. Structured reactions use exact IDs and do not guess matches from quoted text.
 
-No APK is published until the signed release workflow succeeds. Use release assets, not unsigned CI artifacts, for installation.
+Attachments appear as labels; viewing or sending media is not implemented in this test build. New group creation, custom reaction entry, calls, scheduled messages, and an unread launcher number are not implemented. There is no durable offline outbox. Ambiguous send outcomes are not automatically retried.
 
 ## Privacy
 
-The app has **no internet permission**, advertising SDK, analytics, contact access, SMS permission, accessibility service, or overlay. It only processes notifications from `com.google.android.apps.messaging`. Android's notification-access grant itself is broad; filtering is enforced in app code.
+The app communicates directly with Google using the signed-in account and paired session. It adds no message-processing server. The Google session is powerful account data: it is never written to logs or sent to this repository, and the saved paired session is encrypted with a non-exportable Android Keystore key. WebView sign-in cookies are removed locally after connection is established. Never paste Google cookies or passwords into chat or an issue.
 
-Captured message text is stored in private app storage, with cloud backup disabled. Capture prunes stored records to the past 90 days or 5,000 messages. Conversation views initially show the most recent 300 saved records and offer **Load earlier captured messages** for the remainder. Clear saved content from Settings. GitHub contains source and release files, never your message history or the signing private key.
+Synced message content is in private app storage protected by Android's device encryption; it is not separately encrypted with the session key. **Forget pairing and synced messages** clears the paired cache. Remove Message Center from Google's **Device pairing** list to revoke it there. Old 0.1.x notification captures remain in a separate unused database when updating; clearing Android app storage removes those too.
 
-## Missing history or hidden messages
+## Build and verify
 
-This app receives notification snapshots; it does not have access to Google Messages' RCS conversation database. Muted conversations, messages that did not produce an accessible notification, old chats, and Android-protected notification content may be absent. **Refresh current notifications** only reads notifications Android currently exposes; it cannot recover past or redacted text. Use Google Messages for the full conversation.
-
-The app deliberately preserves ambiguous reaction evidence instead of attaching it to a guessed message. Reaction quote cards are explicitly labeled, and names in the popup are supplied by Google Messages notifications. If Google Messages omits the reactor's identity, this companion cannot recover it.
-
-## Build and release
-
-Requires JDK 17, Gradle 8.11.1, and Android SDK 35. Run:
+Requires Java 17, Gradle 8.11.1, Android SDK 35, NDK 28.2.13676358, and Go 1.27.3. Dependencies and actions are pinned.
 
 ```sh
+cd bridge
+go test -race ./...
+go install golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind
+export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+mkdir -p ../app/libs
+gomobile bind -target android/arm64,android/amd64 -androidapi 33 -javapkg io.github.bags156.gm -o ../app/libs/messagebridge.aar .
+cd ..
 gradle :app:testDebugUnitTest :app:lintDebug :app:assembleRelease
-python3 -m unittest discover -s tools -p 'test_*.py' -v
 ```
 
-See [docs/RELEASING.md](docs/RELEASING.md) for permanent signing and versioning. GitHub Actions runs checks on changes to `main`; the manual workflow publishes signed APKs after those checks pass.
+CI also installs the app on an Android emulator and checks JNI loading, Keystore storage, history/live-update conflict handling, ID deduplication, and activity startup. These are offline checks with synthetic data, not real Google-account tests. See [releasing](docs/RELEASING.md) and [phone testing](docs/PHONE-TEST.md).
+
+## License
+
+AGPL-3.0-or-later. See LICENSE and NOTICES. Release dependency-source archives contain the pinned third-party sources and license notices needed to inspect or rebuild the connection library.

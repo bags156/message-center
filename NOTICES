@@ -1,0 +1,15 @@
+Message Center is licensed under AGPL-3.0-or-later.
+
+The on-device Google Messages connection uses mautrix-gmessages/libgm,
+Copyright Tulir Asokan, licensed AGPL-3.0-or-later.
+https://github.com/mautrix/gmessages/tree/v0.2610.0/pkg/libgm
+The exact dependency versions and hashes are in bridge/go.mod and bridge/go.sum.
+Published dependency-source archives include upstream source and license notices.
+
+The Android integration approach was informed by MirrorMsg by killdano,
+licensed AGPL-3.0: https://github.com/killdano/mirrormsg
+Message Center's Android and Go integration code is maintained in this repository.
+
+Go's standard library and golang.org/x modules use BSD-style licenses.
+Google protobuf uses a BSD-style license; zerolog uses MIT; google/uuid uses BSD.
+Their source and notices are included in the dependency-source release archive.
