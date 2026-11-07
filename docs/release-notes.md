@@ -1,12 +1,8 @@
-Missed messages are caught much sooner.
+Sharper photos, a new attach panel, and tidier menus.
 
-Messages normally arrive instantly through Google's live connection. When that connection quietly stalls, Message Center now notices far faster:
+- **Full-quality photos in chats.** Photos used to show Google's small preview stretched to fit. Now the preview appears instantly and the full photo replaces it a moment later, so it's sharp. To save data, choose "Photos in chats: previews only" in Settings.
+- **New attach panel.** ⊕ opens a panel with large buttons for **Photos & videos**, **Camera** (take a photo and it's added to the message), and **Files**.
+- **Menus slide up from the bottom** instead of the plain gray list boxes: chat options, chat themes, and a person's options in group details. Delete and Block are shown in red.
+- **The "Keep messages arriving on time" card goes away** once you tap Allow (or Not now), and disappears as soon as you come back. ColorOS can keep telling Android the app is restricted even after you allow it in its own settings; Settings now explains that.
 
-- **Right away when the connection goes quiet.** The Google Messages connection reports when it stops receiving data; Message Center checks for missed messages immediately.
-- **When you wake or unlock your phone, and when it switches between Wi-Fi and mobile data,** the moments the connection most often stalls.
-- **Every minute while the screen is on** (every 5 minutes with it off, when Android delays background work anyway).
-- Each check asks Google for only your 8 newest chats instead of 50, so checking more often stays light on battery and data.
-
-When a check finds something missed, the messages are pulled in, you're notified of recent unread ones, and the live connection is re-armed.
-
-Install over 0.6.2; the package and signing key are unchanged.
+Install over 0.6.3; the package and signing key are unchanged.

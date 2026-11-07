@@ -26,6 +26,22 @@ public final class MediaProvider extends ContentProvider {
             .appendQueryParameter("name", displayName == null || displayName.isEmpty() ? file.getName() : displayName).build();
     }
 
+    /** A writable link for one camera photo; only files in the app's outgoing folder can be written. */
+    static Uri outgoingUri(File file) {
+        return new Uri.Builder().scheme("content").authority(AUTHORITY).appendPath("out").appendPath(file.getName()).build();
+    }
+
+    private File resolveOutgoing(Uri uri) throws FileNotFoundException {
+        Context context = getContext();
+        java.util.List<String> parts = uri.getPathSegments();
+        if (context == null || parts.size() != 2 || !"out".equals(parts.get(0))) throw new FileNotFoundException();
+        String name = parts.get(1);
+        if (name.contains("/") || name.contains("..") || !name.endsWith("-camera.jpg")) throw new FileNotFoundException();
+        File dir = new File(context.getCacheDir(), "outgoing");
+        if (!dir.isDirectory()) dir.mkdirs();
+        return new File(dir, name);
+    }
+
     private File resolve(Uri uri) throws FileNotFoundException {
         Context context = getContext();
         String name = uri.getLastPathSegment();
@@ -39,11 +55,16 @@ public final class MediaProvider extends ContentProvider {
     @Override public boolean onCreate() { return true; }
 
     @Override public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
+        if (uri.getPathSegments().size() == 2) {
+            // A camera app saving the photo you just took (or reading it back).
+            return ParcelFileDescriptor.open(resolveOutgoing(uri), ParcelFileDescriptor.parseMode(mode) | ParcelFileDescriptor.MODE_CREATE);
+        }
         if (!"r".equals(mode)) throw new FileNotFoundException("read-only");
         return ParcelFileDescriptor.open(resolve(uri), ParcelFileDescriptor.MODE_READ_ONLY);
     }
 
     @Override public String getType(Uri uri) {
+        if (uri.getPathSegments().size() == 2) return "image/jpeg";
         String name = uri.getLastPathSegment();
         int dot = name == null ? -1 : name.lastIndexOf('.');
         String mime = dot < 0 ? null : MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substring(dot + 1).toLowerCase(Locale.ROOT));

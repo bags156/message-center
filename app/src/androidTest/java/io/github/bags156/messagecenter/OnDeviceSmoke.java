@@ -56,7 +56,11 @@ public final class OnDeviceSmoke extends Instrumentation {
         bubble.getWindow().getDecorView().findViewsWithText(found,"Attach photos, videos, or files",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);
         check(!found.isEmpty()&&found.get(0).isShown(),"Attach button is missing from the message box");found.clear();
         bubble.getWindow().getDecorView().findViewsWithText(found,"Record voice message",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);
-        check(!found.isEmpty(),"Voice message button is missing from the empty message box");bubble.finish();waitForIdleSync();
+        check(!found.isEmpty(),"Voice message button is missing from the empty message box");found.clear();
+        // Tapping ⊕ opens the attach panel with Photos & videos, Camera, and Files.
+        bubble.getWindow().getDecorView().findViewsWithText(found,"Attach photos, videos, or files",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);
+        android.view.View plus=found.get(0);runOnMainSync(plus::performClick);waitForIdleSync();
+        check(bubble.hasWindowFocus()==false,"Attach panel did not open");bubble.finish();waitForIdleSync();
         try(PairedStore store=new PairedStore(getTargetContext())){store.clear();}
         Outbox box=new Outbox(getTargetContext());for(JSONObject o:box.all())box.remove(o.optString("id"));
         getTargetContext().getSharedPreferences("transcripts",0).edit().clear().commit();

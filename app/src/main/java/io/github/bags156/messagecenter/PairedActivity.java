@@ -117,7 +117,7 @@ public class PairedActivity extends Activity {
     }};
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);store=new PairedStore(this);chatSettings=new ChatSettings(this);outbox=new Outbox(this);
-        if(state!=null){chatId=state.getString("chat","");replyId=state.getString("reply","");drafts.put(chatId,state.getString("draft",""));}
+        if(state!=null){String shot=state.getString("capture");if(shot!=null)pendingCapture=new File(shot);chatId=state.getString("chat","");replyId=state.getString("reply","");drafts.put(chatId,state.getString("draft",""));}
         String target=getIntent().getStringExtra("chat");if(target!=null&&!target.isEmpty())chatId=target;
         if(bubble()&&chatId.isEmpty()){finish();return;}
         if(!chatId.isEmpty())thread(chatId);else inbox();
@@ -132,15 +132,15 @@ public class PairedActivity extends Activity {
         else {updateStatus();PairedService.syncNow();
             // Updates that arrived while this screen was hidden (or a bubble was collapsed) are shown now, then refreshed from Google.
             if(screen.equals("chat")){renderMessages(false);if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();if(!bubble())PairedService.clearNotification(this,chatId);}
-            else if(screen.equals("inbox")){renderInbox();refreshInbox(false);}}}
+            else if(screen.equals("inbox")){if(batteryCard!=null&&!showBatteryCard()){root.removeView(batteryCard);batteryCard=null;}renderInbox();refreshInbox(false);}}}
     @Override protected void onPause(){resumed=false;remember();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&player.isPlaying()){player.pause();updatePlayLabel();}if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
-    @Override protected void onSaveInstanceState(Bundle out){remember();out.putString("chat",chatId);out.putString("reply",replyId);out.putString("draft",drafts.getOrDefault(chatId,""));super.onSaveInstanceState(out);}
+    @Override protected void onSaveInstanceState(Bundle out){remember();if(pendingCapture!=null)out.putString("capture",pendingCapture.getPath());out.putString("chat",chatId);out.putString("reply",replyId);out.putString("draft",drafts.getOrDefault(chatId,""));super.onSaveInstanceState(out);}
     @Override public void onBackPressed(){if(screen.equals("details")){thread(chatId);return;}if(bubble()){super.onBackPressed();return;}if(login!=null){destroyLogin();inbox();}else if(screen.equals("inbox")&&folder!=1){folder=1;inbox();}else if(!screen.equals("inbox")){remember();inbox();}else super.onBackPressed();}
 
     // ---- Shared building blocks ----
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
     private void base(String name){
-        if(recorder!=null)cancelRecording();recordBar=null;composeRow=null;sendButton=null;recordClock=null;screen=name;statusView=null;composer=null;items=null;scroll=null;searchRow=null;attachStrip=null;attachScroll=null;replyPanel=null;typingRow=null;messageViews.clear();ui.removeCallbacks(typingTick);if(typingPulse!=null){typingPulse.cancel();typingPulse=null;}
+        if(recorder!=null)cancelRecording();recordBar=null;composeRow=null;sendButton=null;recordClock=null;screen=name;batteryCard=null;statusView=null;composer=null;items=null;scroll=null;searchRow=null;attachStrip=null;attachScroll=null;replyPanel=null;typingRow=null;messageViews.clear();ui.removeCallbacks(typingTick);if(typingPulse!=null){typingPulse.cancel();typingPulse=null;}
         dark=(getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;
         bg=dark?0xff111318:0xfff8f9fc;card=dark?0xff1d2026:Color.WHITE;surface=dark?0xff23252b:0xffe9edf4;ink=dark?0xffe3e2e9:0xff1a1b20;muted=dark?0xffabaeb8:0xff5d5f67;
         fab=dark?0xff3b4766:0xffd3e3fd;onFab=dark?0xffd8e2ff:0xff0b1f3a;danger=dark?0xfff2b8b5:0xffb3261e;
@@ -250,7 +250,7 @@ public class PairedActivity extends Activity {
             note(root,"This replaces the earlier notification companion. Your old notification captures are separate from synced conversations. Full archive coverage and background delivery need testing on your phone.");return;
         }
         if(hasIncoming())root.addView(shareBanner());
-        else if(folder==1&&batteryRestricted()&&!getSharedPreferences("paired",MODE_PRIVATE).getBoolean("battery_hint_dismissed",false))root.addView(batteryBanner());
+        else if(folder==1&&showBatteryCard())root.addView(batteryCard=batteryBanner());
         searchRow=row();EditText search=input("Search conversations");search.setSingleLine(true);search.setText(query);searchRow.addView(search,new LinearLayout.LayoutParams(-1,-2));
         searchRow.setVisibility(query.isEmpty()?View.GONE:View.VISIBLE);root.addView(searchRow);
         search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){query=s.toString();renderInbox();}public void afterTextChanged(Editable e){}});
@@ -327,19 +327,19 @@ public class PairedActivity extends Activity {
             labels.add("Open as bubble");actions.add(()->openBubble(id));}
         labels.add(blocked?"Unblock":"Block…");actions.add(()->block(c));
         labels.add("Delete conversation…");actions.add(()->deleteChat(c));
-        new AlertDialog.Builder(this).setTitle(PairedProtocol.title(c)).setItems(labels.toArray(new String[0]),(d,which)->actions.get(which).run()).show();}
+        menuSheet(PairedProtocol.title(c),labels,actions);}
     private void openBubble(String id){String problem=PairedService.showBubble(this,id);if(!problem.isEmpty())toast(problem);}
     private void togglePin(JSONObject c){String id=c.optString("conversationID");boolean now=!chatSettings.pinned(c);chatSettings.setPinned(id,now);
         toast(now?"Pinned to the top of Message Center":"Unpinned");if(screen.equals("inbox"))renderInbox();}
     private void chooseTheme(String id){
-        LinearLayout list=vertical();list.setPadding(dp(8),dp(8),dp(8),dp(8));AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Chat theme").setView(list).setNegativeButton("Cancel",null).create();
+        LinearLayout list=vertical();Dialog[] dialog=new Dialog[1];TextView heading=text("Chat theme",18,ink,true);heading.setPadding(dp(8),0,dp(8),dp(6));list.addView(heading);
         String current=chatSettings.theme(id).key;
         for(ChatTheme t:ChatTheme.ALL){LinearLayout r=row();r.setPadding(dp(16),dp(10),dp(16),dp(10));r.setBackground(ripple());
             View swatch=new View(this);GradientDrawable sw=oval(t.bubble(dark));sw.setStroke(dp(3),t.accent(dark));swatch.setBackground(sw);r.addView(swatch,new LinearLayout.LayoutParams(dp(32),dp(32)));
             TextView label=text(t.label,16,ink,t.key.equals(current));label.setPadding(dp(16),0,0,0);r.addView(label,new LinearLayout.LayoutParams(0,-2,1));
             if(t.key.equals(current))r.addView(text("✓",18,t.accent(dark),true));
-            r.setOnClickListener(v->{chatSettings.setTheme(id,t.key);dialog.dismiss();if(screen.equals("chat")&&chatId.equals(id))thread(id);});list.addView(r);}
-        dialog.show();}
+            r.setOnClickListener(v->{chatSettings.setTheme(id,t.key);dialog[0].dismiss();if(screen.equals("chat")&&chatId.equals(id))thread(id);else if(screen.equals("details"))details();});list.addView(r);}
+        dialog[0]=sheet(list);}
     private void toggleReceipts(String id){boolean on=!chatSettings.receipts(id);chatSettings.setReceipts(id,on);
         if(!on)toast("Read receipts off for this chat. Opening it here won't mark it read, so it stays unread in Google Messages.");
         else if(chatSettings.phoneReceipts()==0)toast("Read receipts on for this chat, but Google Messages' own \"Send read receipts\" setting is off, so none are sent.");
@@ -581,8 +581,15 @@ public class PairedActivity extends Activity {
         if(!reactors.isEmpty())sheetAction(content,"See who reacted",()->{d[0].dismiss();reactionSheet(m,c);});
         sheetAction(content,"Delete message…",()->{d[0].dismiss();deleteMessage(m);});
         d[0]=sheet(content);}
-    private void sheetAction(LinearLayout parent,String label,Runnable action){TextView t=text(label,17,ink,false);t.setPadding(dp(8),dp(14),dp(8),dp(14));
-        t.setBackground(ripple());t.setOnClickListener(v->action.run());parent.addView(t,new LinearLayout.LayoutParams(-1,-2));}
+    private TextView sheetAction(LinearLayout parent,String label,Runnable action){TextView t=text(label,17,ink,false);t.setPadding(dp(8),dp(14),dp(8),dp(14));
+        t.setBackground(ripple());t.setOnClickListener(v->action.run());parent.addView(t,new LinearLayout.LayoutParams(-1,-2));return t;}
+    /** Choices in a panel from the bottom of the screen, in place of Android's plain list dialog. Delete and block are shown in red. */
+    private void menuSheet(String title,List<String> labels,List<Runnable> actions){LinearLayout content=vertical();Dialog[] d=new Dialog[1];
+        if(title!=null&&!title.isEmpty()){TextView t=text(title,18,ink,true);t.setPadding(dp(8),0,dp(8),dp(6));t.setSingleLine(true);t.setEllipsize(TextUtils.TruncateAt.END);content.addView(t);}
+        LinearLayout list=vertical();ScrollView sc=new ScrollView(this);sc.setVerticalScrollBarEnabled(false);sc.addView(list);content.addView(sc,new LinearLayout.LayoutParams(-1,-2));
+        for(int i=0;i<labels.size();i++){Runnable a=actions.get(i);String label=labels.get(i);TextView row=sheetAction(list,label,()->{d[0].dismiss();a.run();});
+            if(label.startsWith("Delete")||label.startsWith("Block"))row.setTextColor(danger);}
+        d[0]=sheet(content);}
     private void react(JSONObject m,String emoji,String action){JSONObject chat=store.chat(chatId);if(chat==null){error("Refresh this conversation first.");return;}
         PairedService.execute(cl->{cl.react(chat.toString(),m.optString("messageID"),emoji,action);return "";},(v,e)->{if(!e.isEmpty())error(e);else loadMessages(false);});}
     private void startReply(JSONObject m){if(replyPanel==null||composer==null)return;JSONObject c=store.chat(chatId);replyId=m.optString("messageID");
@@ -624,10 +631,9 @@ public class PairedActivity extends Activity {
         if(!bubble())sheetAction(content,"Open as bubble",()->openBubble(id));
         requestMemberPhotos(c,()->{if(screen.equals("details")&&chatId.equals(id))details();});}
     private void memberActions(JSONObject p){String number=PairedProtocol.number(p);if(number.isEmpty())return;String name=PairedProtocol.name(p);
-        new AlertDialog.Builder(this).setTitle(name).setItems(new String[]{"Message","Call","Copy number"},(d,which)->{
-            if(which==0)startChat(number);
-            else if(which==1){try{startActivity(new Intent(Intent.ACTION_DIAL,Uri.parse("tel:"+number)));}catch(Exception e){toast("No phone app is available.");}}
-            else getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Number",number));}).show();}
+        menuSheet(name,java.util.Arrays.asList("Message","Call","Copy number"),java.util.Arrays.<Runnable>asList(()->startChat(number),
+            ()->{try{startActivity(new Intent(Intent.ACTION_DIAL,Uri.parse("tel:"+number)));}catch(Exception e){toast("No phone app is available.");}},
+            ()->getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Number",number))));}
     // ---- Attachments ----
     private static final int PICK_MEDIA=41,PICK_FILES=42;
     private static final long MAX_ATTACHMENT=100L<<20;
@@ -664,11 +670,24 @@ public class PairedActivity extends Activity {
         return line;
     }
     /** Small preview: Google's thumbnail when there is one, else the photo itself (videos over 15 MB keep the placeholder). */
+    private boolean fullPhotos(){return getSharedPreferences("paired",MODE_PRIVATE).getBoolean("full_photos",true);}
+    /**
+     * Google's small preview appears first, then the full photo replaces it so it's sharp at
+     * chat size (unless "previews only" is chosen in Settings). Videos keep their preview frame.
+     */
     private void loadPreview(JSONObject media,ImageView img,boolean video,int width){
-        boolean thumb=MediaCache.hasThumbnail(media);if(!thumb&&video&&media.optLong("size")>(15L<<20))return;
-        File cached=MediaCache.file(this,media,thumb);Bitmap ready=cached.isFile()?MediaCache.peek(cached,width):null;if(ready!=null){img.setImageBitmap(ready);return;}
-        if(!cached.isFile()&&!PairedService.ready())return;
-        MediaCache.fetch(this,media,thumb,(file,error)->{if(file==null)return;decoder.execute(()->{Bitmap b=MediaCache.decode(file,width,video&&!thumb);if(b!=null)img.post(()->img.setImageBitmap(b));});});
+        boolean thumb=MediaCache.hasThumbnail(media);long size=media.optLong("size");
+        boolean wantFull=!video&&(!thumb||(fullPhotos()&&size<=(25L<<20)));File full=MediaCache.file(this,media,false);
+        if(wantFull&&full.isFile()){Bitmap b=MediaCache.peek(full,width);if(b!=null){img.setTag("full");img.setImageBitmap(b);return;}}
+        if(thumb){File t=MediaCache.file(this,media,true);Bitmap b=t.isFile()?MediaCache.peek(t,width):null;
+            if(b!=null)img.setImageBitmap(b);
+            else if(t.isFile()||PairedService.ready())MediaCache.fetch(this,media,true,(file,err)->{if(file==null)return;
+                decoder.execute(()->{Bitmap d=MediaCache.decode(file,width,false);if(d!=null)img.post(()->{if(img.getTag()==null)img.setImageBitmap(d);});});});}
+        else if(video&&size>(15L<<20))return;
+        if(!wantFull&&thumb)return;
+        if(!full.isFile()&&!PairedService.ready())return;
+        MediaCache.fetch(this,media,false,(file,err)->{if(file==null)return;
+            decoder.execute(()->{Bitmap d=MediaCache.decode(file,width,video&&!thumb);if(d!=null)img.post(()->{img.setTag("full");img.setImageBitmap(d);});});});
     }
     /** Photos open in the viewer; videos, audio and files open in another app. */
     private void openMedia(JSONObject media){
@@ -725,14 +744,30 @@ public class PairedActivity extends Activity {
         MediaCache.fetch(this,media,false,(file,error)->{if(file==null){spinner.setVisibility(View.GONE);if(d.isShowing())toast(error);return;}full[0]=file;
             decoder.execute(()->{Bitmap b=MediaCache.decode(file,2560,false);ui.post(()->{spinner.setVisibility(View.GONE);if(b!=null)image.setImageBitmap(b);else toast("This photo can't be shown here. Use Share to open it in another app.");});});});
     }
-    /** + button: pick photos/videos (Android's photo picker, no storage permission needed) or any file. */
-    private void attach(){
-        new AlertDialog.Builder(this).setItems(new String[]{"Photos & videos","File"},(d,which)->{
-            if(which==0){Intent pick=new Intent(MediaStore.ACTION_PICK_IMAGES).putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX,Math.min(10,MediaStore.getPickImagesMaxLimit()));
-                try{startActivityForResult(pick,PICK_MEDIA);}catch(Exception e){startActivityForResult(new Intent(Intent.ACTION_GET_CONTENT).setType("*/*").putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"image/*","video/*"}).putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true).addCategory(Intent.CATEGORY_OPENABLE),PICK_MEDIA);}}
-            else startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true),PICK_FILES);
-        }).show();}
+    private static final int TAKE_PHOTO=43;private File pendingCapture;
+    /** ⊕ button: a panel with Photos & videos (Android's photo picker, no storage permission), Camera, and Files. */
+    private void attach(){LinearLayout content=vertical();Dialog[] d=new Dialog[1];LinearLayout tiles=row();tiles.setGravity(Gravity.CENTER);
+        attachTile(tiles,R.drawable.ic_gallery,"Photos & videos",()->{d[0].dismiss();pickMedia();});
+        attachTile(tiles,R.drawable.ic_camera,"Camera",()->{d[0].dismiss();takePhoto();});
+        attachTile(tiles,R.drawable.ic_file,"Files",()->{d[0].dismiss();pickFiles();});
+        content.addView(tiles,new LinearLayout.LayoutParams(-1,-2));d[0]=sheet(content);}
+    private void attachTile(LinearLayout parent,int icon,String label,Runnable action){ChatTheme theme=chatSettings.theme(chatId);
+        LinearLayout tile=vertical();tile.setGravity(Gravity.CENTER_HORIZONTAL);tile.setPadding(dp(4),dp(10),dp(4),dp(10));tile.setBackground(ripple());
+        ImageView i=new ImageView(this);i.setImageResource(icon);i.setImageTintList(ColorStateList.valueOf(theme.onAccent(dark)));i.setBackground(oval(theme.accent(dark)));i.setPadding(dp(17),dp(17),dp(17),dp(17));
+        tile.addView(i,new LinearLayout.LayoutParams(dp(62),dp(62)));gap(tile,10);TextView t=text(label,14,ink,false);t.setGravity(Gravity.CENTER);tile.addView(t);
+        tile.setContentDescription(label);tile.setOnClickListener(v->action.run());parent.addView(tile,new LinearLayout.LayoutParams(0,-2,1));}
+    private void pickMedia(){Intent pick=new Intent(MediaStore.ACTION_PICK_IMAGES).putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX,Math.min(10,MediaStore.getPickImagesMaxLimit()));
+        try{startActivityForResult(pick,PICK_MEDIA);}catch(Exception e){startActivityForResult(new Intent(Intent.ACTION_GET_CONTENT).setType("*/*").putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"image/*","video/*"}).putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true).addCategory(Intent.CATEGORY_OPENABLE),PICK_MEDIA);}}
+    private void pickFiles(){startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true),PICK_FILES);}
+    /** Opens the camera; the photo is saved straight into this app's outgoing folder, then added to the message. */
+    private void takePhoto(){File dir=new File(getCacheDir(),"outgoing");if(!dir.isDirectory())dir.mkdirs();pendingCapture=new File(dir,java.util.UUID.randomUUID()+"-camera.jpg");
+        Uri uri=MediaProvider.outgoingUri(pendingCapture);
+        Intent shoot=new Intent(MediaStore.ACTION_IMAGE_CAPTURE).putExtra(MediaStore.EXTRA_OUTPUT,uri).addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION|Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        shoot.setClipData(ClipData.newRawUri("Photo",uri));
+        try{startActivityForResult(shoot,TAKE_PHOTO);}catch(Exception e){pendingCapture=null;toast("No camera app is available.");}}
     @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);
+        if(request==TAKE_PHOTO){File shot=pendingCapture;pendingCapture=null;if(shot==null)return;
+            if(result==RESULT_OK&&shot.length()>0){outgoing.add(new Outgoing(shot,"Photo.jpg","image/jpeg"));outgoingChat=chatId;renderAttachments();}else shot.delete();return;}
         if((request!=PICK_MEDIA&&request!=PICK_FILES)||result!=RESULT_OK||data==null)return;List<Uri> uris=new ArrayList<>();
         if(data.getClipData()!=null)for(int i=0;i<data.getClipData().getItemCount();i++)uris.add(data.getClipData().getItemAt(i).getUri());else if(data.getData()!=null)uris.add(data.getData());
         decoder.execute(()->{List<String> problems=new ArrayList<>();List<Outgoing> added=new ArrayList<>();
@@ -802,12 +837,16 @@ public class PairedActivity extends Activity {
         try{startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,Uri.parse("package:"+getPackageName())));}
         catch(Exception e){try{startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));}catch(Exception ignored){toast("Open Settings → Apps → Message Center → Battery.");}}}
     private void openAppSettings(){startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())));}
+    private View batteryCard;
+    /** Shown until you allow it or tap Not now; ColorOS can keep reporting "restricted" even after you allow it. */
+    private boolean showBatteryCard(){android.content.SharedPreferences sp=getSharedPreferences("paired",MODE_PRIVATE);
+        return batteryRestricted()&&!sp.getBoolean("battery_hint_dismissed",false)&&!sp.getBoolean("battery_hint_done",false);}
     private View batteryBanner(){LinearLayout card=vertical();card.setPadding(dp(18),dp(14),dp(18),dp(10));card.setBackground(shape(surface,20));
         card.addView(text("Keep messages arriving on time",16,ink,true));gap(card,4);
         card.addView(text("Android can pause Message Center in the background, which delays or drops notifications. Allow it to run in the background.",14,muted,false));
         LinearLayout actions=row();actions.setGravity(Gravity.END);TextView later=text("Not now",15,muted,true);later.setPadding(dp(12),dp(10),dp(12),dp(6));
         later.setOnClickListener(v->{getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("battery_hint_dismissed",true).apply();inbox();});
-        TextView allow=text("Allow",15,fab==0?ink:onFab,true);allow.setPadding(dp(18),dp(8),dp(18),dp(8));allow.setBackground(shape(fab,16));allow.setOnClickListener(v->allowBackground());
+        TextView allow=text("Allow",15,fab==0?ink:onFab,true);allow.setPadding(dp(18),dp(8),dp(18),dp(8));allow.setBackground(shape(fab,16));allow.setOnClickListener(v->{getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("battery_hint_done",true).apply();allowBackground();});
         actions.addView(later);actions.addView(allow);gap(card,8);card.addView(actions,new LinearLayout.LayoutParams(-1,-2));
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.setMargins(dp(12),dp(4),dp(12),dp(8));card.setLayoutParams(lp);return card;}
 
@@ -992,9 +1031,10 @@ public class PairedActivity extends Activity {
         content.addView(button("Reconnect",true,()->{PairedService.disconnect(this,false);new android.os.Handler().postDelayed(()->{PairedService.start(this);settings();},300);}));gap(content,8);
         content.addView(button("Sign in / pair again",false,this::signIn));gap(content,8);
         content.addView(button("Allow Message Center notifications",false,()->{if(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},101);else startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()));}));gap(content,8);
-        note(content,"Background reliability\n\nBattery optimization: "+(batteryRestricted()?"ON. Android may pause Message Center and delay notifications.":"off ✓")+"\n\nOn ColorOS, also open App settings → Battery and allow background activity and auto-launch, for both Message Center and Google Messages.");
+        note(content,"Background reliability\n\nAndroid reports battery optimization: "+(batteryRestricted()?"on. If you already allowed background activity in ColorOS's own settings, that is enough; Android may still say on.":"off ✓")+"\n\nOn ColorOS, also open App settings → Battery and allow background activity and auto-launch, for both Message Center and Google Messages.");
         if(batteryRestricted()){content.addView(button("Allow running in the background",true,this::allowBackground));gap(content,8);}
         content.addView(button("App settings (battery, auto-launch)",false,this::openAppSettings));gap(content,8);
+        boolean full=fullPhotos();content.addView(button(full?"Photos in chats: full quality":"Photos in chats: previews only (uses less data)",false,()->{getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("full_photos",!full).apply();settings();}));gap(content,8);
         boolean links=linkPreviewsOn();content.addView(button(links?"Link previews: on (your phone opens the page to read its title)":"Link previews: off",false,()->{getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("link_previews",!links).apply();settings();}));gap(content,8);
         note(content,"History loads in pages from Google. Some older messages may not be available. Attachments download when you open them and are kept in the app's cache.");
         content.addView(button("Open Google Messages",false,this::openGoogle));gap(content,8);
