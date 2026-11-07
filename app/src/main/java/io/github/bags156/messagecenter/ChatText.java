@@ -79,10 +79,73 @@ final class ChatText {
         return reactors.size() > 1 ? emoji + " " + reactors.size() : emoji.toString();
     }
 
+    /**
+     * A typed number as +country digits: "(479) 555-0100" and "1 479 555 0100" become
+     * "+14795550100" (US default); numbers already starting with + keep their country code.
+     * Returns "" when it does not look like a phone number.
+     */
+    static String normalizeNumber(String typed) {
+        if (typed == null) return "";
+        String t = typed.trim();
+        if (!t.matches("[+0-9()\\s.\\-]{4,}")) return "";
+        String d = digits(t);
+        if (t.startsWith("+")) return d.length() >= 7 && d.length() <= 15 ? "+" + d : "";
+        if (d.length() == 10) return "+1" + d;
+        if (d.length() == 11 && d.startsWith("1")) return "+" + d;
+        return "";
+    }
+
+    private static final Pattern URL = Pattern.compile("(?i)\\b(https?://[^\\s<>\"]+|www\\.[^\\s<>\"]+)");
+
+    /** The first web link in a message (trailing punctuation dropped), as https:// when no scheme was typed; "" if none. */
+    static String firstUrl(String text) {
+        if (text == null) return "";
+        Matcher m = URL.matcher(text);
+        if (!m.find()) return "";
+        String url = m.group(1).replaceAll("[.,!?;:)\\]'’”]+$", "");
+        if (url.toLowerCase(Locale.ROOT).startsWith("www.")) url = "https://" + url;
+        return url;
+    }
+
+    /** "example.com" from a link, without "www.". */
+    static String domain(String url) {
+        String rest = url.replaceFirst("(?i)^https?://", "");
+        int end = rest.length();
+        for (char c : new char[]{'/', '?', '#', ':'}) { int i = rest.indexOf(c); if (i >= 0 && i < end) end = i; }
+        String host = rest.substring(0, end).toLowerCase(Locale.ROOT);
+        return host.startsWith("www.") ? host.substring(4) : host;
+    }
+
     /** First name for compact labels; falls back to the whole name. */
     static String firstName(String name) {
         if (name == null) return "";
         String t = name.trim(); int space = t.indexOf(' ');
         return space > 0 && !t.startsWith("+") ? t.substring(0, space) : t;
     }
+
+    private static final Pattern META = Pattern.compile("(?is)<meta\\s+((?:[^>\"']|\"[^\"]*\"|'[^']*')*?)/?>");
+    private static final Pattern ATTR = Pattern.compile("(?is)([a-z:_-]+)\\s*=\\s*(\"([^\"]*)\"|'([^']*)')");
+
+    /** property/name → content for every meta tag, whatever the attribute order. */
+    static java.util.Map<String, String> metaTags(String html) {
+        java.util.Map<String, String> out = new java.util.HashMap<>();
+        Matcher m = META.matcher(html);
+        while (m.find()) {
+            String key = "", content = null;
+            Matcher a = ATTR.matcher(m.group(1));
+            while (a.find()) {
+                String name = a.group(1).toLowerCase(Locale.ROOT), value = a.group(3) != null ? a.group(3) : a.group(4);
+                if (name.equals("property") || name.equals("name")) key = value.toLowerCase(Locale.ROOT).trim();
+                else if (name.equals("content")) content = value;
+            }
+            if (!key.isEmpty() && content != null && !out.containsKey(key)) out.put(key, clean(content));
+        }
+        return out;
+    }
+
+    static String clean(String s) {
+        return s.replaceAll("(?s)<[^>]+>", "").replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'").replace("&#x27;", "'")
+            .replace("&lt;", "<").replace("&gt;", ">").replace("&nbsp;", " ").replaceAll("\\s+", " ").trim();
+    }
+
 }

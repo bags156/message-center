@@ -82,4 +82,28 @@ public class ChatTextTest {
         assertEquals("2 KB", PairedProtocol.size(2048));
         assertEquals("2.3 MB", PairedProtocol.size(2400000));
     }
+
+    @Test public void typedNumbersBecomeInternational() {
+        assertEquals("+14795550100", ChatText.normalizeNumber("(479) 555-0100"));
+        assertEquals("+14795550100", ChatText.normalizeNumber("1 479 555 0100"));
+        assertEquals("+447700900123", ChatText.normalizeNumber("+44 7700 900123"));
+        assertEquals("", ChatText.normalizeNumber("Daniel"));
+        assertEquals("", ChatText.normalizeNumber("555-0100"));
+        assertEquals("", ChatText.normalizeNumber("+12"));
+    }
+
+    @Test public void firstLinkIsFoundAndCleaned() {
+        assertEquals("https://example.com/a?b=1", ChatText.firstUrl("see https://example.com/a?b=1."));
+        assertEquals("https://www.example.org", ChatText.firstUrl("(www.example.org)"));
+        assertEquals("http://x.io/p", ChatText.firstUrl("http://x.io/p and https://y.io"));
+        assertEquals("", ChatText.firstUrl("no links here, just example dot com"));
+        assertEquals("example.com", ChatText.domain("https://www.Example.com:443/path?q#f"));
+    }
+
+    @Test public void openGraphTagsAreReadInAnyAttributeOrder() {
+        java.util.Map<String, String> m = ChatText.metaTags("<head><meta content=\"Lake &amp; Trail\" property=\"og:title\">"
+            + "<META name='description' content='A <b>quiet</b> walk'/><meta property=\"og:title\" content=\"second\"></head>");
+        assertEquals("Lake & Trail", m.get("og:title"));
+        assertEquals("A quiet walk", m.get("description"));
+    }
 }

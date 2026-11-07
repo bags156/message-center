@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lets Android's share sheet offer recent chats directly (the app publishes one shortcut per chat). -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <share-target android:targetClass="io.github.bags156.messagecenter.PairedActivity">
+        <data android:mimeType="text/plain" />
+        <data android:mimeType="image/*" />
+        <data android:mimeType="video/*" />
+        <data android:mimeType="audio/*" />
+        <data android:mimeType="application/*" />
+        <category android:name="io.github.bags156.messagecenter.SHARE_TARGET" />
+    </share-target>
+</shortcuts>

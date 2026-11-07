@@ -135,3 +135,44 @@ func TestSaveStreamWritesAtomicallyAndEnforcesLimit(t *testing.T) {
 		t.Fatal("empty download accepted")
 	}
 }
+func TestConversationRequestsUseGoogleEnums(t *testing.T) {
+	if r := archiveRequest("c1", true); r.GetUpdateData().GetStatus() != gmproto.ConversationStatus_ARCHIVED || r.GetConversationID() != "c1" {
+		t.Fatalf("archive: %v", r)
+	}
+	if r := archiveRequest("c1", false); r.GetUpdateData().GetStatus() != gmproto.ConversationStatus_ACTIVE {
+		t.Fatalf("unarchive: %v", r)
+	}
+	if r := muteRequest("c1", true); r.GetUpdateData().GetMute() != gmproto.ConversationMuteStatus_MUTE {
+		t.Fatalf("mute: %v", r)
+	}
+	conv := &gmproto.Conversation{ConversationID: "c1", Participants: []*gmproto.Participant{
+		{ID: &gmproto.SmallInfo{Number: "+15550000000"}, IsMe: true, IsVisible: true},
+		{ID: &gmproto.SmallInfo{Number: "+15550102000"}, IsVisible: true}}}
+	r, err := blockRequest(conv, "report")
+	if err != nil || r.GetAction() != gmproto.ConversationActionStatus_BLOCK_AND_REPORT || r.GetDeleteData().GetPhone() != "+15550102000" || !r.GetAction5().GetField2() {
+		t.Fatalf("report: %v %v", r, err)
+	}
+	if r, _ := blockRequest(conv, "unblock"); r.GetAction() != gmproto.ConversationActionStatus_UNBLOCK || r.GetAction5() != nil {
+		t.Fatalf("unblock: %v", r)
+	}
+	if _, err := blockRequest(conv, "ban"); err == nil {
+		t.Fatal("unknown block action accepted")
+	}
+	group := &gmproto.Conversation{IsGroupChat: true, Participants: conv.Participants}
+	if otherPhone(group) != "" {
+		t.Fatal("group chats have no single phone")
+	}
+}
+
+func TestNumbersMustBeInternational(t *testing.T) {
+	for _, ok := range []string{"+15550102000", "+447700900123"} {
+		if err := validNumber(ok); err != nil {
+			t.Fatalf("%s rejected: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"5550102000", "+1 555", "+1555-010", ""} {
+		if validNumber(bad) == nil {
+			t.Fatalf("%q accepted", bad)
+		}
+	}
+}

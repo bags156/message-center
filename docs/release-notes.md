@@ -1,11 +1,24 @@
-Photos, videos, and files.
+Everything needed to use Message Center day to day.
 
-- **See attachments in chats.** Photos and videos show right in the conversation at their own shape (videos have a ▶). Files and voice messages show as a card with the name and size. iPhone HEIC photos are supported. Captions sent with a photo appear under it.
-- **Open them.** Tap a photo for a full-screen view: pinch or double-tap to zoom, drag to look around, tap to hide the buttons. Videos, audio, and files open in the app of your choice (Photos, a video player, a PDF viewer).
-- **Save and share.** Use Save in the photo viewer, or long-press any attachment: Save to phone puts it in Pictures, Movies, or Downloads → "Message Center". Share sends it to any app.
-- **Send them.** Tap ⊕ next to the message box: "Photos & videos" opens Android's photo picker (up to 10 at once, no storage permission needed), "File" opens the file picker. Picked items show above the message box with ✕ to remove. Anything you type goes with the first one as its caption. Up to 100 MB each.
-- Previews and notifications now say "📷 Photo", "🎥 Video", or the file name instead of "[Attachment: …]".
+**Reliability**
+- **Background check.** A card in the inbox (and a section in Settings) lets Android stop pausing Message Center, so notifications arrive on time. On ColorOS, App settings also needs background activity and auto-launch allowed.
+- **Reply and mark as read from notifications.** Both buttons work without opening the app, and Android Auto can read and answer messages. (Android Auto only shows apps not from the Play Store after you turn on "Unknown sources" in its developer settings.)
+- **Nothing lost offline.** Texts sent while disconnected are saved and sent automatically once the connection is back. A message Google didn't confirm is never resent automatically (it may already have arrived); it waits for you to choose Send again or Delete. Messages Google reports as failed show "Not sent • Tap to retry".
 
-Downloads are kept in the app's cache; Android may clear them when space runs low, and they download again when opened. For non-RCS (SMS/MMS) chats, your phone's carrier limits apply to what can be sent.
+**Starting chats**
+- **Contacts.** Start chat now lists your phone's contacts (frequent ones first) with search by name or number. Typed numbers like (479) 555-0100 work without +1.
+- **New groups.** Create group, pick two or more people, and optionally name it (RCS groups).
 
-Install over 0.4.0; the package and signing key are unchanged. Phone testing is still required.
+**Managing chats** (long-press a chat, ⋮ in a chat, or its details)
+- Archive and unarchive, delete a conversation, delete a single message (from your phone only).
+- Mute notifications per chat (🔕 shows in the list).
+- Block, block & report spam, and unblock from ⋮ → Blocked & spam.
+- Mark as unread (kept in this app; Google has no way to set it on the phone).
+
+**More**
+- **Search in a chat** (⋮ → Search in chat) through synced messages; tap a result to jump to it.
+- **Voice messages.** With the message box empty, the send button becomes a mic: tap to record (up to 10 minutes), then Send or Cancel. Audio messages play right in the chat.
+- **Share into Message Center** from any app. Recent chats appear directly in Android's share sheet.
+- **Links** are tappable, and the first link in a message gets a preview card with its title and picture. Your phone opens the page to read it (like a browser would); turn previews off in Settings.
+
+Install over 0.5.0; the package and signing key are unchanged. Phone testing is still required.

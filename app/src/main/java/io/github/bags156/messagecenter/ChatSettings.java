@@ -39,8 +39,17 @@ final class ChatSettings {
 
     /** Unread in Google and not yet viewed here. */
     boolean unread(JSONObject chat) {
-        return chat.optBoolean("unread") && seen(chat.optString("conversationID")) < PairedProtocol.time(chat);
+        String id = chat.optString("conversationID");
+        return markedUnread(id) || (chat.optBoolean("unread") && seen(id) < PairedProtocol.time(chat));
     }
+
+    /** "Mark as unread" is kept in this app only; Google's protocol has no way to set it on the phone. */
+    boolean markedUnread(String id) { return prefs.getBoolean("unread:" + id, false); }
+    void setMarkedUnread(String id, boolean unread) { prefs.edit().putBoolean("unread:" + id, unread).apply(); }
+
+    /** Muted chats post no notifications here (Google Messages is told too). */
+    boolean muted(String id) { return prefs.getBoolean("muted:" + id, false); }
+    void setMuted(String id, boolean muted) { prefs.edit().putBoolean("muted:" + id, muted).apply(); }
 
     /** The phone's own RCS "Send read receipts" switch: 1 on, 0 off, -1 not reported yet. */
     int phoneReceipts() { return prefs.getInt("phone-receipts", -1); }

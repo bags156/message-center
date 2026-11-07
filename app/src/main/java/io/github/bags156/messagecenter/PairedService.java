@@ -5,6 +5,7 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.app.RemoteInput;
 import android.app.Person;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -51,7 +52,10 @@ public final class PairedService extends Service {
     private volatile Client client;
     private volatile boolean ready;
     private volatile String status="Disconnected",emoji="";
-    private PairedStore store; private SessionVault vault;
+    private PairedStore store; private SessionVault vault; private Outbox outbox; private boolean flushing;
+    static final String KEY_REPLY="reply";
+    /** Shortcut category matched by res/xml/shortcuts.xml, so recent chats appear in Android's share sheet. */
+    static final String SHARE_CATEGORY="io.github.bags156.messagecenter.SHARE_TARGET";
     /** conversationID -> (phone number -> time the typing indicator expires). */
     private static final Map<String,Map<String,Long>> typing=new ConcurrentHashMap<>();
     private static final long TYPING_TIMEOUT_MS=15_000;
@@ -84,7 +88,7 @@ public final class PairedService extends Service {
         context.stopService(new Intent(context,PairedService.class));
     }
     @Override public void onCreate() {
-        super.onCreate();current=this;store=new PairedStore(this);vault=new SessionVault(this);
+        super.onCreate();current=this;store=new PairedStore(this);vault=new SessionVault(this);outbox=new Outbox(this);outbox.recover();
         NotificationManager manager=getSystemService(NotificationManager.class);
         manager.createNotificationChannel(new NotificationChannel(CONNECTION,"Background connection",NotificationManager.IMPORTANCE_LOW));
         NotificationChannel messages=new NotificationChannel(MESSAGES,"Incoming messages",NotificationManager.IMPORTANCE_HIGH);
@@ -130,7 +134,7 @@ public final class PairedService extends Service {
                 case "PAIR_EMOJI" -> {emoji=new JSONObject(payload).optString("emoji");update("Approve the matching emoji in Google Messages");}
                 case "READY" -> {
                     ready=true;emoji="";update("Connected to Google Messages");
-                    saveSession(token);
+                    saveSession(token);main.post(this::flushOutbox);
                     network.execute(()->{if(generation.get()==token)try{chats(client,"",1);}catch(Exception e){update("Connected • tap Refresh to load conversations");}});
                 }
                 case "SAVE_SESSION" -> saveSession(token);
@@ -152,7 +156,7 @@ public final class PairedService extends Service {
                 case "AUTH_REQUIRED" -> {ready=false;getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("enabled",false).apply();update("Google session expired. Sign in again.");}
                 case "DISCONNECTED" -> {ready=false;update("Connection ended. Tap Reconnect in Settings.");}
                 case "RECONNECTING" -> {ready=false;update("Waiting for Google Messages • check network and battery settings");}
-                case "RECOVERED" -> {ready=true;update("Connected to Google Messages");}
+                case "RECOVERED" -> {ready=true;update("Connected to Google Messages");main.post(this::flushOutbox);}
                 default -> { }
             }
         }catch(Exception e){update("A Google update could not be saved. Refresh the conversation.");}
@@ -171,7 +175,7 @@ public final class PairedService extends Service {
         }
     }
     private String chats(Client source,String cursor,int folder) throws Exception {
-        JSONObject response=new JSONObject(source.chats(cursor,folder));JSONArray chats=response.optJSONArray("conversations");
+        /* app folder 3 = Google's spam & blocked folder (5) */JSONObject response=new JSONObject(source.chats(cursor,folder==3?5:folder));JSONArray chats=response.optJSONArray("conversations");
         if(chats!=null)for(int i=0;i<chats.length();i++)store.chat(chats.getJSONObject(i));
         String next=PairedProtocol.cursor(response),note="";
         if(!next.isEmpty() && next.equals(cursor)){next="";note="Google repeated a history cursor; stopped to prevent a loop.";}
@@ -229,7 +233,7 @@ public final class PairedService extends Service {
             try{context.startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,context.getPackageName()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}catch(Exception ignored){}
             return "Turn on bubbles for Message Center (and in your phone's notification settings), then try again.";}
         PairedService s=current;if(s==null)return "Connect to Google Messages first, then try again.";
-        s.postConversation(id,null,true);return "";
+        s.postConversation(id,null,true,true);return "";
     }
     /**
      * Each chat gets its own PendingIntent (the chat ID is in the intent data, so
@@ -245,12 +249,12 @@ public final class PairedService extends Service {
             .setContentText(status).setContentIntent(openIntent("")).setOngoing(true).setOnlyAlertOnce(true).setShowWhen(false).build();
     }
     /** A conversation-style notification: who sent it, the chat (for groups), the text, and their photo when one is cached. */
-    private void notifyMessage(JSONObject m) {postConversation(m.optString("conversationID"),m,false);}
+    private void notifyMessage(JSONObject m) {String id=m.optString("conversationID");if(new ChatSettings(this).muted(id))return;postConversation(id,m,false,false);}
     /**
      * Posts (or refreshes) a chat's notification. A new message is added to it; with
      * bubbleNow the chat opens as an expanded bubble without alerting.
      */
-    private void postConversation(String id,JSONObject m,boolean bubbleNow) {
+    private void postConversation(String id,JSONObject m,boolean quiet,boolean bubbleNow) {
         if(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return;
         JSONObject chat=store.chat(id);
         String title=chat==null?"New message":PairedProtocol.title(chat);boolean group=chat!=null&&PairedProtocol.other(chat)==null;
@@ -271,9 +275,10 @@ public final class PairedService extends Service {
             .setCategory(Notification.CATEGORY_MESSAGE).setVisibility(Notification.VISIBILITY_PRIVATE).setContentIntent(openIntent(id)).setAutoCancel(true)
             .setWhen(recent.isEmpty()?System.currentTimeMillis():PairedProtocol.time(recent.get(recent.size()-1))).setShowWhen(true).setNumber(m==null?0:recent.size());
         if(!group&&lastPhoto!=null)builder.setLargeIcon(lastPhoto);
+        builder.addAction(replyAction(id)).addAction(readAction(id));
         // Opening a bubble yourself should not ring. A lone notification in its own group with
         // GROUP_ALERT_SUMMARY never alerts (this is what AndroidX's setSilent does).
-        if(bubbleNow)builder.setGroup("bubble-"+id).setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY).setOnlyAlertOnce(true);
+        if(quiet)builder.setGroup("quiet-"+id).setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY).setOnlyAlertOnce(true);
         // A long-lived shortcut makes this a "conversation" notification, which Android requires for bubbles.
         Bitmap icon=chatIcon(chat,title);String shortcut=publishShortcut(id,title,icon);
         if(shortcut!=null){builder.setShortcutId(shortcut);builder.setBubbleMetadata(bubble(id,icon,bubbleNow));}
@@ -290,7 +295,7 @@ public final class PairedService extends Service {
             Intent open=new Intent(this,PairedActivity.class).setAction(PairedActivity.OPEN_CHAT).setData(chatUri(id)).putExtra("chat",id);
             ShortcutInfo info=new ShortcutInfo.Builder(this,"chat-"+id).setShortLabel(title).setLongLived(true).setIntent(open)
                 .setIcon(Icon.createWithAdaptiveBitmap(icon)).setPerson(new Person.Builder().setName(title).setKey(id).build())
-                .setCategories(java.util.Collections.singleton(ShortcutInfo.SHORTCUT_CATEGORY_CONVERSATION)).build();
+                .setCategories(new java.util.HashSet<>(java.util.Arrays.asList(ShortcutInfo.SHORTCUT_CATEGORY_CONVERSATION,SHARE_CATEGORY))).build();
             getSystemService(ShortcutManager.class).pushDynamicShortcut(info);return info.getId();
         } catch(Exception e) {return null;}
     }
@@ -301,6 +306,72 @@ public final class PairedService extends Service {
         PendingIntent pending=PendingIntent.getActivity(this,2,intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_MUTABLE);
         return new Notification.BubbleMetadata.Builder(pending,Icon.createWithAdaptiveBitmap(icon)).setDesiredHeight(640).setAutoExpandBubble(expand).setSuppressNotification(expand).build();
     }
+    /** Reply straight from the notification (also what Android Auto reads and answers). */
+    private Notification.Action replyAction(String id) {
+        Intent intent=new Intent(this,NotificationActions.class).setAction(NotificationActions.REPLY).setData(chatUri(id)).putExtra("chat",id);
+        // The reply text is added to this intent by Android, so it must be mutable; it is explicit to this app.
+        PendingIntent pending=PendingIntent.getBroadcast(this,3,intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_MUTABLE);
+        return new Notification.Action.Builder(Icon.createWithResource(this,R.drawable.ic_send),"Reply",pending)
+            .addRemoteInput(new RemoteInput.Builder(KEY_REPLY).setLabel("Reply").build()).setSemanticAction(Notification.Action.SEMANTIC_ACTION_REPLY)
+            .setShowsUserInterface(false).setAllowGeneratedReplies(true).build();
+    }
+    private Notification.Action readAction(String id) {
+        Intent intent=new Intent(this,NotificationActions.class).setAction(NotificationActions.READ).setData(chatUri(id)).putExtra("chat",id);
+        PendingIntent pending=PendingIntent.getBroadcast(this,4,intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
+        return new Notification.Action.Builder(Icon.createWithResource(this,R.drawable.ic_ticks),"Mark as read",pending)
+            .setSemanticAction(Notification.Action.SEMANTIC_ACTION_MARK_AS_READ).setShowsUserInterface(false).build();
+    }
+    /** Sends a reply typed into a notification, or saves it to send once connected. */
+    static void replyFromNotification(Context context,String chat,String text,Runnable done) {
+        PairedService s=current;
+        if(s==null||!s.ready||s.store.chat(chat)==null){new Outbox(context).add(chat,text,"");if(s!=null){s.changed("OUTBOX");s.showReply(chat,text,"will send when connected");}else{try{start(context);}catch(Exception ignored){}}done.run();return;}
+        JSONObject c=s.store.chat(chat);
+        execute(cl->cl.sendText(c.toString(),text,""),(v,e)->{
+            if(e.isEmpty())s.showReply(chat,text,null);
+            else {Outbox box=new Outbox(context);JSONObject o=box.add(chat,text,"");box.setState(o.optString("id"),e.startsWith("Send outcome unknown")?Outbox.UNSURE:Outbox.FAILED,e);s.changed("OUTBOX");s.showReply(chat,text,"not sent, open the chat to retry");}
+            done.run();});
+    }
+    /** Adds your reply to the chat's notification (Android expects the notification to update after a reply). */
+    private void showReply(String chat,String text,String note) {
+        JSONObject m=new JSONObject();
+        try{m.put("conversationID",chat).put("timestamp",System.currentTimeMillis()*1000).put("messageStatus",new JSONObject().put("status","OUTGOING_COMPLETE"))
+            .put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content",note==null?text:text+" ("+note+")"))));}catch(Exception ignored){}
+        synchronized(notified){List<JSONObject> list=notified.computeIfAbsent(chat,k->new ArrayList<>());list.add(m);while(list.size()>6)list.remove(0);}
+        postConversation(chat,null,true,false);
+    }
+    /** Clears the notification; sends a read receipt only if this chat has receipts turned on. */
+    static void markReadFromNotification(Context context,String chat,Runnable done) {
+        PairedService s=current;
+        if(s!=null)synchronized(s.notified){s.notified.remove(chat);}
+        context.getSystemService(NotificationManager.class).cancel("chat:"+chat,1);
+        ChatSettings settings=new ChatSettings(context);settings.setMarkedUnread(chat,false);
+        if(s==null||!s.ready||!settings.receipts(chat)){done.run();return;}
+        JSONObject c=s.store.chat(chat),latest=null;for(JSONObject m:s.store.messages(chat,50))if(!PairedProtocol.outgoing(m,c))latest=m;
+        if(latest==null){done.run();return;}String mid=latest.optString("messageID");
+        settings.markSeen(chat,PairedProtocol.time(latest));
+        markRead(chat,mid,(v,e)->{if(e.isEmpty())settings.setMarkedRead(chat,mid);s.changed("CONVERSATION");done.run();});
+    }
+    /** Sends saved messages one at a time, oldest first, while connected. */
+    private void flushOutbox() {
+        if(flushing||!ready)return;JSONObject o=outbox.next();if(o==null)return;
+        String id=o.optString("id");JSONObject chat=store.chat(o.optString("chat"));
+        if(chat==null){outbox.setState(id,Outbox.FAILED,"This conversation isn't synced yet. Open it, then retry.");changed("OUTBOX");main.post(this::flushOutbox);return;}
+        flushing=true;outbox.setState(id,Outbox.SENDING,"");changed("OUTBOX");
+        execute(c->c.sendText(chat.toString(),o.optString("text"),o.optString("reply")),(v,e)->{flushing=false;
+            if(e.isEmpty())outbox.remove(id);
+            else if(e.equals("Connect to Google Messages first.")){outbox.setState(id,Outbox.WAITING,"");changed("OUTBOX");return;}
+            else outbox.setState(id,e.startsWith("Send outcome unknown")?Outbox.UNSURE:Outbox.FAILED,e);
+            changed("OUTBOX");flushOutbox();});
+    }
+    /** Sends now if connected, otherwise saves it for later. The result value is "queued" when saved. */
+    static void sendOrQueue(Context context,String chat,String text,String reply,Result done) {
+        PairedService s=current;
+        if(s==null||!s.ready){new Outbox(context).add(chat,text,reply);if(s!=null)s.changed("OUTBOX");done.done("queued","");return;}
+        JSONObject c=s.store.chat(chat);if(c==null){done.done("","Refresh this conversation before sending.");return;}
+        execute(cl->cl.sendText(c.toString(),text,reply),done);
+    }
+    /** Puts a saved message back in line to send (after the person chose Retry). */
+    static void retryOutbox(Context context,String id) {new Outbox(context).setState(id,Outbox.WAITING,"");PairedService s=current;if(s!=null){s.changed("OUTBOX");s.flushOutbox();}}
     private static Uri chatUri(String id) {return new Uri.Builder().scheme("messagecenter").authority("chat").appendPath(id).build();}
     private static String notificationText(String sender,JSONObject m) {
         String body=PairedProtocol.body(m),reply=ChatText.replyFallbackBody(body);

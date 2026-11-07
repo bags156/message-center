@@ -25,9 +25,32 @@ final class PairedStore extends SQLiteOpenHelper {
     synchronized long snapshot() { try(Cursor c=getReadableDatabase().rawQuery("SELECT value FROM meta WHERE id=1",null)){c.moveToFirst();return c.getLong(0);} }
     synchronized void chat(JSONObject data) {
         String id=data.optString("conversationID");if(id.isEmpty())return;
+        int folder=folder(data.optString("status"));if(folder==0){deleteChat(id);return;}
         ContentValues v=new ContentValues();v.put("id",id);v.put("data",data.toString());v.put("updated",PairedProtocol.time(data));
-        v.put("folder",data.optString("status").contains("ARCHIVED") ? 2:1);
+        v.put("folder",folder);
         getWritableDatabase().insertWithOnConflict("chats",null,v,SQLiteDatabase.CONFLICT_REPLACE);
+    }
+    /** 1 inbox, 2 archived, 3 blocked or spam (hidden), 0 deleted (removed). */
+    static int folder(String status) {
+        if(status.equals("DELETED"))return 0;
+        if(status.contains("ARCHIVED"))return 2;
+        if(status.equals("SPAM_FOLDER")||status.equals("BLOCKED_FOLDER"))return 3;
+        return 1;
+    }
+    synchronized void deleteChat(String id) {SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try{db.delete("chats","id=?",new String[]{id});db.delete("items","chat=?",new String[]{id});db.setTransactionSuccessful();}finally{db.endTransaction();}}
+    synchronized void deleteMessage(String id) {getWritableDatabase().delete("items","id=?",new String[]{id});}
+    /** Synced messages in a chat whose text contains the query, newest first. */
+    synchronized List<JSONObject> search(String chat,String query,int max) {
+        List<JSONObject> out=new ArrayList<>();String q=query.trim().toLowerCase(java.util.Locale.ROOT);if(q.isEmpty())return out;
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM items WHERE chat=? ORDER BY time DESC,id DESC",new String[]{chat})) {
+            while(c.moveToNext()&&out.size()<max){JSONObject m=json(c.getString(0));if(PairedProtocol.text(m).toLowerCase(java.util.Locale.ROOT).contains(q))out.add(m);}
+        }
+        return out;
+    }
+    /** How many synced messages in the chat are at or after this time (to load enough to show it). */
+    synchronized int countSince(String chat,long time) {
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM items WHERE chat=? AND time>=?",new String[]{chat,String.valueOf(time)})){c.moveToFirst();return c.getInt(0);}
     }
     synchronized JSONObject chat(String id) {try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM chats WHERE id=?",new String[]{id})){return c.moveToFirst()?json(c.getString(0)):null;}}
     synchronized List<JSONObject> chats(String query,int folder) {

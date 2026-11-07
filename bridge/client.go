@@ -176,7 +176,7 @@ func (c *Client) Chats(cursor string, folder int) (string, error) {
 	}
 	ctx, cancel := c.requestContext()
 	defer cancel()
-	if folder != 1 && folder != 2 {
+	if folder != 1 && folder != 2 && folder != 5 { // inbox, archive, spam & blocked
 		return "", errors.New("Unsupported folder.")
 	}
 	r, e := c.gm.ListConversations(ctx, &gmproto.ListConversationsRequest{Count: 50, Folder: gmproto.ListConversationsRequest_Folder(folder), Cursor: p})
@@ -357,23 +357,51 @@ func saveStream(r io.Reader, path string, limit int64) error {
 }
 
 func (c *Client) CreateChat(number string) (string, error) {
+	return c.createConversation([]string{number}, "")
+}
+
+// CreateGroup starts a group with several people (comma-separated numbers).
+// The name is used for RCS groups; MMS groups have no name.
+func (c *Client) CreateGroup(numbersCSV, name string) (string, error) {
+	var numbers []string
+	for _, n := range strings.Split(numbersCSV, ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			numbers = append(numbers, n)
+		}
+	}
+	if len(numbers) < 2 {
+		return "", errors.New("Pick at least two people for a group.")
+	}
+	return c.createConversation(numbers, strings.TrimSpace(name))
+}
+
+func validNumber(number string) error {
 	if len(number) < 4 || number[0] != '+' {
-		return "", errors.New("Use the full phone number with + and country code.")
+		return errors.New("Use the full phone number with + and country code.")
 	}
 	for _, r := range number[1:] {
 		if r < '0' || r > '9' {
-			return "", errors.New("Use digits after + and the country code.")
+			return errors.New("Use digits after + and the country code.")
 		}
+	}
+	return nil
+}
+
+func (c *Client) createConversation(numbers []string, name string) (string, error) {
+	req := &gmproto.GetOrCreateConversationRequest{}
+	for _, n := range numbers {
+		if e := validNumber(n); e != nil {
+			return "", e
+		}
+		req.Numbers = append(req.Numbers, &gmproto.ContactNumber{Number: n, Number2: n, MysteriousInt: 2})
 	}
 	ctx, cancel := c.requestContext()
 	defer cancel()
-	req := &gmproto.GetOrCreateConversationRequest{Numbers: []*gmproto.ContactNumber{{Number: number, Number2: number, MysteriousInt: 2}}}
 	resp, e := c.gm.GetOrCreateConversation(ctx, req)
 	if e != nil {
 		return "", errors.New("Conversation creation outcome unknown. Check Google Messages before trying again.")
 	}
 	if resp.GetStatus() == gmproto.GetOrCreateConversationResponse_CREATE_RCS {
-		name := ""
 		yes := true
 		req.RCSGroupName = &name
 		req.CreateRCSGroup = &yes
@@ -386,6 +414,141 @@ func (c *Client) CreateChat(number string) (string, error) {
 		return "", errors.New("Google could not create this conversation.")
 	}
 	return marshal(resp.GetConversation())
+}
+
+// Contacts returns {"top":[...],"all":[...]} from the phone's contacts.
+func (c *Client) Contacts() (string, error) {
+	ctx, cancel := c.requestContext()
+	defer cancel()
+	all, e := c.gm.ListContacts(ctx)
+	if e != nil {
+		return "", errors.New("Contacts could not be loaded from your phone.")
+	}
+	top, _ := c.gm.ListTopContacts(ctx)
+	marshalList := func(list []*gmproto.Contact) []json.RawMessage {
+		out := []json.RawMessage{}
+		for _, ct := range list {
+			if raw, err := marshal(ct); err == nil {
+				out = append(out, json.RawMessage(raw))
+			}
+		}
+		return out
+	}
+	b, e := json.Marshal(map[string]any{"top": marshalList(top.GetContacts()), "all": marshalList(all.GetContacts())})
+	if e != nil {
+		return "", errors.New("Contacts could not be read.")
+	}
+	return string(b), nil
+}
+
+// ArchiveChat moves a conversation into Archived, or back to the inbox.
+func (c *Client) ArchiveChat(conversationID string, archive bool) error {
+	return c.updateConversation(archiveRequest(conversationID, archive), "Google could not archive this conversation.")
+}
+
+// MuteChat silences (or unsilences) a conversation's notifications in Google Messages.
+func (c *Client) MuteChat(conversationID string, mute bool) error {
+	return c.updateConversation(muteRequest(conversationID, mute), "Google could not change this conversation's notifications.")
+}
+
+// DeleteChat deletes the conversation from the phone.
+func (c *Client) DeleteChat(chatJSON string) error {
+	conv, e := parseChat(chatJSON)
+	if e != nil {
+		return e
+	}
+	return c.updateConversation(&gmproto.UpdateConversationRequest{Action: gmproto.ConversationActionStatus_DELETE, ConversationID: conv.GetConversationID(),
+		Data: &gmproto.UpdateConversationRequest_DeleteData{DeleteData: &gmproto.DeleteConversationData{ConversationID: conv.GetConversationID(), Phone: nonEmpty(otherPhone(conv))}}},
+		"Google could not delete this conversation.")
+}
+
+// BlockChat blocks ("block"), blocks and reports spam ("report"), or unblocks ("unblock").
+func (c *Client) BlockChat(chatJSON, action string) error {
+	conv, e := parseChat(chatJSON)
+	if e != nil {
+		return e
+	}
+	req, e := blockRequest(conv, action)
+	if e != nil {
+		return e
+	}
+	return c.updateConversation(req, "Google could not update blocking for this conversation.")
+}
+
+// DeleteMessage deletes one message from the phone (for you only).
+func (c *Client) DeleteMessage(messageID string) error {
+	ctx, cancel := c.requestContext()
+	defer cancel()
+	resp, e := c.gm.DeleteMessage(ctx, messageID)
+	if e != nil || !resp.GetSuccess() {
+		return errors.New("Google could not delete this message.")
+	}
+	return nil
+}
+
+func (c *Client) updateConversation(req *gmproto.UpdateConversationRequest, failure string) error {
+	ctx, cancel := c.requestContext()
+	defer cancel()
+	resp, e := c.gm.UpdateConversation(ctx, req)
+	if e != nil || !resp.GetSuccess() {
+		return errors.New(failure)
+	}
+	return nil
+}
+
+func archiveRequest(conversationID string, archive bool) *gmproto.UpdateConversationRequest {
+	status := gmproto.ConversationStatus_ACTIVE
+	if archive {
+		status = gmproto.ConversationStatus_ARCHIVED
+	}
+	return &gmproto.UpdateConversationRequest{ConversationID: conversationID, Data: &gmproto.UpdateConversationRequest_UpdateData{UpdateData: &gmproto.UpdateConversationData{
+		ConversationID: conversationID, Data: &gmproto.UpdateConversationData_Status{Status: status}}}}
+}
+
+func muteRequest(conversationID string, mute bool) *gmproto.UpdateConversationRequest {
+	state := gmproto.ConversationMuteStatus_UNMUTE
+	if mute {
+		state = gmproto.ConversationMuteStatus_MUTE
+	}
+	return &gmproto.UpdateConversationRequest{ConversationID: conversationID, Data: &gmproto.UpdateConversationRequest_UpdateData{UpdateData: &gmproto.UpdateConversationData{
+		ConversationID: conversationID, Data: &gmproto.UpdateConversationData_Mute{Mute: state}}}}
+}
+
+func blockRequest(conv *gmproto.Conversation, action string) (*gmproto.UpdateConversationRequest, error) {
+	kind := gmproto.ConversationActionStatus_UNBLOCK
+	var a5 *gmproto.ConversationAction5
+	switch action {
+	case "block":
+		kind, a5 = gmproto.ConversationActionStatus_BLOCK, &gmproto.ConversationAction5{Field2: true}
+	case "report":
+		kind, a5 = gmproto.ConversationActionStatus_BLOCK_AND_REPORT, &gmproto.ConversationAction5{Field2: true}
+	case "unblock":
+	default:
+		return nil, errors.New("Unknown blocking action.")
+	}
+	id := conv.GetConversationID()
+	return &gmproto.UpdateConversationRequest{Action: kind, ConversationID: id, Action5: a5,
+		Data: &gmproto.UpdateConversationRequest_DeleteData{DeleteData: &gmproto.DeleteConversationData{ConversationID: id, Phone: nonEmpty(otherPhone(conv))}}}, nil
+}
+
+// otherPhone is the other person's number in a one-to-one chat; groups have none.
+func otherPhone(conv *gmproto.Conversation) string {
+	if conv.GetIsGroupChat() {
+		return ""
+	}
+	for _, p := range conv.GetParticipants() {
+		if p.GetIsVisible() && !p.GetIsMe() && p.GetID().GetNumber() != "" {
+			return p.GetID().GetNumber()
+		}
+	}
+	return ""
+}
+
+func nonEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // React adds, removes, or switches this user's reaction. Google keeps one

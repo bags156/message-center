@@ -6,6 +6,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Asks Android (with your approval) not to put the connection to sleep, so messages arrive on time. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Only while you record a voice message. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <queries><package android:name="com.google.android.apps.messaging" /></queries>
     <application
         android:allowBackup="false"
@@ -21,6 +25,24 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Share text, photos, videos, or files into a chat from other apps. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="application/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
         <!-- Conversation bubbles: Android requires the bubble's activity to be embeddable and resizable. -->
         <activity android:name=".BubbleActivity" android:exported="false" android:allowEmbedded="true" android:resizeableActivity="true"
@@ -28,6 +50,8 @@
         <!-- Lets another app open or share one downloaded attachment, only when this app grants that file. -->
         <provider android:name=".MediaProvider" android:authorities="io.github.bags156.messagecenter.media" android:exported="false" android:grantUriPermissions="true" />
         <service android:name=".PairedService" android:exported="false" android:foregroundServiceType="remoteMessaging" />
+        <receiver android:name=".NotificationActions" android:exported="false" />
+        <meta-data android:name="com.google.android.gms.car.application" android:resource="@xml/automotive_app_desc" />
         <receiver android:name=".PairedBootReceiver" android:exported="false">
             <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /><action android:name="android.intent.action.MY_PACKAGE_REPLACED" /></intent-filter>
         </receiver>
