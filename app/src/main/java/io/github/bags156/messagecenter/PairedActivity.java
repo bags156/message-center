@@ -133,7 +133,8 @@ public class PairedActivity extends Activity {
         else {updateStatus();PairedService.syncNow();
             // Updates that arrived while this screen was hidden (or a bubble was collapsed) are shown now, then refreshed from Google.
             if(screen.equals("chat")){renderMessages(false);if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();if(!bubble())PairedService.clearNotification(this,chatId);}
-            else if(screen.equals("inbox")){if(batteryCard!=null&&!showBatteryCard()){root.removeView(batteryCard);batteryCard=null;}renderInbox();refreshInbox(false);}}}
+            else if(screen.equals("inbox")){if(batteryCard!=null&&!showBatteryCard()){root.removeView(batteryCard);batteryCard=null;}renderInbox();refreshInbox(false);
+                if(!bubble()&&PairedService.ready()&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED)askContactPhotos();}}}
     @Override protected void onPause(){resumed=false;remember();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&player.isPlaying()){player.pause();updatePlayLabel();}if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
     @Override protected void onSaveInstanceState(Bundle out){remember();if(pendingCapture!=null)out.putString("capture",pendingCapture.getPath());out.putString("chat",chatId);out.putString("reply",replyId);out.putString("draft",drafts.getOrDefault(chatId,""));super.onSaveInstanceState(out);}
     @Override public void onBackPressed(){if(screen.equals("media")){details();return;}if(screen.equals("details")){thread(chatId);return;}if(bubble()){super.onBackPressed();return;}if(login!=null){destroyLogin();inbox();}else if(screen.equals("inbox")&&folder!=1){folder=1;inbox();}else if(!screen.equals("inbox")){remember();inbox();}else super.onBackPressed();}
@@ -184,7 +185,7 @@ public class PairedActivity extends Activity {
     private Bitmap photo(JSONObject chat){
         String id=PairedProtocol.participantID(PairedProtocol.other(chat));if(id.isEmpty())return null;
         if(photos.containsKey(id))return photos.get(id);
-        File f=Avatars.file(this,id);Bitmap b=f.isFile()?BitmapFactory.decodeFile(f.getPath()):null;if(b!=null)photos.put(id,b);return b;
+        File f=Avatars.best(this,id);Bitmap b=f.isFile()?BitmapFactory.decodeFile(f.getPath()):null;if(b!=null)photos.put(id,b);return b;
     }
     private View avatar(JSONObject chat,int size){
         FrameLayout box=new FrameLayout(this);box.setLayoutParams(new LinearLayout.LayoutParams(dp(size),dp(size)));
@@ -204,7 +205,7 @@ public class PairedActivity extends Activity {
     /** One person's photo, or their initial on their Google color. */
     private View personAvatar(JSONObject p,String name,int size){
         FrameLayout box=new FrameLayout(this);box.setLayoutParams(new LinearLayout.LayoutParams(dp(size),dp(size)));String id=PairedProtocol.participantID(p);Bitmap b=null;
-        if(!id.isEmpty()){if(photos.containsKey(id))b=photos.get(id);else{File f=Avatars.file(this,id);b=f.isFile()?BitmapFactory.decodeFile(f.getPath()):null;if(b!=null)photos.put(id,b);}}
+        if(!id.isEmpty()){if(photos.containsKey(id))b=photos.get(id);else{File f=Avatars.best(this,id);b=f.isFile()?BitmapFactory.decodeFile(f.getPath()):null;if(b!=null)photos.put(id,b);}}
         if(b!=null){box.addView(roundImage(b),new FrameLayout.LayoutParams(-1,-1));return box;}
         box.setBackground(oval(PairedProtocol.color(p==null?"":p.optString("avatarHexColor"),Avatars.fallbackColor(name))));
         TextView letter=text(PairedProtocol.initial(name),Math.round(size*0.42f),Color.WHITE,false);letter.setGravity(Gravity.CENTER);box.addView(letter,new FrameLayout.LayoutParams(-1,-1));return box;}
@@ -213,8 +214,20 @@ public class PairedActivity extends Activity {
         if(!PairedService.ready())return;List<String> ids=new ArrayList<>();
         for(JSONObject p:PairedProtocol.members(c)){String id=PairedProtocol.participantID(p);if(id.isEmpty()||photosRequested.contains(id)||Avatars.file(this,id).isFile())continue;photosRequested.add(id);ids.add(id);if(ids.size()==25)break;}
         if(!ids.isEmpty())PairedService.loadPhotos(ids,(v,e)->{if(e.isEmpty())after.run();});}
+    /** Full-size photos from the phone's contacts (when allowed), looked up in the background. */
+    private final Set<String> phoneChecked=new HashSet<>();
+    private void phonePhotos(List<JSONObject> chats){if(!Avatars.canUsePhonePhotos(this))return;List<String[]> todo=new ArrayList<>();
+        for(JSONObject c:chats)for(JSONObject p:PairedProtocol.members(c)){String id=PairedProtocol.participantID(p),n=PairedProtocol.number(p);if(!id.isEmpty()&&!n.isEmpty()&&phoneChecked.add(id))todo.add(new String[]{id,n});}
+        if(todo.isEmpty())return;
+        decoder.execute(()->{boolean changed=false;for(String[] t:todo)changed|=Avatars.fromPhone(this,t[0],t[1]);if(!changed)return;
+            ui.post(()->{photos.clear();if(screen.equals("inbox"))renderInbox();else if(screen.equals("chat"))renderMessages(false);});});}
+    private void askContactPhotos(){android.content.SharedPreferences prefs=getSharedPreferences("paired",MODE_PRIVATE);
+        if(Avatars.canUsePhonePhotos(this)||prefs.getBoolean("asked_contacts",false))return;prefs.edit().putBoolean("asked_contacts",true).apply();
+        new AlertDialog.Builder(this).setTitle("Sharper contact photos?").setMessage("Google only sends small photos. Message Center can use the full-size photos from your phone's contacts for chats, bubbles, notifications, and the widget. They stay on this phone.")
+            .setPositiveButton("Allow",(d,w)->requestPermissions(new String[]{Manifest.permission.READ_CONTACTS},79)).setNegativeButton("Not now",null).show();}
     /** Requests contact photos once per launch for one-to-one chats that do not have one cached. */
     private void requestPhotos(List<JSONObject> chats){
+        phonePhotos(chats);
         if(!PairedService.ready())return;List<String> ids=new ArrayList<>();
         for(JSONObject c:chats){String id=PairedProtocol.participantID(PairedProtocol.other(c));
             if(id.isEmpty()||photosRequested.contains(id)||Avatars.file(this,id).isFile())continue;photosRequested.add(id);ids.add(id);if(ids.size()==25)break;}
@@ -1138,6 +1151,7 @@ public class PairedActivity extends Activity {
         if(recordBar!=null){recordBar.setVisibility(View.GONE);composeRow.setVisibility(View.VISIBLE);}}
     @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] results){super.onRequestPermissionsResult(request,permissions,results);
         if(request==77){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)startRecording();else toast("Message Center needs the microphone to record voice messages.");}
+        if(request==79&&results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED){phoneChecked.clear();photos.clear();if(screen.equals("inbox"))renderInbox();else if(screen.equals("settings"))settings();}
         if(request==78){JSONObject pending=pendingTranscription;pendingTranscription=null;if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED&&pending!=null)transcribe(pending);else if(pending!=null)toast("Transcription needs microphone access.");}}
     /** Plays an audio attachment in place; tap again to pause. */
     private void playAudio(JSONObject media,TextView label){String id=PairedProtocol.string(media,"mediaID");
@@ -1194,6 +1208,8 @@ public class PairedActivity extends Activity {
         content.addView(button("Reconnect",true,()->{PairedService.disconnect(this,false);new android.os.Handler().postDelayed(()->{PairedService.start(this);settings();},300);}));gap(content,8);
         content.addView(button("Sign in / pair again",false,this::signIn));gap(content,8);
         content.addView(button("Allow Message Center notifications",false,()->{if(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},101);else startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()));}));gap(content,8);
+        if(!Avatars.canUsePhonePhotos(this)){content.addView(button("Use full-size photos from my contacts",false,()->{if(shouldShowRequestPermissionRationale(Manifest.permission.READ_CONTACTS)||!getSharedPreferences("paired",MODE_PRIVATE).getBoolean("asked_contacts",false)){getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("asked_contacts",true).apply();requestPermissions(new String[]{Manifest.permission.READ_CONTACTS},79);}
+            else startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())));}));gap(content,8);}
         note(content,"Background reliability\n\nAndroid reports battery optimization: "+(batteryRestricted()?"on. If you already allowed background activity in ColorOS's own settings, that is enough; Android may still say on.":"off ✓")+"\n\nOn ColorOS, also open App settings → Battery and allow background activity and auto-launch, for both Message Center and Google Messages.");
         if(batteryRestricted()){content.addView(button("Allow running in the background",true,this::allowBackground));gap(content,8);}
         content.addView(button("App settings (battery, auto-launch)",false,this::openAppSettings));gap(content,8);

@@ -346,9 +346,11 @@ public final class PairedService extends Service {
     }
     private Bitmap chatIcon(JSONObject chat,String title) {
         JSONObject other=PairedProtocol.other(chat);String pid=PairedProtocol.participantID(other);Bitmap photo=null;
-        if(!pid.isEmpty()){java.io.File f=Avatars.file(this,pid);if(f.isFile())photo=BitmapFactory.decodeFile(f.getPath());}
+        if(!pid.isEmpty()){Avatars.fromPhone(this,pid,PairedProtocol.number(other));java.io.File f=Avatars.best(this,pid);if(f.isFile())photo=BitmapFactory.decodeFile(f.getPath());}
         String hex=other!=null?other.optString("avatarHexColor",""):chat==null?"":chat.optString("avatarHexColor","");
-        return Avatars.adaptive(photo,PairedProtocol.initial(title),PairedProtocol.color(hex,Avatars.fallbackColor(title)),216);
+        // Android keeps conversation icons at up to 72dp (adaptive), so match that for the sharpest bubble.
+        int size=Math.max(216,Math.min(288,Math.round(72*getResources().getDisplayMetrics().density)));
+        return Avatars.adaptive(photo,PairedProtocol.initial(title),PairedProtocol.color(hex,Avatars.fallbackColor(title)),size);
     }
     private String publishShortcut(String id,String title,Bitmap icon) {
         try {
@@ -470,7 +472,7 @@ public final class PairedService extends Service {
     }
     /** The sender's cached contact photo, or a colored initial like the app shows. */
     private Bitmap photo(JSONObject chat,String participantID,String name) {
-        if(!participantID.isEmpty()){java.io.File f=Avatars.file(this,participantID);if(f.isFile()){Bitmap b=BitmapFactory.decodeFile(f.getPath());if(b!=null)return Avatars.circle(b,128);}}
+        if(!participantID.isEmpty()){java.io.File f=Avatars.best(this,participantID);if(f.isFile()){Bitmap b=BitmapFactory.decodeFile(f.getPath());if(b!=null)return Avatars.circle(b,128);}}
         JSONObject p=PairedProtocol.participant(chat,participantID);
         return Avatars.initial(PairedProtocol.initial(name),PairedProtocol.color(p==null?"":p.optString("avatarHexColor"),Avatars.fallbackColor(name)),128);
     }

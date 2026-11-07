@@ -14,6 +14,8 @@ Quality-of-life update.
 - **Scheduled send.** Type a message, then hold the send button to send it later today, tomorrow morning, or at a time you pick. For exact timing, allow "Alarms & reminders" when asked.
 - **Home screen widget.** Shows your top conversations (pinned first, unread in bold), with a + to start a new chat.
 - **Message details.** Long-press a message → Message details shows the type (RCS, SMS, or MMS), sender, recipients, time, and status.
+- **Sharper bubble and notification photos.** Bubbles showed only the middle of each photo, enlarged 1.5× (so faces looked zoomed and soft); they now show the whole photo at the full resolution Android allows. Photos in notifications are cropped instead of stretched.
+- **Full-size contact photos.** Google only sends small photos. Allow contacts access when asked (or in Settings → "Use full-size photos from my contacts") and Message Center uses the photos saved in your phone's contacts for chats, bubbles, notifications, and the widget. They stay on your phone.
 - Fixed: "Mark read" from a notification now clears the unread dot even when read receipts are off for that chat.
 
 Install over 0.6.5; the package and signing key are unchanged.

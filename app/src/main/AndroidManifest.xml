@@ -11,6 +11,7 @@
     <!-- Only while you record a voice message. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
     <queries><package android:name="com.google.android.apps.messaging" /></queries>
     <application
         android:allowBackup="false"

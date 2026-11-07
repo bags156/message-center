@@ -68,7 +68,7 @@ public final class MessagesWidget extends AppWidgetProvider {
         JSONObject other = PairedProtocol.other(chat);
         String pid = PairedProtocol.participantID(other);
         if (!pid.isEmpty()) {
-            File f = Avatars.file(context, pid);
+            File f = Avatars.best(context, pid);
             if (f.isFile()) { Bitmap b = BitmapFactory.decodeFile(f.getPath()); if (b != null) return Avatars.circle(b, 120); }
         }
         String hex = other != null ? other.optString("avatarHexColor", "") : chat.optString("avatarHexColor", "");
