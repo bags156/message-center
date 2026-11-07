@@ -302,28 +302,32 @@ public class PairedActivity extends Activity {
         if(unknownOnly){List<JSONObject> unknown=new ArrayList<>();for(JSONObject c:chats)if(unknownSender(c))unknown.add(c);chats=unknown;}
         if(chats.isEmpty()){TextView empty=text(PairedService.ready()?(query.isEmpty()?"No conversations here yet.":"No chats with that name."):"Your conversations will appear once the connection is ready.",15,muted,false);
             empty.setGravity(Gravity.CENTER);empty.setPadding(dp(24),dp(48),dp(24),dp(24));items.addView(empty);}
-        for(JSONObject c:chats)items.addView(swipeableChat(c));
+        // Pinned chats sit in a grid at the top (three across), like iPhone Messages; the rest are rows.
+        boolean grid=folder==1&&!unknownOnly&&query.trim().isEmpty();List<JSONObject> pins=new ArrayList<>();
+        if(grid)for(JSONObject c:chats)if(chatSettings.pinned(c))pins.add(c);
+        if(!pins.isEmpty())items.addView(pinnedGrid(pins));
+        for(JSONObject c:chats)if(pins.isEmpty()||!chatSettings.pinned(c))items.addView(swipeableChat(c));
         renderMessageHits();
         String note=store.page("folder:"+folder,true);if(!chats.isEmpty()&&store.page("folder:"+folder,false).isEmpty()&&!note.isEmpty()){TextView end=text(note,12,muted,false);end.setGravity(Gravity.CENTER);end.setPadding(dp(16),dp(16),dp(16),dp(8));items.addView(end);}
         requestPhotos(chats);
     }
     private View inboxRow(JSONObject c){
         String id=c.optString("conversationID");boolean unread=chatSettings.unread(c),pinned=chatSettings.pinned(c);String draft=drafts.getOrDefault(id,"").trim();
-        LinearLayout entry=row();entry.setPadding(dp(4),dp(12),dp(4),dp(12));entry.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout entry=row();entry.setPadding(dp(4),dp(9),dp(4),dp(9));entry.setGravity(Gravity.CENTER_VERTICAL);
         entry.setBackground(ripple());
-        entry.addView(avatar(c,52));
-        LinearLayout middle=vertical();middle.setPadding(dp(16),0,dp(8),0);
-        TextView title=text(PairedProtocol.title(c),18,ink,unread);title.setTextSize(18*textScale);title.setSingleLine(true);title.setEllipsize(TextUtils.TruncateAt.END);middle.addView(title);
+        entry.addView(avatar(c,46));
+        LinearLayout middle=vertical();middle.setPadding(dp(14),0,dp(8),0);
+        TextView title=text(PairedProtocol.title(c),16,ink,unread);title.setTextSize(16.5f*textScale);title.setSingleLine(true);title.setEllipsize(TextUtils.TruncateAt.END);middle.addView(title);
         String snippet=ChatText.withoutMediaEmoji(PairedProtocol.string(c.optJSONObject("latestMessage"),"displayContent"));boolean[] mine={PairedProtocol.latestFromMe(c)};
         // Google leaves the preview empty for some events (drafts, some reactions); fall back to the newest synced message.
         if(snippet.isEmpty()){JSONObject last=latestStored(id);if(last!=null)snippet=previewOf(last,c,mine);}
         boolean placeholder=snippet.isEmpty()&&draft.isEmpty();if(placeholder){snippet="Open to load messages";mine[0]=false;}
         if(!draft.isEmpty())snippet="You: "+draft;else if(mine[0]&&!snippet.isEmpty())snippet="You: "+snippet;
-        TextView preview=text(snippet,15,unread?ink:muted,unread);preview.setTextSize(15*textScale);preview.setMaxLines(2);preview.setEllipsize(TextUtils.TruncateAt.END);
+        TextView preview=text(snippet,14,unread?ink:muted,unread);preview.setTextSize(14*textScale);preview.setMaxLines(2);preview.setEllipsize(TextUtils.TruncateAt.END);
         if(!draft.isEmpty()||placeholder)preview.setTypeface(Typeface.create(Typeface.DEFAULT,Typeface.ITALIC));
         gap(middle,2);middle.addView(preview);entry.addView(middle,new LinearLayout.LayoutParams(0,-2,1));
         LinearLayout side=vertical();side.setGravity(Gravity.END|Gravity.TOP);
-        long when=PairedProtocol.time(c);TextView stamp=text(!draft.isEmpty()?"Draft":(when>0?inboxStamp(when):""),13,unread?ink:muted,unread);
+        long when=PairedProtocol.time(c);TextView stamp=text(!draft.isEmpty()?"Draft":(when>0?inboxStamp(when):""),12,unread?ink:muted,unread);
         if(!draft.isEmpty())stamp.setTypeface(Typeface.create(Typeface.DEFAULT,Typeface.ITALIC));
         // The time keeps its own width; a match-parent child here collapsed the column to the pin's width and wrapped the time.
         stamp.setSingleLine(true);LinearLayout.LayoutParams st=new LinearLayout.LayoutParams(-2,-2);st.gravity=Gravity.END;side.addView(stamp,st);
@@ -335,6 +339,24 @@ public class PairedActivity extends Activity {
         entry.setOnClickListener(v->thread(id));entry.setOnLongClickListener(v->{chatOptions(c);return true;});
         return entry;
     }
+    private View pinnedGrid(List<JSONObject> pins){LinearLayout grid=vertical();grid.setPadding(0,dp(4),0,dp(10));
+        for(int i=0;i<pins.size();i+=3){LinearLayout line=row();line.setGravity(Gravity.TOP);
+            for(int k=i;k<i+3;k++){if(k<pins.size())line.addView(pinnedCell(pins.get(k)),new LinearLayout.LayoutParams(0,-2,1));else line.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));}
+            grid.addView(line);}
+        View rule=new View(this);rule.setBackgroundColor((muted&0x00ffffff)|0x26000000);LinearLayout.LayoutParams rl=new LinearLayout.LayoutParams(-1,1);rl.setMargins(dp(8),dp(10),dp(8),0);grid.addView(rule,rl);
+        return grid;}
+    private View pinnedCell(JSONObject c){String id=c.optString("conversationID");boolean unread=chatSettings.unread(c),quiet=chatSettings.muted(id)||chatSettings.snoozed(id);
+        LinearLayout cell=vertical();cell.setGravity(Gravity.CENTER_HORIZONTAL);cell.setPadding(dp(4),dp(10),dp(4),dp(8));cell.setBackground(ripple());
+        FrameLayout face=new FrameLayout(this);face.addView(avatar(c,74),new FrameLayout.LayoutParams(dp(74),dp(74)));
+        if(unread){View dot=new View(this);GradientDrawable d=oval(ChatTheme.of("default").accent(dark));d.setStroke(dp(3),bg);dot.setBackground(d);
+            FrameLayout.LayoutParams dl=new FrameLayout.LayoutParams(dp(20),dp(20),Gravity.TOP|Gravity.END);face.addView(dot,dl);}
+        else if(quiet){TextView q=text(chatSettings.muted(id)?"🔕":"💤",11,muted,false);q.setGravity(Gravity.CENTER);q.setBackground(oval(card));face.addView(q,new FrameLayout.LayoutParams(dp(24),dp(24),Gravity.BOTTOM|Gravity.END));}
+        LinearLayout.LayoutParams fl=new LinearLayout.LayoutParams(dp(74),dp(74));cell.addView(face,fl);
+        String title=PairedProtocol.title(c);boolean group=PairedProtocol.other(c)==null;String shown=group?title:ChatText.firstName(title);if(shown.isEmpty())shown=title;
+        TextView name=text(shown,13,unread?ink:muted,unread);name.setTextSize(13*textScale);name.setSingleLine(true);name.setEllipsize(TextUtils.TruncateAt.END);name.setGravity(Gravity.CENTER);name.setPadding(0,dp(6),0,0);
+        cell.addView(name,new LinearLayout.LayoutParams(-1,-2));
+        cell.setContentDescription(title+(unread?", unread":"")+", pinned");cell.setOnClickListener(v->thread(id));cell.setOnLongClickListener(v->{chatOptions(c);return true;});
+        return cell;}
     private JSONObject latestStored(String id){List<JSONObject> l=store.messages(id,5);for(int i=l.size()-1;i>=0;i--)if(!PairedProtocol.body(l.get(i)).isEmpty())return l.get(i);return null;}
     /** Inbox preview text for a synced message; mine[0] says whether to prefix "You: ". */
     private String previewOf(JSONObject m,JSONObject c,boolean[] mine){String body=PairedProtocol.body(m);boolean out=PairedProtocol.outgoing(m,c);
