@@ -252,7 +252,7 @@ public class PairedActivity extends Activity {
         for(JSONObject c:chats){String id=PairedProtocol.participantID(PairedProtocol.other(c));
             if(id.isEmpty()||photosRequested.contains(id)||Avatars.file(this,id).isFile())continue;photosRequested.add(id);ids.add(id);if(ids.size()==25)break;}
         if(ids.isEmpty())return;
-        PairedService.loadPhotos(ids,(v,e)->{if(!e.isEmpty())return;if(screen.equals("inbox"))renderInbox();else if(screen.equals("chat"))thread(chatId);});
+        PairedService.loadPhotos(ids,(v,e)->{if(!e.isEmpty())return;if(screen.equals("inbox"))renderInbox();else if(screen.equals("chat"))renderMessages(false);});
     }
 
     // ---- Time labels ----
@@ -554,7 +554,13 @@ public class PairedActivity extends Activity {
             case 9->searchChat();case 10->toggleMute(chatId);case 11->archive(c,!archived);case 12->block(c);case 13->deleteChat(c);case 14->snoozeMenu(chatId);default->{}}return true;});menu.show();}
     private void renderMessages(boolean bottom){if(items==null||!screen.equals("chat"))return;
         int y=scroll.getScrollY();View content=scroll.getChildAt(0);int before=content.getHeight();
-        boolean atBottom=bottom||before-scroll.getHeight()-y<dp(80);items.removeAllViews();unreadDivider=null;inlineSeen=false;
+        boolean atBottom=bottom||before-scroll.getHeight()-y<dp(80);
+        // The first message on screen and how far down it sits, to put it back exactly there after the redraw.
+        String anchorId=null;int anchorOffset=0;
+        if(!atBottom)for(java.util.Map.Entry<String,View> e:messageViews.entrySet()){View v=e.getValue();if(v.getParent()!=items)continue;
+            if(v.getBottom()>y&&(anchorId==null||v.getTop()<messageViews.get(anchorId).getTop())){anchorId=e.getKey();anchorOffset=v.getTop()-y;}}
+        String keepId=anchorId;int keepOffset=anchorOffset;
+        items.removeAllViews();unreadDivider=null;inlineSeen=false;
         JSONObject c=store.chat(chatId);ChatTheme theme=chatSettings.theme(chatId);boolean group=c!=null&&PairedProtocol.other(c)==null;
         List<JSONObject> messages=new ArrayList<>();for(JSONObject m:store.messages(chatId,limit))if(!PairedProtocol.body(m).isEmpty()||!PairedProtocol.event(m,c).isEmpty())messages.add(m);
         if(messages.size()>=limit-5)items.addView(button("Show more saved messages",false,()->{limit+=300;renderMessages(false);}));
@@ -603,7 +609,8 @@ public class PairedActivity extends Activity {
             else if(atBottom&&unreadJump&&unreadDivider!=null&&sv.getChildAt(0).getHeight()-unreadDivider.getTop()>sv.getHeight()){
                 // More unread than fits on screen: start at the first one, with ↓ to jump to the newest.
                 unreadJump=false;sv.scrollTo(0,Math.max(0,unreadDivider.getTop()-dp(12)));pinnedBottom=false;newWhileAway=unreadCount;updateJumpButton();}
-            else if(atBottom){sv.scrollTo(0,sv.getChildAt(0).getHeight());pinnedBottom=true;if(n>0)unreadJump=false;}else sv.scrollTo(0,y);return true;};
+            else if(atBottom){sv.scrollTo(0,sv.getChildAt(0).getHeight());pinnedBottom=true;if(n>0)unreadJump=false;}
+            else{View again=keepId==null?null:messageViews.get(keepId);sv.scrollTo(0,again!=null&&again.getParent()==items?Math.max(0,again.getTop()-keepOffset):y);}return true;};
         sv.getViewTreeObserver().addOnPreDrawListener(once[0]);
     }
     private View bubble(JSONObject m,JSONObject c,ChatTheme theme,boolean outgoing,boolean joinPrev,boolean joinNext){

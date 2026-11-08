@@ -1,10 +1,7 @@
-Message Center 1.1.0.
+Message Center 1.1.1.
 
-**Watch videos right in the chat**
-- Tap a video to play it in place, with sound. Tap again to pause. While it plays there's a sound on/off button, the time left, a thin progress line, and a full-screen button that picks up where you are.
-- Videos show a sharp frame instead of a blurry preview: ones up to 20 MB download by themselves when Full-quality photos is on (Settings → Chats).
+**A chat stays where you are**
+- A chat no longer jumps to the bottom on its own. It happened when contact photos finished loading (the whole chat was rebuilt), which could be right after watching a video.
+- When the chat updates (a new message, a reaction, a photo loading), the message you're looking at stays in the same spot on screen, even if something above it changes size. The chat only follows new messages to the bottom if you were already at the bottom.
 
-**A nicer full-screen player**
-- A slim scrubber with a round knob that grows as you drag, a big play/pause in the middle, soft fades behind the controls, and a sound on/off button. Double-tap the left or right side to skip back or ahead 10 seconds.
-
-Install over 1.0.10; the package and signing key are unchanged.
+Install over 1.1.0; the package and signing key are unchanged.
