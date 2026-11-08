@@ -20,7 +20,7 @@ final class Backup {
     private static final String[] STORES = {"starred", "nicknames", "reminders", "scheduled", "chat-settings"};
     /** App settings worth carrying over (not connection state or one-time prompts). */
     private static final Set<String> SETTINGS = new HashSet<>(java.util.Arrays.asList(
-        "mention_name", "send_typing", "voice_speed", "undo_send", "link_previews", "full_photos", "auto_copy_codes", "theme", "text_scale", "nudge_minutes", "maps_app", "calendar_app", "auto_delete_codes", "promotions_separate", "quick_replies", "quick_replies_on", "alert_keywords", "autoreply_text"));
+        "mention_name", "send_typing", "voice_speed", "undo_send", "link_previews", "full_photos", "auto_copy_codes", "theme", "text_scale", "nudge_minutes", "maps_app", "calendar_app", "auto_delete_codes", "promotions_separate", "quick_replies", "quick_replies_on", "alert_keywords", "autoreply_text", "notification_content"));
 
     static String export(Context context) throws Exception {
         JSONObject root = new JSONObject();

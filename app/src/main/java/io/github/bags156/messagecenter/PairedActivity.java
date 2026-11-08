@@ -2136,6 +2136,11 @@ public class PairedActivity extends Activity {
         LinearLayout alerts=settingsGroup(content,"Notifications");
         boolean allowed=checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED;
         settingRow(alerts,"Notifications",allowed?"Sound, vibration and per-chat options":"Turn on to hear about new messages",allowed?"On":"Off",()->{if(!allowed)requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},101);else startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()));});
+        String shows=NotificationPrivacy.mode(this);
+        settingRow(alerts,"What notifications show",shows.equals(NotificationPrivacy.ALL)?"Who it's from and what they said":shows.equals(NotificationPrivacy.NAME)?"Who it's from, not what they said":"Just “New message”. Bubbles are off, since they show who it is.",NotificationPrivacy.label(shows),()->{
+            List<String> labels=java.util.Arrays.asList("Name and message","Name only","Nothing (just “New message”)");String[] values={NotificationPrivacy.ALL,NotificationPrivacy.NAME,NotificationPrivacy.NONE};List<Runnable> actions=new ArrayList<>();
+            for(String v:values)actions.add(()->{NotificationPrivacy.set(this,v);PairedService.refreshChatNotifications(this);if(screen.equals("settings"))settings();});
+            menuSheet("What notifications show",labels,actions);});
         int nudge=Nudges.minutes(this);
         TextView reminderLine=settingRow(alerts,"Unread reminders",nudge>0?"Checking…":"For pinned chats you haven't read",nudge<=0?"Off":nudge==60?"Every hour":"Every "+(nudge/60)+" hours",()->{
             List<String> labels=java.util.Arrays.asList("Every hour","Every 2 hours","Every 4 hours","Off");int[] values={60,120,240,0};List<Runnable> actions=new ArrayList<>();

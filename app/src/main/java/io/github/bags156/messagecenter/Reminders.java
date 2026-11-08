@@ -92,9 +92,12 @@ public final class Reminders extends BroadcastReceiver {
             .setData(Uri.parse("messagecenter://reminder-open/" + id)).putExtra("chat", chat).putExtra("message", message)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent tap = PendingIntent.getActivity(context, 8, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        // Settings → What notifications show applies here too.
+        String heading = NotificationPrivacy.showName(context) ? "Reminder: " + due.optString("title") : "Message reminder";
+        String text = NotificationPrivacy.showText(context) ? due.optString("text") : "Tap to see the message";
         Notification n = new Notification.Builder(context, CHANNEL).setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Reminder: " + due.optString("title")).setContentText(due.optString("text"))
-            .setStyle(new Notification.BigTextStyle().bigText(due.optString("text")))
+            .setContentTitle(heading).setContentText(text)
+            .setStyle(new Notification.BigTextStyle().bigText(text))
             .setCategory(Notification.CATEGORY_REMINDER).setVisibility(Notification.VISIBILITY_PRIVATE)
             .setContentIntent(tap).setAutoCancel(true).build();
         nm.notify("reminder:" + id, 2, n);

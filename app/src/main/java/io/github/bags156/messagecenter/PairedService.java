@@ -362,6 +362,7 @@ public final class PairedService extends Service {
             try{context.startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,context.getPackageName()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}catch(Exception ignored){}
             return "Turn on bubbles for Message Center (and in your phone's notification settings), then try again.";}
         PairedService s=current;if(s==null)return "Connect to Google Messages first, then try again.";
+        if(!NotificationPrivacy.showName(context))return "Bubbles show the chat's name and photo, so they're off while notifications show nothing. Change it in Settings → Notifications → What notifications show.";
         s.postConversation(id,null,true,true);return "";
     }
     /**
@@ -481,10 +482,22 @@ public final class PairedService extends Service {
         List<JSONObject> recent;
         synchronized(notified){List<JSONObject> list=notified.computeIfAbsent(id,k->new ArrayList<>());if(m!=null)list.add(m);while(list.size()>6)list.remove(0);recent=new ArrayList<>(list);}
         if(recent.isEmpty()){List<JSONObject> saved=store.messages(id,3);for(JSONObject r:saved)if(!PairedProtocol.body(r).isEmpty())recent.add(r);}
+        // Settings → What notifications show: "Name only" swaps what was said for a count; "Nothing" hides who it's from too.
+        boolean showText=NotificationPrivacy.showText(this),showName=NotificationPrivacy.showName(this)||bubbleNow;
+        int incoming=0;JSONObject lastIn=null;for(JSONObject r:recent)if(!PairedProtocol.outgoing(r,chat)){incoming++;lastIn=r;}
+        boolean replied=!recent.isEmpty()&&PairedProtocol.outgoing(recent.get(recent.size()-1),chat);
+        String hidden=replied?"You replied":NotificationPrivacy.count(incoming);
+        if(!showName){postNameless(id,chat,recent,hidden,quiet);return;}
         Notification.MessagingStyle style=new Notification.MessagingStyle(new Person.Builder().setName("You").build());
         if(group){style.setConversationTitle(title);style.setGroupConversation(true);}
         Bitmap lastPhoto=null;String lastText="";
-        for(JSONObject r:recent){boolean mine=PairedProtocol.outgoing(r,chat);
+        if(!showText){
+            if(lastIn!=null){String pid=lastIn.optString("participantID"),sender=PairedProtocol.person(chat,pid,lastIn.optJSONObject("senderParticipant"));Bitmap photo=photo(chat,pid,sender);
+                Person.Builder who=new Person.Builder().setName(sender).setKey(pid.isEmpty()?sender:pid);if(photo!=null)who.setIcon(Icon.createWithBitmap(photo));
+                String count=NotificationPrivacy.count(incoming);style.addMessage(new Notification.MessagingStyle.Message(count,PairedProtocol.time(lastIn),who.build()));lastPhoto=photo;lastText=group?sender+": "+count:count;}
+            if(replied||lastIn==null){style.addMessage(new Notification.MessagingStyle.Message(hidden,recent.isEmpty()?System.currentTimeMillis():PairedProtocol.time(recent.get(recent.size()-1)),(Person)null));lastText=hidden;}
+        }
+        else for(JSONObject r:recent){boolean mine=PairedProtocol.outgoing(r,chat);
             String pid=r.optString("participantID"),sender=PairedProtocol.person(chat,pid,r.optJSONObject("senderParticipant"));
             if(mine){style.addMessage(new Notification.MessagingStyle.Message(notificationText("You",r),PairedProtocol.time(r),(Person)null));lastText="You: "+notificationText("You",r);continue;}
             String text=notificationText(sender,r);Bitmap photo=photo(chat,pid,sender);
@@ -497,8 +510,8 @@ public final class PairedService extends Service {
         if(!group&&lastPhoto!=null)builder.setLargeIcon(lastPhoto);
         builder.addAction(replyAction(id)).addAction(readAction(id));
         // A login or verification code in the newest message gets its own Copy button.
-        String code="";for(JSONObject r:recent)if(!PairedProtocol.outgoing(r,chat)){String found=ChatText.oneTimeCode(PairedProtocol.text(r));if(!found.isEmpty())code=found;}
-        if(!code.isEmpty()){builder.addAction(copyAction(id,code));if(code.equals(copiedCode))builder.setSubText("Code "+code+" copied");}
+        String code=newestCode(recent,chat);
+        if(!code.isEmpty()){builder.addAction(copyAction(id,code,showText));if(code.equals(copiedCode))builder.setSubText(showText?"Code "+code+" copied":"Code copied");}
         // Opening a bubble yourself should not ring. A lone notification in its own group with
         // GROUP_ALERT_SUMMARY never alerts (this is what AndroidX's setSilent does).
         if(quiet)builder.setGroup("quiet-"+id).setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY).setOnlyAlertOnce(true);
@@ -542,10 +555,32 @@ public final class PairedService extends Service {
             .addRemoteInput(new RemoteInput.Builder(KEY_REPLY).setLabel("Reply").build()).setSemanticAction(Notification.Action.SEMANTIC_ACTION_REPLY)
             .addExtras(noUi()).setAllowGeneratedReplies(true).build();
     }
-    private Notification.Action copyAction(String id,String code) {
+    private Notification.Action copyAction(String id,String code,boolean showCode) {
         Intent intent=new Intent(this,NotificationActions.class).setAction(NotificationActions.COPY).setData(chatUri(id)).putExtra("chat",id).putExtra("code",code);
         PendingIntent pending=PendingIntent.getBroadcast(this,6,intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
-        return new Notification.Action.Builder(Icon.createWithResource(this,R.drawable.ic_notification),"Copy "+code,pending).addExtras(noUi()).build();
+        return new Notification.Action.Builder(Icon.createWithResource(this,R.drawable.ic_notification),showCode?"Copy "+code:"Copy code",pending).addExtras(noUi()).build();
+    }
+    /** The newest login or verification code someone sent in these messages, or "". */
+    private static String newestCode(List<JSONObject> recent,JSONObject chat){
+        String code="";for(JSONObject r:recent)if(!PairedProtocol.outgoing(r,chat)){String found=ChatText.oneTimeCode(PairedProtocol.text(r));if(!found.isEmpty())code=found;}return code;}
+    /**
+     * "Nothing" in Settings: a plain "New message" with no name, photo or text. It can't be a
+     * conversation notification (Android shows the chat's name and photo on those), so it has no bubble.
+     */
+    private void postNameless(String id,JSONObject chat,List<JSONObject> recent,String line,boolean quiet) {
+        Notification.Builder b=new Notification.Builder(this,MESSAGES).setSmallIcon(R.drawable.ic_notification).setContentTitle(line)
+            .setCategory(Notification.CATEGORY_MESSAGE).setVisibility(Notification.VISIBILITY_PUBLIC).setContentIntent(openIntent(id)).setAutoCancel(true)
+            .setWhen(recent.isEmpty()?System.currentTimeMillis():PairedProtocol.time(recent.get(recent.size()-1))).setShowWhen(true);
+        b.addAction(replyAction(id)).addAction(readAction(id));
+        String code=newestCode(recent,chat);if(!code.isEmpty()){b.addAction(copyAction(id,code,false));if(code.equals(copiedCode))b.setSubText("Code copied");}
+        if(quiet)b.setGroup("quiet-"+id).setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY).setOnlyAlertOnce(true);
+        getSystemService(NotificationManager.class).notify("chat:"+id,1,b.build());
+    }
+    /** Redraws the chat notifications already on screen after "What notifications show" changes, without sound. */
+    static void refreshChatNotifications(Context context) {
+        PairedService s=current;if(s==null)return;
+        s.main.post(()->{for(android.service.notification.StatusBarNotification sbn:s.getSystemService(NotificationManager.class).getActiveNotifications()){
+            String tag=sbn.getTag();if(tag!=null&&tag.startsWith("chat:"))s.postConversation(tag.substring(5),null,true,false);}});
     }
     /**
      * Opens Android's settings for this one conversation (sound, vibration, priority, Do Not
