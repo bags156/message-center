@@ -101,6 +101,8 @@ final class PairedStore extends SQLiteOpenHelper {
             db.setTransactionSuccessful();return existed;
         }finally{db.endTransaction();}
     }
+    /** When the newest saved message in a chat was sent, or 0 if none is saved. */
+    synchronized long newestTime(String chat) {try(Cursor c=getReadableDatabase().rawQuery("SELECT MAX(time) FROM items WHERE chat=?",new String[]{chat})){return c.moveToFirst()&&!c.isNull(0)?c.getLong(0):0;}}
     synchronized List<JSONObject> messages(String id,int limit) {
         List<JSONObject> out=new ArrayList<>();
         try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM (SELECT data,time,id FROM items WHERE chat=? ORDER BY time DESC,id DESC LIMIT ?) ORDER BY time,id",new String[]{id,String.valueOf(limit)})){

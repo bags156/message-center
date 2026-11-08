@@ -40,7 +40,10 @@ public final class OnDeviceSmoke extends Instrumentation {
         try(PairedStore store=new PairedStore(getTargetContext())){
             store.chat(new JSONObject("{conversationID:'scrolly',name:'Scroll test',type:'RCS',lastMessageTimestamp:1794005200000000,participants:["
                 +"{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'p1',number:'+15550102000'},fullName:'Daniel Example'}]}"));
-            for(int i=0;i<80;i++)textMessage(store,"scrolly",i);}
+            for(int i=0;i<80;i++)textMessage(store,"scrolly",i);
+            // Catching up after a reconnect compares Google's chats with the newest message saved here.
+            check(store.newestTime("scrolly")==(1794000400000000L+79*60_000_000L)/1000,"Newest saved message time is wrong: "+store.newestTime("scrolly"));
+            check(store.newestTime("no-such-chat")==0,"A chat with nothing saved should have no newest time");}
         PairedActivity reader=(PairedActivity)startActivitySync(new Intent(getTargetContext(),BubbleActivity.class).setAction(Intent.ACTION_VIEW).putExtra("chat","scrolly").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         waitForIdleSync();int slack=Math.round(3*reader.getResources().getDisplayMetrics().density);
         android.widget.ScrollView sv=chatScroll(reader);int[] y=new int[2];

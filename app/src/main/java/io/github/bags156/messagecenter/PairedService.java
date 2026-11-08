@@ -60,6 +60,8 @@ public final class PairedService extends Service {
     private ReadReceiptQueue receipts;private boolean readingReceipt;
     private final Runnable receiptRetry=this::flushReadReceipts;
     private long lastSync;private final Runnable syncTick=()->requestSync(false);
+    /** Per chat: the Google chat time already fetched up to, so the same chat isn't fetched again for nothing. */
+    private final Map<String,Long> caughtUp=new ConcurrentHashMap<>();
     /** Backstop checks: every minute while you're using the phone, every 5 minutes with the screen off. */
     private static final long SYNC_SCREEN_ON_MS=60_000,SYNC_SCREEN_OFF_MS=5*60_000,SYNC_MIN_GAP_MS=10_000;
     private android.content.BroadcastReceiver screenReceiver;private android.net.ConnectivityManager.NetworkCallback networkCallback;
@@ -178,7 +180,9 @@ public final class PairedService extends Service {
                 case "PAIR_EMOJI" -> {emoji=new JSONObject(payload).optString("emoji");update("Approve the matching emoji in Google Messages");}
                 case "READY" -> {
                     ready=true;emoji="";stopAutoReconnect();update("Connected to Google Messages");scheduleCodeSweep();
-                    saveSession(token);main.post(this::flushOutbox);main.post(this::flushReadReceipts);scheduleSync();
+                    saveSession(token);main.post(this::flushOutbox);main.post(this::flushReadReceipts);
+                    // Catch up on anything that came in while disconnected, right away.
+                    main.post(()->requestSync(false));
                     network.execute(()->{if(generation.get()==token)try{chats(client,"",1);}catch(Exception e){update("Connected • tap Refresh to load conversations");}});
                 }
                 case "SAVE_SESSION" -> saveSession(token);
@@ -256,15 +260,24 @@ public final class PairedService extends Service {
     private void sync(Client source) throws Exception {
         // Only the newest few chats: a missed message always moves its chat to the top.
         JSONObject response=new JSONObject(source.latest(8));JSONArray chats=response.optJSONArray("conversations");if(chats==null)return;
-        List<String> missed=new ArrayList<>();
-        for(int i=0;i<chats.length();i++){JSONObject c=chats.getJSONObject(i);String id=c.optString("conversationID");JSONObject old=store.chat(id);
-            if(old!=null&&PairedProtocol.time(c)>PairedProtocol.time(old)+1500)missed.add(id);applyChat(c);}
+        // Missed means Google's chat is newer than the newest message saved here. (Not the saved chat:
+        // after a reconnect Google sends the chat list first, so that already matches.) Chats already
+        // fetched up to that time aren't fetched again, in case the time moved for something that
+        // isn't a message, like a reaction.
+        List<String> missed=new ArrayList<>();Map<String,Long> times=new HashMap<>();
+        for(int i=0;i<chats.length();i++){JSONObject c=chats.getJSONObject(i);String id=c.optString("conversationID");long at=PairedProtocol.time(c);
+            if(at>Math.max(store.newestTime(id),caughtUp.getOrDefault(id,0L))+1500){missed.add(id);times.put(id,at);}applyChat(c);}
         if(!missed.isEmpty()){
             long recent=System.currentTimeMillis()-30*60_000;ChatSettings settings=new ChatSettings(this);
+            // Five chats per check; any others are picked up by the next one.
             for(String id:missed.subList(0,Math.min(5,missed.size()))){JSONObject chat=store.chat(id);long version=store.snapshot();
-                JSONArray ms=new JSONObject(source.messages(id,"")).optJSONArray("messages");if(ms==null)continue;
+                JSONArray ms=new JSONObject(source.messages(id,"")).optJSONArray("messages");if(ms==null)continue;caughtUp.put(id,times.get(id));
+                int fresh=0;
                 for(int j=0;j<ms.length();j++){JSONObject m=ms.getJSONObject(j);boolean existed=store.message(m,version,false);
-                    if(!existed&&!PairedProtocol.outgoing(m,chat)&&PairedProtocol.time(m)>recent&&chat!=null&&chat.optBoolean("unread")&&!quiet(id,m)){autoCopy(m);main.post(()->postConversation(id,m,false,false));}}}
+                    if(!existed&&!PairedProtocol.outgoing(m,chat)){fresh++;Nudges.arrived(this,m);}
+                    // Only the last half hour is notified, so a long outage doesn't bring a flood of old alerts.
+                    if(!existed&&!PairedProtocol.outgoing(m,chat)&&PairedProtocol.time(m)>recent&&chat!=null&&chat.optBoolean("unread")&&!quiet(id,m)){autoCopy(m);main.post(()->postConversation(id,m,false,false));}}
+                if(fresh>0)Diagnostics.note("Caught up "+fresh+" missed message"+(fresh==1?"":"s")+" in a chat");}
             try{source.reactivate();}catch(Exception ignored){}
             changed("MESSAGE");
         }
