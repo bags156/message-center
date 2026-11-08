@@ -12,6 +12,38 @@ import io.github.bags156.gm.bridge.Client;
 public final class OnDeviceSmoke extends Instrumentation {
     @Override public void onCreate(Bundle args){super.onCreate(args);start();}
     private void check(boolean yes,String message){if(!yes)throw new AssertionError(message);}
+    private void onMain(PairedActivity a,String method){runOnMainSync(()->{try{java.lang.reflect.Method m=PairedActivity.class.getDeclaredMethod(method);m.setAccessible(true);m.invoke(a);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();}
+    private android.widget.ScrollView chatScroll(PairedActivity a)throws Exception{java.lang.reflect.Field f=PairedActivity.class.getDeclaredField("scroll");f.setAccessible(true);return (android.widget.ScrollView)f.get(a);}
+    private void textMessage(PairedStore store,String chat,int i)throws Exception{boolean mine=i%3==0;
+        store.message(new JSONObject().put("messageID",chat+i).put("conversationID",chat).put("participantID",mine?"me":"p1").put("timestamp",1794000400000000L+i*60_000_000L)
+            .put("messageStatus",new JSONObject().put("status",mine?"OUTGOING_DELIVERED":"INCOMING_COMPLETE"))
+            .put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","Line "+i+" of a long conversation"))))),0,true);}
+    /** Scrolled up reading: a refresh from Google, new messages, redraws and a trip to Details must leave you where you are. */
+    private void checkChatKeepsItsPlace()throws Exception{
+        try(PairedStore store=new PairedStore(getTargetContext())){
+            store.chat(new JSONObject("{conversationID:'scrolly',name:'Scroll test',type:'RCS',lastMessageTimestamp:1794005200000000,participants:["
+                +"{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'p1',number:'+15550102000'},fullName:'Daniel Example'}]}"));
+            for(int i=0;i<80;i++)textMessage(store,"scrolly",i);}
+        PairedActivity reader=(PairedActivity)startActivitySync(new Intent(getTargetContext(),BubbleActivity.class).setAction(Intent.ACTION_VIEW).putExtra("chat","scrolly").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        waitForIdleSync();int slack=Math.round(3*reader.getResources().getDisplayMetrics().density);
+        android.widget.ScrollView sv=chatScroll(reader);int[] y=new int[2];
+        runOnMainSync(()->{sv.scrollTo(0,sv.getChildAt(0).getHeight()/2);});waitForIdleSync();
+        runOnMainSync(()->{y[0]=sv.getScrollY();y[1]=sv.getChildAt(0).getHeight()-sv.getHeight()-sv.getScrollY();});
+        check(y[0]>0&&y[1]>slack*40,"Test chat isn't long enough to scroll ("+y[0]+", "+y[1]+")");int reading=y[0];
+        runOnMainSync(()->{try{java.lang.reflect.Method m=PairedActivity.class.getDeclaredMethod("messagesLoaded",boolean.class);m.setAccessible(true);m.invoke(reader,false);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
+        runOnMainSync(()->y[0]=sv.getScrollY());check(Math.abs(y[0]-reading)<=slack,"A refresh from Google moved the chat: "+reading+" → "+y[0]);
+        try(PairedStore store=new PairedStore(getTargetContext())){textMessage(store,"scrolly",80);}
+        runOnMainSync(()->{try{java.lang.reflect.Method m=PairedActivity.class.getDeclaredMethod("renderMessages",boolean.class);m.setAccessible(true);m.invoke(reader,false);m.invoke(reader,false);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
+        runOnMainSync(()->y[0]=sv.getScrollY());check(Math.abs(y[0]-reading)<=slack,"A new message (two quick redraws) moved the chat: "+reading+" → "+y[0]);
+        onMain(reader,"details");runOnMainSync(reader::onBackPressed);waitForIdleSync();
+        android.widget.ScrollView back=chatScroll(reader);check(back!=null&&back!=sv,"Back from Details didn't reopen the chat");
+        runOnMainSync(()->y[0]=back.getScrollY());check(Math.abs(y[0]-reading)<=slack,"Coming back from Details moved the chat: "+reading+" → "+y[0]);
+        // At the newest message, new arrivals still keep you at the bottom.
+        runOnMainSync(()->back.scrollTo(0,back.getChildAt(0).getHeight()));waitForIdleSync();
+        try(PairedStore store=new PairedStore(getTargetContext())){textMessage(store,"scrolly",81);}
+        runOnMainSync(()->{try{java.lang.reflect.Method m=PairedActivity.class.getDeclaredMethod("messagesLoaded",boolean.class);m.setAccessible(true);m.invoke(reader,false);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
+        runOnMainSync(()->y[1]=back.getChildAt(0).getHeight()-back.getHeight()-back.getScrollY());check(y[1]<=slack,"A new message at the bottom didn't keep the chat at the newest ("+y[1]+" px short)");
+        reader.finish();waitForIdleSync();}
     @Override public void onStart(){Bundle result=new Bundle();try {
         // Real JNI load on Android, not a mocked Java bridge.
         Client client=Bridge.newClient("",(kind,payload)->{});
@@ -182,6 +214,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         bubble.getWindow().getDecorView().findViewsWithText(found,"Attach photos, videos, or files",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);
         android.view.View plus=found.get(0);runOnMainSync(plus::performClick);waitForIdleSync();
         check(bubble.hasWindowFocus()==false,"Attach panel did not open");bubble.finish();waitForIdleSync();
+        checkChatKeepsItsPlace();
         try(PairedStore store=new PairedStore(getTargetContext())){store.clear();}
         Outbox box=new Outbox(getTargetContext());for(JSONObject o:box.all())box.remove(o.optString("id"));
         getTargetContext().getSharedPreferences("transcripts",0).edit().clear().commit();

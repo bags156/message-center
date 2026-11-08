@@ -108,6 +108,12 @@ public class PairedActivity extends Activity {
     private long lastInboxRefresh,lastTypingSent;
     /** True while the chat is scrolled to the newest message, so late layout changes keep it there. */
     private boolean pinnedBottom=true;
+    /** A place in a chat: a message and how far below the top of the screen it starts. */
+    private static final class Spot{final String id;final int offset;Spot(String id,int offset){this.id=id;this.offset=offset;}}
+    /** The chat redraw still waiting to be laid out, and where it will put the chat (the bottom, or a spot). */
+    private android.view.ViewTreeObserver.OnPreDrawListener placing;private ScrollView placingIn;private boolean placeBottom;private Spot placeSpot;private int placeY,placeBefore;
+    /** Where you were in a chat before opening its Details, and a spot the next redraw should go back to. */
+    private String backChat="";private Spot backSpot,restoreSpot;private boolean backFromSaved;
     private final Map<String,View> messageViews=new HashMap<>();
     private final android.os.Handler ui=new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable typingTick=this::updateTyping;
@@ -128,6 +134,8 @@ public class PairedActivity extends Activity {
         super.onCreate(state);Diagnostics.init(this);HevcSandbox.init(this);GivenNames.init(this);drafts=new Drafts(this);drafts.prefs().registerOnSharedPreferenceChangeListener(draftChanged);store=new PairedStore(this);chatSettings=new ChatSettings(this);outbox=new Outbox(this);starred=new Starred(this);Nicknames.load(this);
         if(state!=null){String shot=state.getString("capture");if(shot!=null)pendingCapture=new File(shot);chatId=state.getString("chat","");replyId=state.getString("reply","");if(drafts.getOrDefault(chatId,"").isEmpty())drafts.put(chatId,state.getString("draft",""));}
         String target=getIntent().getStringExtra("chat");if(target!=null&&!target.isEmpty())chatId=target;
+        // Android closed this screen in the background (or the theme changed): reopen the chat where you were reading.
+        if(state!=null&&state.getString("spot")!=null&&!chatId.isEmpty()&&chatId.equals(state.getString("chat",""))){backChat=chatId;backSpot=new Spot(state.getString("spot"),state.getInt("spot_offset"));backFromSaved=true;}
         if(bubble()&&chatId.isEmpty()){finish();return;}
         if(!chatId.isEmpty()){thread(chatId);showFromIntent(getIntent());}else if(state!=null&&"settings".equals(state.getString("screen"))&&!bubble()){pendingSettingsY=state.getInt("settings_y",0);settings();}else inbox();
         if(state==null&&!bubble())receiveShare(getIntent());
@@ -150,7 +158,7 @@ public class PairedActivity extends Activity {
     /** Picks up a draft typed in the other window (bubble or full app) so you carry on where you left off. */
     private void refreshDraft(){if(composer==null||drafts==null||chatId.isEmpty()||!screen.equals("chat"))return;String stored=drafts.getOrDefault(chatId,"");
         if(stored.equals(composer.getText().toString()))return;composer.setText(stored);composer.setSelection(stored.length());}
-    @Override protected void onSaveInstanceState(Bundle out){remember();out.putString("screen",screen);if(screen.equals("settings")&&settingsScroll!=null)out.putInt("settings_y",settingsScroll.getScrollY());if(pendingCapture!=null)out.putString("capture",pendingCapture.getPath());out.putString("chat",chatId);out.putString("reply",replyId);out.putString("draft",drafts.getOrDefault(chatId,""));super.onSaveInstanceState(out);}
+    @Override protected void onSaveInstanceState(Bundle out){remember();out.putString("screen",screen);if(screen.equals("settings")&&settingsScroll!=null)out.putInt("settings_y",settingsScroll.getScrollY());if(pendingCapture!=null)out.putString("capture",pendingCapture.getPath());out.putString("chat",chatId);if(screen.equals("chat")){Spot at=chatSpotNow();if(at!=null){out.putString("spot",at.id);out.putInt("spot_offset",at.offset);}}out.putString("reply",replyId);out.putString("draft",drafts.getOrDefault(chatId,""));super.onSaveInstanceState(out);}
     @Override public void onBackPressed(){if(selecting){stopSelecting();return;}if(screen.equals("media")){details();return;}if(screen.equals("details")){thread(chatId);return;}if(bubble()){super.onBackPressed();return;}if(login!=null){destroyLogin();inbox();}else if(screen.equals("inbox")&&(folder!=1||unknownOnly||promoOnly)){folder=1;unknownOnly=false;promoOnly=false;inbox();}else if(!screen.equals("inbox")){remember();inbox();}else super.onBackPressed();}
 
     // ---- Shared building blocks ----
@@ -158,6 +166,9 @@ public class PairedActivity extends Activity {
     private void base(String name){
         if(!name.equals("chat"))stopInline();
         if(screen.equals("inbox")&&!name.equals("inbox")&&scroll!=null){inboxScrollY=scroll.getScrollY();inboxKey=inboxKey();repliedSinceInbox=false;}
+        // Leaving a chat for another screen (Details): note where you were, so coming back puts you there instead of at the bottom.
+        if(screen.equals("chat")&&!name.equals("chat")&&scroll!=null){backChat=chatId;backSpot=chatSpotNow();}
+        placing=null;placingIn=null;
         receiptStatusView=null;
         // Screenshots are always allowed (an older version could leave them blocked after signing in).
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);if(!name.equals("login"))setRecentsScreenshotEnabled(true);
@@ -485,9 +496,10 @@ public class PairedActivity extends Activity {
     // ---- Conversation ----
     private void thread(String id){
         if(!id.equals(chatId))stopInline();
+        Spot back=(screen.equals("details")||backFromSaved)&&id.equals(backChat)?backSpot:null;backChat="";backSpot=null;backFromSaved=false;
         // Opening a chat with unread messages: remember where they start, for the "New messages" line.
         if(!id.equals(chatId)||!screen.equals("chat")){JSONObject before=store.chat(id);unreadSince=before!=null&&chatSettings.unread(before)?chatSettings.seen(id):-1;unreadJump=unreadSince>0;}
-        remember();chatId=id;limit=300;replyId="";base("chat");JSONObject c=store.chat(id);ChatTheme theme=chatSettings.theme(id);
+        remember();chatId=id;if(back==null)limit=300;replyId="";base("chat");JSONObject c=store.chat(id);ChatTheme theme=chatSettings.theme(id);
         root.setPadding(dp(4),dp(4),dp(4),dp(8));
         LinearLayout bar=row();if(!bubble())bar.addView(icon(R.drawable.ic_back,ink,"Back",this::inbox));else bar.setPadding(dp(12),0,0,0);
         LinearLayout who=row();View face=avatar(c,40);who.addView(face);
@@ -540,7 +552,7 @@ public class PairedActivity extends Activity {
         sendButton=new ImageView(this);sendButton.setImageResource(R.drawable.ic_send);sendButton.setImageTintList(ColorStateList.valueOf(theme.onAccent(dark)));sendButton.setBackground(oval(theme.accent(dark)));
         sendButton.setPadding(dp(14),dp(14),dp(14),dp(14));sendButton.setContentDescription("Send");sendButton.setOnClickListener(v->sendOrRecord());sendButton.setOnLongClickListener(v->{scheduleMessage();return true;});
         LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(dp(52),dp(52));sl.setMarginStart(dp(8));compose.addView(sendButton,sl);root.addView(compose);renderAttachments();updateComposeButton();applyIncoming();
-        chatSettings.setMarkedUnread(id,false);if(!bubble())PairedService.clearNotification(this,id);renderMessages(true);if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();
+        chatSettings.setMarkedUnread(id,false);if(!bubble())PairedService.clearNotification(this,id);if(back!=null){restoreSpot=back;renderMessages(false);}else renderMessages(true);if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();
         if(c!=null)requestPhotos(java.util.Collections.singletonList(c));
     }
     private void chatMenu(View anchor){JSONObject c=store.chat(chatId);if(c==null)return;PopupMenu menu=new PopupMenu(this,anchor);Menu m=menu.getMenu();
@@ -554,14 +566,27 @@ public class PairedActivity extends Activity {
         menu.setOnMenuItemClickListener(item->{switch(item.getItemId()){case 1->togglePin(c);case 2->chooseTheme(chatId);case 3->toggleReceipts(chatId);case 4->loadMessages(false);case 5->loadOlderMessages();
             case 6->details();case 7->openBubble(chatId);case 8->startActivity(new Intent(this,PairedActivity.class).setAction(OPEN_CHAT).putExtra("chat",chatId).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP|Intent.FLAG_ACTIVITY_CLEAR_TOP));
             case 9->searchChat();case 10->toggleMute(chatId);case 11->archive(c,!archived);case 12->block(c);case 13->deleteChat(c);case 14->snoozeMenu(chatId);default->{}}return true;});menu.show();}
+    /** The first message on screen in the chat and how far down it sits, or null when you're at (or near) the newest message. */
+    private Spot currentSpot(){if(scroll==null||items==null)return null;View content=scroll.getChildAt(0);int y=scroll.getScrollY();
+        if(content==null||content.getHeight()-scroll.getHeight()-y<dp(80))return null;return spotAt(y);}
+    /** Where the chat is right now, counting a redraw that hasn't been laid out yet. */
+    private Spot chatSpotNow(){return placing!=null&&placingIn==scroll?(placeBottom?null:placeSpot):currentSpot();}
+    private Spot spotAt(int y){String id=null;int top=0,offset=0;
+        for(java.util.Map.Entry<String,View> e:messageViews.entrySet()){View v=e.getValue();if(v.getParent()!=items)continue;
+            if(v.getBottom()>y&&(id==null||v.getTop()<top)){id=e.getKey();top=v.getTop();offset=v.getTop()-y;}}
+        return id==null?null:new Spot(id,offset);}
+    /**
+     * Redraws the chat. It stays where you are unless {@code bottom} asks for the newest
+     * message (opening a chat, sending) or you were already at the bottom; nothing else moves it.
+     */
     private void renderMessages(boolean bottom){if(items==null||!screen.equals("chat"))return;
-        int y=scroll.getScrollY();View content=scroll.getChildAt(0);int before=content.getHeight();
-        boolean atBottom=bottom||before-scroll.getHeight()-y<dp(80);
-        // The first message on screen and how far down it sits, to put it back exactly there after the redraw.
-        String anchorId=null;int anchorOffset=0;
-        if(!atBottom)for(java.util.Map.Entry<String,View> e:messageViews.entrySet()){View v=e.getValue();if(v.getParent()!=items)continue;
-            if(v.getBottom()>y&&(anchorId==null||v.getTop()<messageViews.get(anchorId).getTop())){anchorId=e.getKey();anchorOffset=v.getTop()-y;}}
-        String keepId=anchorId;int keepOffset=anchorOffset;
+        ScrollView sv=scroll;View content=sv.getChildAt(0);int y,before;boolean atBottom;Spot spot;
+        // If the last redraw hasn't been laid out yet, its new views have no positions; keep aiming where it was aiming.
+        if(placing!=null&&placingIn==sv){sv.getViewTreeObserver().removeOnPreDrawListener(placing);placing=null;y=placeY;before=placeBefore;atBottom=bottom||placeBottom;spot=atBottom?null:placeSpot;}
+        else{y=sv.getScrollY();before=content.getHeight();atBottom=bottom||before-sv.getHeight()-y<dp(80);spot=atBottom?null:spotAt(y);}
+        boolean restoring=restoreSpot!=null&&!bottom;if(restoreSpot!=null){if(!bottom){spot=restoreSpot;atBottom=false;}restoreSpot=null;}
+        placeY=y;placeBefore=before;placeBottom=atBottom;placeSpot=spot;
+        boolean toBottom=atBottom;String keepId=spot==null?null:spot.id;int keepOffset=spot==null?0:spot.offset;
         items.removeAllViews();unreadDivider=null;inlineSeen=false;
         JSONObject c=store.chat(chatId);ChatTheme theme=chatSettings.theme(chatId);boolean group=c!=null&&PairedProtocol.other(c)==null;
         List<JSONObject> messages=new ArrayList<>();for(JSONObject m:store.messages(chatId,limit))if(!PairedProtocol.body(m).isEmpty()||!PairedProtocol.event(m,c).isEmpty())messages.add(m);
@@ -605,15 +630,17 @@ public class PairedActivity extends Activity {
         long newest=0;int arrived=0;for(int i=0;i<n;i++){newest=Math.max(newest,at[i]);if(newestSeenTime>0&&at[i]>newestSeenTime&&!out[i]&&ev[i].isEmpty())arrived++;}
         if(atBottom)newWhileAway=0;else newWhileAway+=arrived;newestSeenTime=Math.max(newestSeenTime,newest);if(atBottom)pinnedBottom=true;updateJumpButton();
         // Position before the next frame is drawn, so the chat appears already at the right place instead of sliding there.
-        ScrollView sv=scroll;android.view.ViewTreeObserver.OnPreDrawListener[] once=new android.view.ViewTreeObserver.OnPreDrawListener[1];
-        once[0]=()->{sv.getViewTreeObserver().removeOnPreDrawListener(once[0]);if(scroll!=sv||sv.getChildAt(0)==null)return true;
+        android.view.ViewTreeObserver.OnPreDrawListener[] once=new android.view.ViewTreeObserver.OnPreDrawListener[1];
+        once[0]=()->{sv.getViewTreeObserver().removeOnPreDrawListener(once[0]);if(placing!=once[0])return true;placing=null;placingIn=null;if(scroll!=sv||sv.getChildAt(0)==null)return true;
             if(anchorOlder){anchorOlder=false;sv.scrollTo(0,y+Math.max(0,sv.getChildAt(0).getHeight()-before));}
-            else if(atBottom&&unreadJump&&unreadDivider!=null&&sv.getChildAt(0).getHeight()-unreadDivider.getTop()>sv.getHeight()){
+            else if(toBottom&&unreadJump&&unreadDivider!=null&&sv.getChildAt(0).getHeight()-unreadDivider.getTop()>sv.getHeight()){
                 // More unread than fits on screen: start at the first one, with ↓ to jump to the newest.
                 unreadJump=false;sv.scrollTo(0,Math.max(0,unreadDivider.getTop()-dp(12)));pinnedBottom=false;newWhileAway=unreadCount;updateJumpButton();}
-            else if(atBottom){sv.scrollTo(0,sv.getChildAt(0).getHeight());pinnedBottom=true;if(n>0)unreadJump=false;}
-            else{View again=keepId==null?null:messageViews.get(keepId);sv.scrollTo(0,again!=null&&again.getParent()==items?Math.max(0,again.getTop()-keepOffset):y);}return true;};
-        sv.getViewTreeObserver().addOnPreDrawListener(once[0]);
+            else if(toBottom){sv.scrollTo(0,sv.getChildAt(0).getHeight());pinnedBottom=true;if(n>0)unreadJump=false;}
+            else{View again=keepId==null?null:messageViews.get(keepId);boolean found=again!=null&&again.getParent()==items;
+                // Going back to a message that isn't loaded any more: the newest is a better guess than the top.
+                if(!found&&restoring){sv.scrollTo(0,sv.getChildAt(0).getHeight());pinnedBottom=true;}else{sv.scrollTo(0,found?Math.max(0,again.getTop()-keepOffset):y);pinnedBottom=sv.getChildAt(0).getHeight()-sv.getHeight()-sv.getScrollY()<dp(80);updateJumpButton();}}return true;};
+        placing=once[0];placingIn=sv;sv.getViewTreeObserver().addOnPreDrawListener(once[0]);
     }
     private View bubble(JSONObject m,JSONObject c,ChatTheme theme,boolean outgoing,boolean joinPrev,boolean joinNext){
         LinearLayout wrap=vertical();String body=PairedProtocol.text(m),fallback=ChatText.replyFallbackBody(body);List<JSONObject> media=PairedProtocol.media(m);
@@ -839,7 +866,9 @@ public class PairedActivity extends Activity {
     private void loadOlderMessages(){if(busy||!screen.equals("chat"))return;String cursor=store.page("messages:"+chatId,false);if(cursor.isEmpty())return;anchorOlder=true;loadMessages(true);}
     private void loadMessages(boolean more){if(busy)return;String id=chatId,cursor=more?store.page("messages:"+id,false):"";
         if(more&&cursor.isEmpty()){anchorOlder=false;String note=store.page("messages:"+id,true);toast(note.isEmpty()?"Refresh this conversation first.":note);return;}
-        busy=true;PairedService.loadMessages(id,cursor,(v,e)->{busy=false;if(!e.isEmpty()){anchorOlder=false;toast(e);}if(screen.equals("chat")&&chatId.equals(id)){if(more)limit+=100;renderMessages(!more);markReadIfAllowed();}});}
+        busy=true;PairedService.loadMessages(id,cursor,(v,e)->{busy=false;if(!e.isEmpty()){anchorOlder=false;toast(e);}if(screen.equals("chat")&&chatId.equals(id))messagesLoaded(more);});}
+    /** Google sent this chat's messages: show them without moving you (renderMessages keeps your place unless you were at the bottom). */
+    private void messagesLoaded(boolean more){if(more)limit+=100;renderMessages(false);markReadIfAllowed();}
     /**
      * Viewing a chat here records it as seen. If read receipts are on for this
      * chat, it is also marked read on the phone, and Google Messages sends RCS
