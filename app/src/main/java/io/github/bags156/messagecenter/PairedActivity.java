@@ -741,6 +741,24 @@ public class PairedActivity extends Activity {
         menuSheet("Open places in",labels,actions);}
     private String mapsAppLabel(){String pkg=getSharedPreferences("paired",MODE_PRIVATE).getString("maps_app","");if(pkg.isEmpty())return "Ask the first time";if(pkg.equals("ask"))return "Ask every time";
         try{return String.valueOf(getPackageManager().getApplicationLabel(getPackageManager().getApplicationInfo(pkg,0)));}catch(Exception e){return "Ask the first time";}}
+    /** Calendar apps that can add an event (Settings → Calendar app). */
+    private List<android.content.pm.ResolveInfo> calendarApps(){return getPackageManager().queryIntentActivities(new Intent(Intent.ACTION_INSERT).setData(android.provider.CalendarContract.Events.CONTENT_URI),0);}
+    /** Adds an event in your chosen calendar app: the one you picked, a choice every time, or ask once and remember. */
+    private void openCalendar(Intent add){List<android.content.pm.ResolveInfo> apps=calendarApps();if(apps.isEmpty()){toast("No calendar app is installed.");return;}
+        String pkg=getSharedPreferences("paired",MODE_PRIVATE).getString("calendar_app","");
+        boolean installed=false;for(android.content.pm.ResolveInfo r:apps)if(r.activityInfo.packageName.equals(pkg))installed=true;
+        if(installed){try{startActivity(new Intent(add).setPackage(pkg));return;}catch(Exception ignored){}}
+        if(apps.size()==1){try{startActivity(new Intent(add).setPackage(apps.get(0).activityInfo.packageName));}catch(Exception e){toast("No calendar app is installed.");}return;}
+        if(pkg.equals("ask")){try{startActivity(Intent.createChooser(add,"Add to calendar"));}catch(Exception e){toast("No calendar app is installed.");}return;}
+        chooseCalendarApp(chosen->{try{startActivity(new Intent(add).setPackage(chosen));}catch(Exception e){toast("That calendar app couldn't add the event.");}});}
+    private void chooseCalendarApp(java.util.function.Consumer<String> then){List<android.content.pm.ResolveInfo> apps=calendarApps();if(apps.isEmpty()){toast("No calendar app is installed.");return;}
+        List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();java.util.Set<String> seen=new java.util.HashSet<>();
+        for(android.content.pm.ResolveInfo r:apps){String pkg=r.activityInfo.packageName;if(!seen.add(pkg))continue;labels.add(String.valueOf(r.loadLabel(getPackageManager())));
+            actions.add(()->{getSharedPreferences("paired",MODE_PRIVATE).edit().putString("calendar_app",pkg).apply();if(then!=null)then.accept(pkg);else if(screen.equals("settings"))settings();});}
+        labels.add("Ask every time");actions.add(()->{getSharedPreferences("paired",MODE_PRIVATE).edit().putString("calendar_app","ask").apply();if(screen.equals("settings"))settings();});
+        menuSheet("Add dates to",labels,actions);}
+    private String calendarAppLabel(){String pkg=getSharedPreferences("paired",MODE_PRIVATE).getString("calendar_app","");if(pkg.isEmpty())return "Ask the first time";if(pkg.equals("ask"))return "Ask every time";
+        try{return String.valueOf(getPackageManager().getApplicationLabel(getPackageManager().getApplicationInfo(pkg,0)));}catch(Exception e){return "Ask the first time";}}
     private void jumpTo(String id){View v=messageViews.get(id);
         if(v==null||scroll==null){toast("That message isn't loaded here. Scroll up to load older messages.");return;}
         scroll.smoothScrollTo(0,Math.max(0,v.getTop()-dp(96)));
@@ -1450,7 +1468,7 @@ public class PairedActivity extends Activity {
             Intent add=new Intent(Intent.ACTION_INSERT).setData(android.provider.CalendarContract.Events.CONTENT_URI)
                 .putExtra(android.provider.CalendarContract.EXTRA_EVENT_BEGIN_TIME,h.time).putExtra(android.provider.CalendarContract.EXTRA_EVENT_END_TIME,h.time+3_600_000L)
                 .putExtra(android.provider.CalendarContract.Events.TITLE,who.isEmpty()?"Plans":"With "+who).putExtra(android.provider.CalendarContract.Events.DESCRIPTION,PairedProtocol.text(m));
-            try{startActivity(add);}catch(Exception e){toast("No calendar app is installed.");}return;}
+            openCalendar(add);return;}
         String url=h.kind.equals("flight")?SmartText.flightUrl(h):SmartText.trackingUrl(h);
         try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));}catch(Exception e){toast("No browser is installed.");}}
     // Quick replies and @ names: one row of chips above the message box.
@@ -1971,6 +1989,7 @@ public class PairedActivity extends Activity {
         settingSwitch(chats,"Full-quality photos","Off shows previews only and uses less data",fullPhotos(),on->prefs.edit().putBoolean("full_photos",on).apply());
         settingSwitch(chats,"Link previews","Only for contacts and chats you've written in",linkPreviewsOn(),on->prefs.edit().putBoolean("link_previews",on).apply());
         settingRow(chats,"Maps app for addresses",null,mapsAppLabel(),()->chooseMapsApp(pkg->{if(screen.equals("settings"))settings();}));
+        settingRow(chats,"Calendar app for dates","Tap a date or time in a message to add it",calendarAppLabel(),()->chooseCalendarApp(pkg->{if(screen.equals("settings"))settings();}));
         if(!Avatars.canUsePhonePhotos(this))settingRow(chats,"Use names and photos from contacts","Full first names (like \"Hannah Kay\") and contact photos",null,()->{if(shouldShowRequestPermissionRationale(Manifest.permission.READ_CONTACTS)||!prefs.getBoolean("asked_contacts",false)){prefs.edit().putBoolean("asked_contacts",true).apply();requestPermissions(new String[]{Manifest.permission.READ_CONTACTS},79);}
             else startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())));});
 
