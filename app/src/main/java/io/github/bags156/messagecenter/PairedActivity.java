@@ -125,7 +125,7 @@ public class PairedActivity extends Activity {
         if(screen.equals("inbox"))renderInbox();else if(screen.equals("chat")){renderMessages(false);markReadIfAllowed();updateTyping();}
     }};
     @Override public void onCreate(Bundle state) {
-        super.onCreate(state);HevcSandbox.init(this);GivenNames.init(this);drafts=new Drafts(this);drafts.prefs().registerOnSharedPreferenceChangeListener(draftChanged);store=new PairedStore(this);chatSettings=new ChatSettings(this);outbox=new Outbox(this);starred=new Starred(this);Nicknames.load(this);
+        super.onCreate(state);Diagnostics.init(this);HevcSandbox.init(this);GivenNames.init(this);drafts=new Drafts(this);drafts.prefs().registerOnSharedPreferenceChangeListener(draftChanged);store=new PairedStore(this);chatSettings=new ChatSettings(this);outbox=new Outbox(this);starred=new Starred(this);Nicknames.load(this);
         if(state!=null){String shot=state.getString("capture");if(shot!=null)pendingCapture=new File(shot);chatId=state.getString("chat","");replyId=state.getString("reply","");if(drafts.getOrDefault(chatId,"").isEmpty())drafts.put(chatId,state.getString("draft",""));}
         String target=getIntent().getStringExtra("chat");if(target!=null&&!target.isEmpty())chatId=target;
         if(bubble()&&chatId.isEmpty()){finish();return;}
@@ -482,7 +482,10 @@ public class PairedActivity extends Activity {
         PairedService.loadChats(cursor,selected,(v,e)->{busy=false;if(!e.isEmpty()&&!more)toast(e);if(screen.equals("inbox"))renderInbox();});}
 
     // ---- Conversation ----
-    private void thread(String id){remember();chatId=id;limit=300;replyId="";base("chat");JSONObject c=store.chat(id);ChatTheme theme=chatSettings.theme(id);
+    private void thread(String id){
+        // Opening a chat with unread messages: remember where they start, for the "New messages" line.
+        if(!id.equals(chatId)||!screen.equals("chat")){JSONObject before=store.chat(id);unreadSince=before!=null&&chatSettings.unread(before)?chatSettings.seen(id):-1;unreadJump=unreadSince>0;}
+        remember();chatId=id;limit=300;replyId="";base("chat");JSONObject c=store.chat(id);ChatTheme theme=chatSettings.theme(id);
         root.setPadding(dp(4),dp(4),dp(4),dp(8));
         LinearLayout bar=row();if(!bubble())bar.addView(icon(R.drawable.ic_back,ink,"Back",this::inbox));else bar.setPadding(dp(12),0,0,0);
         LinearLayout who=row();View face=avatar(c,40);who.addView(face);
@@ -549,7 +552,7 @@ public class PairedActivity extends Activity {
             case 9->searchChat();case 10->toggleMute(chatId);case 11->archive(c,!archived);case 12->block(c);case 13->deleteChat(c);case 14->snoozeMenu(chatId);default->{}}return true;});menu.show();}
     private void renderMessages(boolean bottom){if(items==null||!screen.equals("chat"))return;
         int y=scroll.getScrollY();View content=scroll.getChildAt(0);int before=content.getHeight();
-        boolean atBottom=bottom||before-scroll.getHeight()-y<dp(80);items.removeAllViews();
+        boolean atBottom=bottom||before-scroll.getHeight()-y<dp(80);items.removeAllViews();unreadDivider=null;
         JSONObject c=store.chat(chatId);ChatTheme theme=chatSettings.theme(chatId);boolean group=c!=null&&PairedProtocol.other(c)==null;
         List<JSONObject> messages=new ArrayList<>();for(JSONObject m:store.messages(chatId,limit))if(!PairedProtocol.body(m).isEmpty()||!PairedProtocol.event(m,c).isEmpty())messages.add(m);
         if(messages.size()>=limit-5)items.addView(button("Show more saved messages",false,()->{limit+=300;renderMessages(false);}));
@@ -575,6 +578,8 @@ public class PairedActivity extends Activity {
             boolean joinPrev=!sep&&i>0&&line[i-1]==null&&!replyTo[i]&&!reacted[i-1]&&InboxOrder.grouped(out[i-1],who[i-1],at[i-1],out[i],who[i],at[i]);
             boolean joinNext=i+1<n&&line[i+1]==null&&!replyTo[i+1]&&!reacted[i]&&!InboxOrder.separator(at[i],at[i+1],zone)&&InboxOrder.grouped(out[i],who[i],at[i],out[i+1],who[i+1],at[i+1]);
             if(!sep&&i>0)gap(items,joinPrev?3:12);
+            if(unreadSince>0&&unreadDivider==null&&i>0&&!out[i]&&at[i]>unreadSince){int count=0;for(int k=i;k<n;k++)if(!out[k]&&at[k]>unreadSince&&ev[k].isEmpty()&&line[k]==null)count++;
+                unreadCount=count;unreadDivider=newMessagesLine(count);items.addView(unreadDivider);}
             if(group&&!out[i]&&!joinPrev&&!replyTo[i]){TextView sender=text(senderName(m,c),12,muted,false);sender.setPadding(dp(14),0,0,dp(4));items.addView(sender);}
             View b=timed(swipeToReply(bubble(m,c,theme,out[i],joinPrev,joinNext),m),at[i],out[i]);if(selecting)b=selectable(b,m);items.addView(b);messageViews.put(m.optString("messageID"),b);
             List<String[]> reactors=PairedProtocol.reactors(m);
@@ -593,7 +598,10 @@ public class PairedActivity extends Activity {
         ScrollView sv=scroll;android.view.ViewTreeObserver.OnPreDrawListener[] once=new android.view.ViewTreeObserver.OnPreDrawListener[1];
         once[0]=()->{sv.getViewTreeObserver().removeOnPreDrawListener(once[0]);if(scroll!=sv||sv.getChildAt(0)==null)return true;
             if(anchorOlder){anchorOlder=false;sv.scrollTo(0,y+Math.max(0,sv.getChildAt(0).getHeight()-before));}
-            else if(atBottom){sv.scrollTo(0,sv.getChildAt(0).getHeight());pinnedBottom=true;}else sv.scrollTo(0,y);return true;};
+            else if(atBottom&&unreadJump&&unreadDivider!=null&&sv.getChildAt(0).getHeight()-unreadDivider.getTop()>sv.getHeight()){
+                // More unread than fits on screen: start at the first one, with ↓ to jump to the newest.
+                unreadJump=false;sv.scrollTo(0,Math.max(0,unreadDivider.getTop()-dp(12)));pinnedBottom=false;newWhileAway=unreadCount;updateJumpButton();}
+            else if(atBottom){sv.scrollTo(0,sv.getChildAt(0).getHeight());pinnedBottom=true;if(n>0)unreadJump=false;}else sv.scrollTo(0,y);return true;};
         sv.getViewTreeObserver().addOnPreDrawListener(once[0]);
     }
     private View bubble(JSONObject m,JSONObject c,ChatTheme theme,boolean outgoing,boolean joinPrev,boolean joinNext){
@@ -825,7 +833,7 @@ public class PairedActivity extends Activity {
             default -> "Read request queued for Google Messages.";};
         receiptStatusView.setText(value);
     }
-    private void send(){if(busy||composer==null)return;repliedSinceInbox=true;String body=composer.getText().toString(),id=chatId,reply=replyId;JSONObject c=store.chat(id);
+    private void send(){if(busy||composer==null)return;repliedSinceInbox=true;unreadSince=-1;String body=composer.getText().toString(),id=chatId,reply=replyId;JSONObject c=store.chat(id);
         boolean files=false;for(Outgoing o:outgoing)if(!o.sending)files=true;
         if(body.trim().isEmpty()&&!files)return;if(c==null){error("Refresh this conversation before sending.");return;}
         if(files){sendAttachments(c,body.trim(),reply);return;}
@@ -977,6 +985,7 @@ public class PairedActivity extends Activity {
             // Genmoji and stickers (see-through pictures) sit on the chat like a big emoji, not in a photo frame.
             if(kind.equals("image")&&MediaCache.isSticker(MediaCache.file(this,media,false))){int[] sz=stickerSize(w,h);width=sz[0];height=sz[1];stickerStyle(box,img);}
             line.addView(box,new LinearLayout.LayoutParams(width,height));loadPreview(media,img,kind.equals("video"),width,height);
+        } else if(PairedProtocol.contactCard(media)){line.addView(contactCardView(m,media,outgoing,theme));
         } else {
             LinearLayout card=row();card.setPadding(dp(14),dp(12),dp(18),dp(12));card.setBackground(shape(outgoing?theme.bubble(dark):surface,22));int fg=outgoing?theme.onBubble(dark):ink;
             card.addView(text(kind.equals("audio")?"🎤":"📄",24,fg,false));LinearLayout texts=vertical();texts.setPadding(dp(12),0,0,0);
@@ -1000,6 +1009,7 @@ public class PairedActivity extends Activity {
      * chat size (unless "previews only" is chosen in Settings). Videos keep their preview frame.
      */
     private void loadPreview(JSONObject media,ImageView img,boolean video,int width,int height){
+        if(!video&&MediaCache.maybeAnimated(media))playAnimated(media,img,width,height);
         boolean thumb=MediaCache.hasThumbnail(media);long size=media.optLong("size");File full=MediaCache.file(this,media,false);
         boolean stickerFile=!video&&full.isFile()&&MediaCache.isSticker(full);
         boolean wantFull=stickerFile||!video&&MediaCache.hasFull(media)&&(!thumb||(fullPhotos()&&size<=(25L<<20)));
@@ -1019,9 +1029,60 @@ public class PairedActivity extends Activity {
         if(!full.isFile()&&!PairedService.ready())return;
         if(!full.isFile()&&!MediaCache.hasFull(media))return; // waiting for the phone (above); nothing to download yet
         MediaCache.fetch(this,media,false,(file,err)->{if(file==null){tileState(img,media,thumb?"Only a preview • Tap for details":"Couldn't load • Tap for details",err);return;}
-            decoder.execute(()->{Bitmap d=MediaCache.decodeToCover(file,width,height,video&&!thumb);img.post(()->{if(d!=null){img.setTag("full");img.setImageBitmap(d);sharp(img);tileState(img,media,null,null);if(!video&&MediaCache.sticker(d))becomeSticker(img,d);}
+            decoder.execute(()->{Bitmap d=MediaCache.decodeToCover(file,width,height,video&&!thumb);img.post(()->{if("animated".equals(img.getTag()))return;if(d!=null){img.setTag("full");img.setImageBitmap(d);sharp(img);tileState(img,media,null,null);if(!video&&MediaCache.sticker(d))becomeSticker(img,d);}
                 else if(!thumb)tileState(img,media,"Can't show this photo here • Tap for details","The file downloaded but Android couldn't read it as a picture.");});});});
     }
+    /** GIFs and animated stickers play right in the chat (once their file is here; small ones download by themselves). */
+    private void playAnimated(JSONObject media,ImageView img,int width,int height){File full=MediaCache.file(this,media,false);
+        Runnable go=()->decoder.execute(()->{android.graphics.drawable.Drawable d=MediaCache.animated(full,width,height);if(d==null)return;
+            img.post(()->{img.setTag("animated");img.setImageDrawable(d);sharp(img);tileState(img,media,null,null);((android.graphics.drawable.AnimatedImageDrawable)d).start();});});
+        if(full.isFile())go.run();
+        else if(MediaCache.hasFull(media)&&PairedService.ready()&&media.optLong("size")<=(15L<<20))MediaCache.fetch(this,media,false,(f,e)->{if(f!=null)go.run();});}
+    /** A shared contact shown as a card (name, number) with Save, instead of a file. */
+    private View contactCardView(JSONObject m,JSONObject media,boolean outgoing,ChatTheme theme){int fg=outgoing?theme.onBubble(dark):ink;
+        LinearLayout card=vertical();card.setPadding(dp(14),dp(12),dp(14),dp(6));card.setBackground(shape(outgoing?theme.bubble(dark):surface,22));card.setMinimumWidth(dp(230));
+        LinearLayout top=row();top.setGravity(Gravity.CENTER_VERTICAL);TextView face=text("?",18,fg,true);face.setGravity(Gravity.CENTER);face.setBackground(oval((fg&0x00ffffff)|0x26000000));
+        top.addView(face,new LinearLayout.LayoutParams(dp(44),dp(44)));LinearLayout texts=vertical();texts.setPadding(dp(12),0,dp(4),0);
+        TextView name=text("Contact",16,fg,true);name.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.5f));TextView detail=text("Loading…",13,outgoing?fg:muted,false);
+        texts.addView(name);texts.addView(detail);top.addView(texts,new LinearLayout.LayoutParams(-2,-2));card.addView(top);
+        View rule=new View(this);rule.setBackgroundColor((fg&0x00ffffff)|0x22000000);LinearLayout.LayoutParams rl=new LinearLayout.LayoutParams(-1,Math.max(1,dp(1)/2));rl.topMargin=dp(10);card.addView(rule,rl);
+        TextView save=text("Save contact",15,outgoing?fg:BLUE,true);save.setGravity(Gravity.CENTER);save.setPadding(0,dp(10),0,dp(6));card.addView(save,new LinearLayout.LayoutParams(-1,-2));
+        VCard[] parsed={null};
+        Runnable fill=()->{VCard v=parsed[0];if(v==null||v.empty()){String file=PairedProtocol.string(media,"mediaName");name.setText(file.isEmpty()?"Contact":file);detail.setText("Tap to open");return;}
+            name.setText(v.name.isEmpty()?"Contact":v.name);face.setText(PairedProtocol.initial(v.name.isEmpty()?"?":v.name));
+            detail.setText(!v.phones.isEmpty()?v.phones.get(0)+(v.phones.size()>1?"  +"+(v.phones.size()-1)+" more":""):!v.emails.isEmpty()?v.emails.get(0):v.org);
+            card.setContentDescription("Contact card: "+name.getText()+", "+detail.getText()+". Tap for options.");};
+        java.util.function.Consumer<File> read=file->decoder.execute(()->{VCard v=readCard(file);ui.post(()->{parsed[0]=v;fill.run();});});
+        File have=MediaCache.file(this,media,false);
+        if(have.isFile())read.accept(have);
+        else if(PairedService.ready()&&MediaCache.hasFull(media))MediaCache.fetch(this,media,false,(file,err)->{if(file!=null)read.accept(file);else{detail.setText("Tap to load");}});
+        else detail.setText("Tap to load");
+        card.setOnClickListener(v->{if(parsed[0]!=null&&!parsed[0].empty())contactSheet(media,parsed[0]);else withFile(media,"Getting the contact…",file->{parsed[0]=readCard(file);fill.run();if(!parsed[0].empty())contactSheet(media,parsed[0]);else openExternally(file,media);});});
+        save.setOnClickListener(v->{if(parsed[0]!=null&&!parsed[0].empty())saveContact(parsed[0]);else withFile(media,"Getting the contact…",file->{parsed[0]=readCard(file);fill.run();saveContact(parsed[0]);});});
+        card.setOnLongClickListener(v->{messageSheet(m);return true;});save.setOnLongClickListener(v->{messageSheet(m);return true;});
+        return card;}
+    private static VCard readCard(File file){try{byte[] b=java.nio.file.Files.readAllBytes(file.toPath());if(b.length>(512<<10))b=java.util.Arrays.copyOf(b,512<<10);return VCard.parse(new String(b,java.nio.charset.StandardCharsets.UTF_8));}catch(Exception e){return VCard.parse("");}}
+    /** Opens the phone's "new contact" screen filled in from the card. */
+    private void saveContact(VCard v){if(v==null||v.empty()){toast("This contact card is empty.");return;}
+        Intent i=new Intent(android.provider.ContactsContract.Intents.Insert.ACTION).setType(android.provider.ContactsContract.RawContacts.CONTENT_TYPE);
+        if(!v.name.isEmpty())i.putExtra(android.provider.ContactsContract.Intents.Insert.NAME,v.name);if(!v.org.isEmpty())i.putExtra(android.provider.ContactsContract.Intents.Insert.COMPANY,v.org);
+        String[] phoneKeys={android.provider.ContactsContract.Intents.Insert.PHONE,android.provider.ContactsContract.Intents.Insert.SECONDARY_PHONE,android.provider.ContactsContract.Intents.Insert.TERTIARY_PHONE};
+        for(int k=0;k<Math.min(3,v.phones.size());k++)i.putExtra(phoneKeys[k],v.phones.get(k));
+        String[] mailKeys={android.provider.ContactsContract.Intents.Insert.EMAIL,android.provider.ContactsContract.Intents.Insert.SECONDARY_EMAIL,android.provider.ContactsContract.Intents.Insert.TERTIARY_EMAIL};
+        for(int k=0;k<Math.min(3,v.emails.size());k++)i.putExtra(mailKeys[k],v.emails.get(k));
+        try{startActivity(i);}catch(Exception e){toast("No contacts app is available.");}}
+    private void contactSheet(JSONObject media,VCard v){LinearLayout content=vertical();TextView title=text(v.name.isEmpty()?"Contact":v.name,20,ink,true);title.setPadding(dp(8),dp(4),dp(8),dp(10));content.addView(title);Dialog[] d=new Dialog[1];
+        sheetAction(content,"Save contact",()->{d[0].dismiss();saveContact(v);});
+        for(String phone:v.phones)sheetAction(content,"Call "+phone,()->{d[0].dismiss();try{startActivity(new Intent(Intent.ACTION_DIAL,Uri.parse("tel:"+Uri.encode(phone))));}catch(Exception e){toast("No phone app is available.");}});
+        for(String mail:v.emails)sheetAction(content,"Email "+mail,()->{d[0].dismiss();try{startActivity(new Intent(Intent.ACTION_SENDTO,Uri.parse("mailto:"+mail)));}catch(Exception e){toast("No email app is available.");}});
+        sheetAction(content,"Open in another app",()->{d[0].dismiss();withFile(media,"Getting the contact…",file->openExternally(file,media));});
+        d[0]=sheet(content);}
+    private long unreadSince=-1;private boolean unreadJump;private View unreadDivider;private int unreadCount;
+    /** "3 new messages", across the chat where the unread ones start. */
+    private View newMessagesLine(int count){LinearLayout r=row();r.setGravity(Gravity.CENTER_VERTICAL);r.setPadding(dp(8),dp(14),dp(8),dp(10));
+        View left=new View(this);left.setBackgroundColor((BLUE&0x00ffffff)|0x66000000);r.addView(left,new LinearLayout.LayoutParams(0,Math.max(1,dp(1)),1));
+        TextView t=text(count==1?"1 new message":count+" new messages",12,BLUE,true);t.setPadding(dp(10),0,dp(10),0);r.addView(t);
+        View right=new View(this);right.setBackgroundColor((BLUE&0x00ffffff)|0x66000000);r.addView(right,new LinearLayout.LayoutParams(0,Math.max(1,dp(1)),1));return r;}
     private static final int STICKER_DP=150;
     /** A sticker's size on screen: STICKER_DP on its longest side, keeping its shape. */
     private int[] stickerSize(long w,long h){int side=dp(STICKER_DP);if(w<=0||h<=0)return new int[]{side,side};
@@ -1128,18 +1189,18 @@ public class PairedActivity extends Activity {
         ui.postDelayed(check[0],1500);}
     private void showFullPhoto(JSONObject media,Dialog d,ZoomImageView image,ProgressBar spinner,File[] full){
         MediaCache.fetch(this,media,false,(file,error)->{if(file==null){spinner.setVisibility(View.GONE);if(d.isShowing())toast(error);return;}full[0]=file;
-            decoder.execute(()->{Bitmap b=MediaCache.decode(file,2560,false);String what=b==null?MediaCache.describe(file):"";
-                ui.post(()->{spinner.setVisibility(View.GONE);if(b!=null){image.setImageBitmap(b);sharp(image);}else if(d.isShowing())photoProblem(file,media,what);});});});
+            decoder.execute(()->{android.graphics.drawable.Drawable moving=MediaCache.animated(file,0,0);Bitmap b=moving!=null?null:MediaCache.decode(file,2560,false);String what=b==null&&moving==null?MediaCache.describe(file):"";
+                ui.post(()->{spinner.setVisibility(View.GONE);if(moving!=null){image.setImageDrawable(moving);sharp(image);((android.graphics.drawable.AnimatedImageDrawable)moving).start();}else if(b!=null){image.setImageBitmap(b);sharp(image);}else if(d.isShowing())photoProblem(file,media,what);});});});
     }
     /** The full photo arrived but won't display: keep the preview on screen and say what the file is. */
     private void photoProblem(File file,JSONObject media,String what){
-        android.util.Log.w("MessageCenter","Full photo won't decode: "+what+", sent as "+MediaCache.mime(media));
+        android.util.Log.w("MessageCenter","Full photo won't decode: "+what+", sent as "+MediaCache.mime(media));Diagnostics.badFile(file,what+", sent as "+MediaCache.mime(media)+(HeifDecoder.lastProblem.isEmpty()?"":", "+HeifDecoder.lastProblem));
         boolean broken=what.contains("empty")||what.contains("web page")||what.contains("unrecognized");
         // A broken download is thrown away so opening the photo again fetches it fresh.
         if(broken&&file.delete())MediaCache.forget(file);
         AlertDialog.Builder b=new AlertDialog.Builder(this).setTitle("Can't show this photo").setPositiveButton("OK",null)
             .setMessage(broken?"The download didn't contain a photo ("+what+"). Open it again to retry.":"It downloaded ("+what+"), but Android couldn't display it. Share opens it in another app, such as Photos.");
-        if(!broken)b.setNeutralButton("Share",(x,y)->share(file,media));
+        if(!broken)b.setNeutralButton("Share",(x,y)->share(file,media));b.setNegativeButton("Report…",(x,y)->reportProblem("A picture wouldn't open"));
         b.show();
     }
     private static final int TAKE_PHOTO=43;private File pendingCapture;
@@ -1928,6 +1989,7 @@ public class PairedActivity extends Activity {
         String mentionNames=prefs.getString("mention_name","");
         settingRow(alerts,"Mention alerts","Notify when someone @mentions you",mentionNames.isEmpty()?"Off":"@"+mentionNames,this::editMentionNames);
         settingSwitch(alerts,"Auto-copy verification codes","New codes go straight to the clipboard",PairedService.autoCopyCodes(this),on->prefs.edit().putBoolean("auto_copy_codes",on).apply());
+        settingSwitch(alerts,"Delete codes after a day","Verification texts from businesses (not your contacts or group chats) are deleted, in Google Messages too",PairedService.autoDeleteCodes(this),on->prefs.edit().putBoolean("auto_delete_codes",on).apply());
         settingRow(alerts,"Bubbles","Chats that float over other apps",null,()->startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName())));
         settingRow(alerts,"Hide \"Message Center is running\"","Android requires it while connected. Turn it off and messages still arrive; you're told if the connection drops.",null,()->{try{startActivity(PairedService.channelSettings(this,PairedService.RUNNING));}catch(Exception e){openAppSettings();}});
 
@@ -1952,6 +2014,7 @@ public class PairedActivity extends Activity {
 
         LinearLayout about=settingsGroup(content,"About");
         settingRow(about,"Message Center","Connects this phone directly to Google. Older history loads in pages and may be incomplete.",BuildConfig.VERSION_NAME,null);
+        settingRow(about,"Report a problem","Makes a file with what went wrong for you to send",null,()->reportProblem(""));
         settingRow(about,"Updates on GitHub",null,null,()->startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse("https://github.com/bags156/message-center/releases"))));
 
         LinearLayout stop=settingsGroup(content,"Disconnect");
@@ -1960,6 +2023,19 @@ public class PairedActivity extends Activity {
         ((TextView)((LinearLayout)forget.getParent()).getChildAt(0)).setTextColor(danger);
         restoreScroll(sc,keep);
     }
+    /** Asks what happened, then bundles diagnostics (no message text) into a file to send however you like. */
+    private void reportProblem(String what){LinearLayout content=vertical();content.setPadding(dp(20),dp(8),dp(20),0);
+        EditText e=input("What went wrong? (optional)");e.setSingleLine(false);e.setMinLines(2);e.setText(what);content.addView(e);
+        File bad=Diagnostics.lastBadFile();android.widget.CheckBox include=new android.widget.CheckBox(this);
+        if(bad!=null){include.setText("Include the picture or video that wouldn't open ("+PairedProtocol.size(bad.length())+")");include.setChecked(true);include.setTextColor(ink);content.addView(include);}
+        TextView fine=text("Includes the app's version, your phone model, the connection history and the app's error log. No message text. You choose where to send it next (email, Drive…).",13,muted,false);fine.setPadding(0,dp(10),0,0);content.addView(fine);
+        new AlertDialog.Builder(this).setTitle("Report a problem").setView(content).setNegativeButton("Cancel",null).setPositiveButton("Create report",(d,w)->{String note=e.getText().toString().trim();boolean withFile=bad!=null&&include.isChecked();
+            String details="Connection: "+PairedService.status(this)+(PairedService.ready()?" (ready)":" (not ready)")+"\nPicture decoder: "+(HeifDecoder.lastProblem.isEmpty()?"no problems":HeifDecoder.lastProblem)
+                +"\nNotifications allowed: "+(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED)+"\nBattery optimized: "+batteryRestricted()+"\nReminders: "+Nudges.summary(this).replace('\n',' ');
+            decoder.execute(()->{try{File zip=Diagnostics.buildReport(this,note,details,withFile);Uri uri=MediaProvider.uri(zip,zip.getName());
+                ui.post(()->{Intent send=new Intent(Intent.ACTION_SEND).setType("application/zip").putExtra(Intent.EXTRA_STREAM,uri).putExtra(Intent.EXTRA_SUBJECT,"Message Center problem report").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    send.setClipData(ClipData.newRawUri(zip.getName(),uri));startActivity(Intent.createChooser(send,"Send the report"));});}
+            catch(Exception x){ui.post(()->toast("Couldn't make the report: "+x.getMessage()));}});}).show();}
     /** A titled group of settings on one rounded card. */
     private LinearLayout settingsGroup(LinearLayout content,String title){TextView h=text(title,13,BLUE,true);h.setPadding(dp(20),dp(20),dp(20),dp(8));content.addView(h);
         LinearLayout g=vertical();g.setBackground(shape(card,20));g.setClipToOutline(true);content.addView(g,new LinearLayout.LayoutParams(-1,-2));return g;}

@@ -175,6 +175,27 @@ final class MediaCache {
     }
 
     /** The smallest size, keeping the image's shape, that still covers the box (or the original if it is already smaller). */
+    /** Might be an animated picture (GIF, or WebP as Android keyboards send stickers). */
+    static boolean maybeAnimated(JSONObject media) { String t = mime(media); return t.contains("gif") || t.contains("webp"); }
+
+    /**
+     * A GIF or animated WebP as a playing drawable, scaled to cover box (or as is when box is 0);
+     * null for still pictures, so the normal still path stays in charge.
+     */
+    static android.graphics.drawable.Drawable animated(File file, int boxWidth, int boxHeight) {
+        if (!file.isFile() || file.length() > (20L << 20)) return null;
+        byte[] b = new byte[12];
+        try (java.io.FileInputStream in = new java.io.FileInputStream(file)) { if (in.read(b) < 12) return null; } catch (Exception e) { return null; }
+        String head = new String(b, java.nio.charset.StandardCharsets.ISO_8859_1);
+        if (!head.startsWith("GIF8") && !(head.startsWith("RIFF") && head.startsWith("WEBP", 8))) return null;
+        try {
+            android.graphics.drawable.Drawable d = ImageDecoder.decodeDrawable(ImageDecoder.createSource(file), (decoder, info, source) -> {
+                if (boxWidth > 0 && boxHeight > 0) { int[] size = coverSize(info.getSize().getWidth(), info.getSize().getHeight(), boxWidth, boxHeight); decoder.setTargetSize(size[0], size[1]); }
+            });
+            return d instanceof android.graphics.drawable.AnimatedImageDrawable ? d : null;
+        } catch (Exception | OutOfMemoryError e) { return null; }
+    }
+
     static int[] coverSize(int width, int height, int boxWidth, int boxHeight) {
         if (width <= 0 || height <= 0) return new int[]{Math.max(1, width), Math.max(1, height)};
         float scale = Math.max(boxWidth / (float) width, boxHeight / (float) height);

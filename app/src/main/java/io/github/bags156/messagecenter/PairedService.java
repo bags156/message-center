@@ -98,7 +98,7 @@ public final class PairedService extends Service {
         context.stopService(new Intent(context,PairedService.class));
     }
     @Override public void onCreate() {
-        super.onCreate();current=this;HevcSandbox.init(this);GivenNames.init(this);Nicknames.load(this);store=new PairedStore(this);vault=new SessionVault(this);outbox=new Outbox(this);receipts=new ReadReceiptQueue(this);outbox.recover();watchWakeAndNetwork();
+        super.onCreate();current=this;Diagnostics.init(this);HevcSandbox.init(this);GivenNames.init(this);Nicknames.load(this);store=new PairedStore(this);vault=new SessionVault(this);outbox=new Outbox(this);receipts=new ReadReceiptQueue(this);outbox.recover();watchWakeAndNetwork();
         NotificationManager manager=getSystemService(NotificationManager.class);
         try{manager.deleteNotificationChannel(OLD_CONNECTION);}catch(Exception ignored){}
         NotificationChannel running=new NotificationChannel(RUNNING,"Running in background",NotificationManager.IMPORTANCE_MIN);
@@ -147,7 +147,7 @@ public final class PairedService extends Service {
             switch(kind) {
                 case "PAIR_EMOJI" -> {emoji=new JSONObject(payload).optString("emoji");update("Approve the matching emoji in Google Messages");}
                 case "READY" -> {
-                    ready=true;emoji="";update("Connected to Google Messages");
+                    ready=true;emoji="";update("Connected to Google Messages");scheduleCodeSweep();
                     saveSession(token);main.post(this::flushOutbox);main.post(this::flushReadReceipts);scheduleSync();
                     network.execute(()->{if(generation.get()==token)try{chats(client,"",1);}catch(Exception e){update("Connected • tap Refresh to load conversations");}});
                 }
@@ -176,7 +176,7 @@ public final class PairedService extends Service {
                 case "AUTH_REQUIRED" -> {ready=false;getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("enabled",false).apply();update("Google session expired. Sign in again.");}
                 case "DISCONNECTED" -> {ready=false;update("Connection ended. Tap Reconnect in Settings.");}
                 case "RECONNECTING" -> {ready=false;update("Waiting for Google Messages • check network and battery settings");}
-                case "RECOVERED" -> {ready=true;update("Connected to Google Messages");main.post(this::flushOutbox);main.post(this::flushReadReceipts);main.post(()->requestSync(false));}
+                case "RECOVERED" -> {ready=true;update("Connected to Google Messages");scheduleCodeSweep();main.post(this::flushOutbox);main.post(this::flushReadReceipts);main.post(()->requestSync(false));}
                 case "STALE" -> main.post(()->requestSync(true));
                 case "INACTIVE" -> {inactive=true;update("Google Messages for web is open somewhere else. Open Message Center to switch back.");}
                 default -> { }
@@ -407,6 +407,27 @@ public final class PairedService extends Service {
     /** Message IDs whose code was copied automatically, so each code is copied once. */
     private final java.util.Set<String> autoCopied=java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());private volatile String copiedCode="";
     static boolean autoCopyCodes(Context context){return context.getSharedPreferences("paired",MODE_PRIVATE).getBoolean("auto_copy_codes",true);}
+    static boolean autoDeleteCodes(Context context){return context.getSharedPreferences("paired",MODE_PRIVATE).getBoolean("auto_delete_codes",true);}
+    private final Runnable codeSweep=this::sweepCodes;
+    /** A couple of minutes after connecting (once syncing settles), then every 6 hours while connected. */
+    private void scheduleCodeSweep(){main.post(()->{main.removeCallbacks(codeSweep);main.postDelayed(codeSweep,2*60_000L);});}
+    /**
+     * Deletes verification-code texts more than a day old, from Google Messages too. Only from
+     * senders who aren't in your contacts, and never in group chats, so a friend's text that
+     * happens to contain a code is left alone.
+     */
+    private void sweepCodes(){
+        main.removeCallbacks(codeSweep);if(!ready)return;main.postDelayed(codeSweep,6*3_600_000L);
+        if(!autoDeleteCodes(this))return;long cutoff=System.currentTimeMillis()-86_400_000L;
+        events.execute(()->{List<String> ids=new ArrayList<>();
+            try{for(JSONObject m:store.recent(5000,0)){
+                if(PairedProtocol.outgoing(m)||PairedProtocol.time(m)>=cutoff||ChatText.oneTimeCode(PairedProtocol.text(m)).isEmpty())continue;
+                JSONObject chat=store.chat(m.optString("conversationID"));JSONObject other=chat==null?null:PairedProtocol.other(chat);
+                if(other==null||PairedProtocol.known(other))continue;
+                ids.add(m.optString("messageID"));if(ids.size()>=40)break;}}catch(Exception e){Diagnostics.note("Code cleanup failed: "+e);return;}
+            if(ids.isEmpty())return;Diagnostics.note("Deleting "+ids.size()+" verification codes older than a day");
+            for(String mid:ids)execute(c->{c.deleteMessage(mid);return "";},(v,e)->{if(e.isEmpty()){store.deleteMessage(mid);changed("MESSAGE");}});});
+    }
     /** A verification code in a new incoming message goes straight to the clipboard (Settings → Auto-copy verification codes). */
     private void autoCopy(JSONObject m){
         if(!autoCopyCodes(this)||PairedProtocol.outgoing(m)||System.currentTimeMillis()-PairedProtocol.time(m)>10*60_000)return;
@@ -617,14 +638,14 @@ public final class PairedService extends Service {
         JSONObject p=PairedProtocol.participant(chat,participantID);
         return Avatars.initial(PairedProtocol.initial(name),PairedProtocol.color(p==null?"":p.optString("avatarHexColor"),Avatars.fallbackColor(name)),128);
     }
-    private void update(String value) {status=value;main.post(this::checkProblem);changed("STATUS");}
+    private void update(String value) {if(value!=null&&!value.equals(status))Diagnostics.note("Connection: "+value);status=value;main.post(this::checkProblem);changed("STATUS");}
     private final Runnable widgetRefresh=()->{try{MessagesWidget.update(this);}catch(Exception ignored){}new Thread(()->Nudges.reschedule(this),"nudges").start();};
     private void changed(String kind) {sendBroadcast(new Intent(CHANGED).setPackage(getPackageName()).putExtra("kind",kind));
         // The home screen widget follows chat changes, at most every two seconds.
         if(kind.equals("CONVERSATION")||kind.equals("MESSAGE")){main.removeCallbacks(widgetRefresh);main.postDelayed(widgetRefresh,2000);}}
     @Override public IBinder onBind(Intent intent) {return null;}
     @Override public void onDestroy() {
-        generation.incrementAndGet();ready=false;main.removeCallbacks(syncTick);main.removeCallbacks(problemCheck);main.removeCallbacks(receiptRetry);if(current==this)current=null;
+        generation.incrementAndGet();ready=false;main.removeCallbacks(syncTick);main.removeCallbacks(problemCheck);main.removeCallbacks(codeSweep);main.removeCallbacks(receiptRetry);if(current==this)current=null;
         try{if(screenReceiver!=null)unregisterReceiver(screenReceiver);}catch(Exception ignored){}
         try{if(networkCallback!=null)getSystemService(android.net.ConnectivityManager.class).unregisterNetworkCallback(networkCallback);}catch(Exception ignored){}
         Client old=client;client=null;network.shutdownNow();events.shutdownNow();media.shutdownNow();phoneRequests.shutdownNow();readRequests.shutdownNow();

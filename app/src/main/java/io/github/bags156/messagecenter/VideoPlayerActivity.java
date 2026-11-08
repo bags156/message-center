@@ -54,6 +54,7 @@ public final class VideoPlayerActivity extends Activity {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
+        Diagnostics.init(this);
         String path = getIntent().getStringExtra(PATH); mime = getIntent().getStringExtra(MIME); name = getIntent().getStringExtra(NAME);
         if (path == null || !(file = new File(path)).isFile()) { finish(); return; }
         if (state != null) { resumeAt = state.getInt("at", 0); wasPlaying = state.getBoolean("playing", true); }
@@ -92,7 +93,7 @@ public final class VideoPlayerActivity extends Activity {
             updatePlay(); ui.removeCallbacks(tick); ui.post(tick);
         });
         video.setOnCompletionListener(mp -> { updatePlay(); showControls(true); seek.setProgress(seek.getMax()); });
-        video.setOnErrorListener((mp, what, extra) -> { spinner.setVisibility(View.GONE); cantPlay(); return true; });
+        video.setOnErrorListener((mp, what, extra) -> { spinner.setVisibility(View.GONE); Diagnostics.badFile(file, "video player error " + what + "/" + extra + ", " + mime); cantPlay(); return true; });
         video.setVideoPath(file.getPath());
     }
 

@@ -147,7 +147,13 @@ final class PairedProtocol {
         if(mime.startsWith("audio/")||name.matches(".*\\.(m4a|aac|amr|mp3|ogg|opus|wav)$"))return "audio";
         return "file";
     }
+    /** A shared contact (.vcf). */
+    static boolean contactCard(JSONObject media) {
+        String mime=string(media,"mimeType").toLowerCase(java.util.Locale.ROOT),name=string(media,"mediaName").toLowerCase(java.util.Locale.ROOT);
+        return mime.contains("vcard")||name.endsWith(".vcf");
+    }
     static String mediaLabel(JSONObject media) {
+        if(contactCard(media)) return "Contact";
         return switch(mediaKind(media)) {
             case "image" -> string(media,"mimeType").equalsIgnoreCase("image/gif")?"GIF":"Photo";
             case "video" -> "Video";
