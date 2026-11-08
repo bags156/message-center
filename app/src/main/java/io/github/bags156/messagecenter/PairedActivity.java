@@ -673,7 +673,7 @@ public class PairedActivity extends Activity {
         // Link previews open the page, which tells its owner you looked; only do that for people you know or have written to.
         boolean wrote=false;for(boolean o:out)wrote|=o;chatTrusted=c!=null&&(PairedProtocol.allKnown(c)||wrote);
         TimeZone zone=TimeZone.getDefault();
-        for(int i=0;i<n;i++){JSONObject m=messages.get(i);
+        for(int i=0;i<n;i++){JSONObject m=messages.get(i);String mid=m.optString("messageID");boolean isNew=motionSeen.add(mid);
             boolean sep=InboxOrder.separator(i==0?0:at[i-1],at[i],zone);
             if(sep){TextView s=text(separatorStamp(at[i]),13,muted,false);s.setGravity(Gravity.CENTER);s.setPadding(0,dp(i==0?8:20),0,dp(10));items.addView(s,new LinearLayout.LayoutParams(-1,-2));}
             // Group and chat events ("Sam left", "Now end-to-end encrypted") are centered notes.
@@ -688,7 +688,7 @@ public class PairedActivity extends Activity {
             if(group&&!out[i]&&!joinPrev&&!replyTo[i]){TextView sender=text(senderName(m,c),12,muted,false);sender.setPadding(dp(14),0,0,dp(4));items.addView(sender);}
             View b=timed(swipeToReply(bubble(m,c,theme,out[i],joinPrev,joinNext),m),at[i],out[i]);if(selecting)b=selectable(b,m);items.addView(b);messageViews.put(m.optString("messageID"),b);
             // A sent message already lifted in as its "Sending…" row, so it doesn't animate again when Google confirms it.
-            String mid=m.optString("messageID");boolean isNew=motionSeen.add(mid);motion(b,"m:"+mid,SLIDE,animate&&isNew&&(!out[i]||motionOutboxBefore==0));
+            motion(b,"m:"+mid,SLIDE,animate&&isNew&&(!out[i]||motionOutboxBefore==0));
             List<String[]> reactors=reactorsOf(m);
             if(!reactors.isEmpty()){LinearLayout.LayoutParams rl=new LinearLayout.LayoutParams(-1,-2);rl.topMargin=-dp(7);View pill=reactionPill(m,c,reactors,out[i]);items.addView(pill,rl);
                 Integer had=motionReactions.put(mid,reactors.size());motion(((ViewGroup)pill).getChildAt(0),"r:"+mid,POP,motionReady&&!isNew&&(had==null||reactors.size()>had));}
