@@ -95,6 +95,32 @@ public class TapbackTest {
         assertEquals(-1, target(said, 0));
     }
 
+    @Test public void invisibleCharactersDontHideAReaction() {
+        // Shaped like the screenshot: Hannah's 😂 on "How's the smoker coming along".
+        String q = "How's the smoker coming along";
+        String[] sent = {
+            "😂 to “" + q + " ”",
+            "😂 to “" + q + " ”",
+            "😂\nto “" + q + " ”",
+            "⁨😂⁩ to “⁨" + q + "⁩ ”",
+            "😂 to “" + q + " ”​",
+            "﻿Reacted 😂 to “" + q + "”",
+            "😂 to “How’s the smoker coming along ”",
+        };
+        for (String reaction : sent) {
+            List<ChatText.Said> said = new ArrayList<>();
+            said.add(text("mom", "Have ya’ll talked to your next door neighbor anymore?"));
+            said.add(text("me", q));
+            said.add(text("hannah", reaction));
+            assertNotNull("Not recognized: " + reaction, ChatText.tapback(reaction));
+            assertEquals("😂", ChatText.tapback(reaction).emoji);
+            assertEquals("Not placed: " + reaction, 1, target(said, 2));
+        }
+        // Emoji built with joiners keep them.
+        assertEquals("👨‍👩‍👧", ChatText.tapback("Reacted 👨‍👩‍👧 to “Family day”").emoji);
+        assertEquals("Laughed at an image", ReactionParser.clean("⁨Laughed at an image⁩ "));
+    }
+
     @Test public void reactionLineStillDescribesUnplacedOnes() {
         assertEquals("Hannah reacted 🎉 to a photo", ChatText.reactionLine("Hannah", "Reacted 🎉 to a photo"));
         assertEquals("Hannah removed 😂 from an image", ChatText.reactionLine("Hannah", "Removed a laugh from an image"));

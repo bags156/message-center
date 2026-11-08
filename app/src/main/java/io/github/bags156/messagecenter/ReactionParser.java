@@ -24,7 +24,7 @@ public final class ReactionParser {
 
     public static Reaction parse(String text) {
         if (text == null) return null;
-        text = text.trim();
+        text = clean(text);
         Matcher removedEmoji = REMOVED_EMOJI_PATTERN.matcher(text);
         if (removedEmoji.matches() && isEmoji(removedEmoji.group(1))
                 && quotesMatch(removedEmoji.group(2), removedEmoji.group(4))) {
@@ -48,6 +48,24 @@ public final class ReactionParser {
         else if (verb.equals("Emphasized") || verb.contains("emphasis")) emoji = "‼️";
         else emoji = "❓";
         return new Reaction(emoji, match.group(3), removed);
+    }
+
+    /**
+     * The text with invisible marks removed and every kind of space (no-break, thin, line
+     * breaks) as one plain space. iPhones can put these around reactions and quotes, where
+     * they'd otherwise stop a reaction from being recognized. Joiners and tags that are part
+     * of an emoji are kept.
+     */
+    public static String clean(String text) {
+        if (text == null) return "";
+        StringBuilder b = new StringBuilder(text.length());
+        text.codePoints().forEach(cp -> {
+            if (cp == 0x200D || (cp >= 0xE0020 && cp <= 0xE007F)) b.appendCodePoint(cp);
+            else if (cp == 0xFFFC || Character.getType(cp) == Character.FORMAT) { }
+            else if (Character.isWhitespace(cp) || Character.isSpaceChar(cp)) b.append(' ');
+            else b.appendCodePoint(cp);
+        });
+        return b.toString().replaceAll(" {2,}", " ").trim();
     }
 
     private static boolean quotesMatch(String open, String close) {

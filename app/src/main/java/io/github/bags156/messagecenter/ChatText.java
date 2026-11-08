@@ -28,7 +28,7 @@ final class ChatText {
     /** "Loved an image" style iPhone fallbacks: {emoji, verb, object}, or null. */
     static String[] mediaReaction(String body) {
         if (body == null) return null;
-        Matcher m = MEDIA_REACTION.matcher(body.trim());
+        Matcher m = MEDIA_REACTION.matcher(ReactionParser.clean(body));
         if (!m.matches()) return null;
         return new String[]{emoji(m.group(1)), m.group(1).toLowerCase(Locale.ROOT), m.group(2)};
     }
@@ -45,7 +45,7 @@ final class ChatText {
 
     static Tapback tapback(String body) {
         if (body == null) return null;
-        String t = body.trim();
+        String t = ReactionParser.clean(body);
         String[] media = mediaReaction(t);
         if (media != null) return new Tapback(media[0], media[2], null, false);
         Matcher removed = MEDIA_REMOVED.matcher(t);
@@ -121,7 +121,10 @@ final class ChatText {
         }
     }
 
-    private static String squash(String text) { return text.replaceAll("\\s+", " ").trim(); }
+    /** Text as compared for a quote: invisible marks and space differences ignored, curly and straight quotes alike. */
+    private static String squash(String text) {
+        return ReactionParser.clean(text).replace('’', '\'').replace('‘', '\'').replace('“', '"').replace('”', '"');
+    }
 
     static String emoji(String verb) {
         switch (verb) {

@@ -27,7 +27,7 @@ public final class ConversationProjector {
             if (m.redacted) continue;
             ReactionParser.Reaction reaction = ReactionParser.parse(m.text);
             if (reaction == null) {
-                originals.computeIfAbsent(m.text, key -> new ArrayList<>()).add(m);
+                originals.computeIfAbsent(ReactionParser.clean(m.text), key -> new ArrayList<>()).add(m);
                 String reply = NotificationContent.replyBody(m.text);
                 if (reply != null) {
                     m.text = reply;
@@ -35,7 +35,7 @@ public final class ConversationProjector {
                 }
                 continue;
             }
-            List<Message> matches = originals.get(reaction.quote);
+            List<Message> matches = originals.get(ReactionParser.clean(reaction.quote));
             if (matches != null && matches.size() == 1) {
                 Message original = matches.get(0);
                 if (reaction.removed) {
