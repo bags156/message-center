@@ -129,7 +129,7 @@ public class PairedActivity extends Activity {
         if(state!=null){String shot=state.getString("capture");if(shot!=null)pendingCapture=new File(shot);chatId=state.getString("chat","");replyId=state.getString("reply","");if(drafts.getOrDefault(chatId,"").isEmpty())drafts.put(chatId,state.getString("draft",""));}
         String target=getIntent().getStringExtra("chat");if(target!=null&&!target.isEmpty())chatId=target;
         if(bubble()&&chatId.isEmpty()){finish();return;}
-        if(!chatId.isEmpty()){thread(chatId);showFromIntent(getIntent());}else inbox();
+        if(!chatId.isEmpty()){thread(chatId);showFromIntent(getIntent());}else if(state!=null&&"settings".equals(state.getString("screen"))&&!bubble()){pendingSettingsY=state.getInt("settings_y",0);settings();}else inbox();
         if(state==null&&!bubble())receiveShare(getIntent());
         if(state==null&&MessagesWidget.NEW_CHAT.equals(getIntent().getAction()))newMessage();
         if(new SessionVault(this).exists() && getSharedPreferences("paired",MODE_PRIVATE).getBoolean("enabled",true))PairedService.start(this);
@@ -149,12 +149,13 @@ public class PairedActivity extends Activity {
     /** Picks up a draft typed in the other window (bubble or full app) so you carry on where you left off. */
     private void refreshDraft(){if(composer==null||drafts==null||chatId.isEmpty()||!screen.equals("chat"))return;String stored=drafts.getOrDefault(chatId,"");
         if(stored.equals(composer.getText().toString()))return;composer.setText(stored);composer.setSelection(stored.length());}
-    @Override protected void onSaveInstanceState(Bundle out){remember();if(pendingCapture!=null)out.putString("capture",pendingCapture.getPath());out.putString("chat",chatId);out.putString("reply",replyId);out.putString("draft",drafts.getOrDefault(chatId,""));super.onSaveInstanceState(out);}
+    @Override protected void onSaveInstanceState(Bundle out){remember();out.putString("screen",screen);if(screen.equals("settings")&&settingsScroll!=null)out.putInt("settings_y",settingsScroll.getScrollY());if(pendingCapture!=null)out.putString("capture",pendingCapture.getPath());out.putString("chat",chatId);out.putString("reply",replyId);out.putString("draft",drafts.getOrDefault(chatId,""));super.onSaveInstanceState(out);}
     @Override public void onBackPressed(){if(selecting){stopSelecting();return;}if(screen.equals("media")){details();return;}if(screen.equals("details")){thread(chatId);return;}if(bubble()){super.onBackPressed();return;}if(login!=null){destroyLogin();inbox();}else if(screen.equals("inbox")&&(folder!=1||unknownOnly||promoOnly)){folder=1;unknownOnly=false;promoOnly=false;inbox();}else if(!screen.equals("inbox")){remember();inbox();}else super.onBackPressed();}
 
     // ---- Shared building blocks ----
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
     private void base(String name){
+        if(screen.equals("inbox")&&!name.equals("inbox")&&scroll!=null){inboxScrollY=scroll.getScrollY();inboxKey=inboxKey();repliedSinceInbox=false;}
         receiptStatusView=null;
         // Screenshots are always allowed (an older version could leave them blocked after signing in).
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);if(!name.equals("login"))setRecentsScreenshotEnabled(true);
@@ -301,7 +302,12 @@ public class PairedActivity extends Activity {
         start.setGravity(Gravity.CENTER_VERTICAL);start.setPadding(dp(20),0,dp(24),0);start.setBackground(shape(fab,18));start.setElevation(dp(3));start.setOnClickListener(v->newMessage());
         FrameLayout.LayoutParams fl=new FrameLayout.LayoutParams(-2,dp(56),Gravity.BOTTOM|Gravity.END);fl.setMargins(0,0,dp(16),dp(16));frame.addView(start,fl);
         renderInbox();refreshInbox(false);
+        // Back from a chat (or Settings): the same spot in the list, or the top if you replied (that chat moved up).
+        if(inboxScrollY>0&&inboxKey.equals(inboxKey())&&!repliedSinceInbox)restoreScroll(scroll,inboxScrollY);
+        inboxScrollY=-1;repliedSinceInbox=false;
     }
+    private int inboxScrollY=-1;private String inboxKey="";private boolean repliedSinceInbox;
+    private String inboxKey(){return folder+"|"+unknownOnly+"|"+promoOnly+"|"+query;}
     private void toggleSearch(){if(searchRow==null)return;boolean show=searchRow.getVisibility()!=View.VISIBLE;searchRow.setVisibility(show?View.VISIBLE:View.GONE);
         EditText field=(EditText)searchRow.getChildAt(0);if(show){field.requestFocus();getSystemService(InputMethodManager.class).showSoftInput(field,0);}else{field.setText("");hideKeyboard(field);}}
     private void inboxMenu(View anchor){PopupMenu menu=new PopupMenu(this,anchor);Menu m=menu.getMenu();
@@ -818,7 +824,7 @@ public class PairedActivity extends Activity {
             default -> "Read request queued for Google Messages.";};
         receiptStatusView.setText(value);
     }
-    private void send(){if(busy||composer==null)return;String body=composer.getText().toString(),id=chatId,reply=replyId;JSONObject c=store.chat(id);
+    private void send(){if(busy||composer==null)return;repliedSinceInbox=true;String body=composer.getText().toString(),id=chatId,reply=replyId;JSONObject c=store.chat(id);
         boolean files=false;for(Outgoing o:outgoing)if(!o.sending)files=true;
         if(body.trim().isEmpty()&&!files)return;if(c==null){error("Refresh this conversation before sending.");return;}
         if(files){sendAttachments(c,body.trim(),reply);return;}
@@ -1192,7 +1198,7 @@ public class PairedActivity extends Activity {
     /** Sends the picked attachments one message each; the typed text goes with the first as its caption. */
     private void sendAttachments(JSONObject c,String caption,String reply){String id=chatId;List<Outgoing> batch=new ArrayList<>();for(Outgoing o:outgoing)if(!o.sending)batch.add(o);
         if(batch.isEmpty())return;for(Outgoing o:batch)o.sending=true;renderAttachments();busy=true;
-        if(composer!=null){composer.setText("");}drafts.remove(id);cancelReply();sendNext(c,batch,0,caption,reply,id);}
+        if(composer!=null){composer.setText("");}drafts.remove(id);cancelReply();repliedSinceInbox=true;sendNext(c,batch,0,caption,reply,id);}
     private void sendNext(JSONObject c,List<Outgoing> batch,int index,String caption,String reply,String id){
         if(index>=batch.size()){busy=false;if(screen.equals("chat")&&chatId.equals(id))loadMessages(false);return;}
         Outgoing o=batch.get(index);String text=index==0?caption:"",replyTo=index==0?reply:"";
@@ -1885,60 +1891,102 @@ public class PairedActivity extends Activity {
         card.setOnClickListener(v->{try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));}catch(Exception e){toast("No browser is available.");}});
         JSONObject ready=LinkPreviews.peek(url);if(ready!=null){if(!ready.optString("title").isEmpty())fill.done(ready);}else LinkPreviews.load(this,url,fill);
         return line;}
-    private void settings(){remember();base("settings");header("Settings",this::inbox);connection();ScrollView sc=new ScrollView(this);LinearLayout content=vertical();sc.addView(content);root.addView(sc,new LinearLayout.LayoutParams(-1,0,1));
-        note(content,"Message Center "+BuildConfig.VERSION_NAME+" • experimental paired client\n\nThe connection runs on this phone and talks directly to Google. Google Messages must remain your default messaging app and have network/background access.");
+    private ScrollView settingsScroll;private int pendingSettingsY;
+    private void settings(){int keep=screen.equals("settings")&&settingsScroll!=null?settingsScroll.getScrollY():pendingSettingsY;pendingSettingsY=0;
+        remember();base("settings");header("Settings",this::inbox);connection();ScrollView sc=new ScrollView(this);settingsScroll=sc;LinearLayout content=vertical();content.setPadding(0,0,0,dp(32));sc.addView(content);root.addView(sc,new LinearLayout.LayoutParams(-1,0,1));
+        android.content.SharedPreferences prefs=getSharedPreferences("paired",MODE_PRIVATE);
+
+        LinearLayout chats=settingsGroup(content,"Chats");
+        settingSwitch(chats,"Typing indicators","Let others see when you're typing",prefs.getBoolean("send_typing",true),on->prefs.edit().putBoolean("send_typing",on).apply());
+        settingSwitch(chats,"Undo send","5 seconds to take a message back",undoSendOn(),on->prefs.edit().putBoolean("undo_send",on).apply());
+        settingRow(chats,"Quick replies","Saved phrases above the message box",quickRepliesOn()?quickReplies().size()+" saved":"Off",this::editQuickReplies);
+        long arUntil=PairedService.autoReplyUntil(this);boolean arOn=arUntil>System.currentTimeMillis();
+        settingRow(chats,"Busy auto-reply",arOn?"“"+PairedService.autoReplyText(this)+"”":"Answers saved contacts once an hour while you're busy",arOn?(arUntil==Long.MAX_VALUE?"On":"Until "+timeOnly(arUntil)):"Off",this::autoReplyMenu);
         int phone=chatSettings.phoneReceipts();
-        note(content,"Read receipts\n\nOff for every chat unless you turn them on for that chat (long-press it in the list, or tap its name at the top of the chat). When on, opening the chat here marks it read on your phone and Google Messages sends a receipt. When off, the chat is not marked read, so it stays unread in Google Messages.\n\nGoogle Messages' own \"Send read receipts\" setting: "+(phone==1?"On":phone==0?"Off: no receipts are sent for any chat":"not reported yet")+".\n\nPins and chat themes are kept in this app. Google's protocol has no pin action, so pinning here does not change Google Messages.");
-        boolean typingOn=getSharedPreferences("paired",MODE_PRIVATE).getBoolean("send_typing",true);
-        content.addView(button(typingOn?"Typing indicators: on (others see when you type)":"Typing indicators: off",false,()->{getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("send_typing",!typingOn).apply();settings();}));gap(content,8);
-        String themeMode=getSharedPreferences("paired",MODE_PRIVATE).getString("theme","system");
-        content.addView(button("Theme: "+(themeMode.equals("light")?"Light":themeMode.equals("dark")?"Dark":"Match phone")+" (tap to change)",false,()->{String next=themeMode.equals("system")?"light":themeMode.equals("light")?"dark":"system";appTheme(next);}));gap(content,8);
-        content.addView(button("Text size: "+scaleLabel(textScale)+" (tap to change)",false,()->{float next=textScale<1f?1f:textScale<1.15f?1.15f:textScale<1.3f?1.3f:0.9f;getSharedPreferences("paired",MODE_PRIVATE).edit().putFloat("text_scale",next).apply();settings();}));gap(content,8);
-        long arUntil=PairedService.autoReplyUntil(this);
-        content.addView(button(arUntil>System.currentTimeMillis()?"Busy auto-reply: on"+(arUntil==Long.MAX_VALUE?"":" until "+timeOnly(arUntil)):"Busy auto-reply: off",false,this::autoReplyMenu));
-        note(content,"Replies once an hour per person, only to saved contacts in one-to-one chats: \u201c"+PairedService.autoReplyText(this)+"\u201d");
-        String keywords=getSharedPreferences("paired",MODE_PRIVATE).getString("alert_keywords","");
-        content.addView(button(keywords.isEmpty()?"Keyword alerts: add words":"Keyword alerts: "+keywords,false,this::editKeywords));gap(content,8);
-        content.addView(button("Quick replies"+(quickRepliesOn()?" ("+quickReplies().size()+")":": off"),false,this::editQuickReplies));gap(content,8);
-        boolean promosOn=promotionsSeparate();
-        content.addView(button(promosOn?"Promotions: kept out of the inbox":"Promotions: shown in the inbox",false,()->{getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("promotions_separate",!promosOn).apply();settings();}));gap(content,8);
-        content.addView(button("Delete old verification codes…",false,this::clearOldCodes));gap(content,8);
+        settingRow(chats,"Read receipts","Chosen per chat: long-press a chat to turn them on",null,()->new AlertDialog.Builder(this).setTitle("Read receipts")
+            .setMessage("Off for every chat unless you turn them on for that chat (long-press it in the list, or tap its name at the top of the chat). When on, opening the chat here marks it read on your phone and Google Messages sends a receipt. When off, the chat isn't marked read, so it stays unread in Google Messages.\n\nGoogle Messages' own \"Send read receipts\" setting: "+(phone==1?"on.":phone==0?"off, so no receipts are sent for any chat.":"not reported yet.")+"\n\nPins and chat themes are kept in this app only; pinning here doesn't change Google Messages.").setPositiveButton("OK",null).show());
+        settingSwitch(chats,"Separate promotions","Texts from businesses and short codes go in Promotions",promotionsSeparate(),on->prefs.edit().putBoolean("promotions_separate",on).apply());
+        settingSwitch(chats,"Full-quality photos","Off shows previews only and uses less data",fullPhotos(),on->prefs.edit().putBoolean("full_photos",on).apply());
+        settingSwitch(chats,"Link previews","Only for contacts and chats you've written in",linkPreviewsOn(),on->prefs.edit().putBoolean("link_previews",on).apply());
+        settingRow(chats,"Maps app for addresses",null,mapsAppLabel(),()->chooseMapsApp(pkg->{if(screen.equals("settings"))settings();}));
+        if(!Avatars.canUsePhonePhotos(this))settingRow(chats,"Use names and photos from contacts","Full first names (like \"Hannah Kay\") and contact photos",null,()->{if(shouldShowRequestPermissionRationale(Manifest.permission.READ_CONTACTS)||!prefs.getBoolean("asked_contacts",false)){prefs.edit().putBoolean("asked_contacts",true).apply();requestPermissions(new String[]{Manifest.permission.READ_CONTACTS},79);}
+            else startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())));});
+
+        LinearLayout alerts=settingsGroup(content,"Notifications");
+        boolean allowed=checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED;
+        settingRow(alerts,"Notifications",allowed?"Sound, vibration and per-chat options":"Turn on to hear about new messages",allowed?"On":"Off",()->{if(!allowed)requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},101);else startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()));});
         int nudge=Nudges.minutes(this);
-        content.addView(button(nudge<=0?"Unread reminders for pinned chats: off":"Unread reminders for pinned chats: every "+(nudge<60?nudge+" minutes":nudge==60?"hour":(nudge/60)+" hours"),false,()->{
+        TextView reminderLine=settingRow(alerts,"Unread reminders",nudge>0?"Checking…":"For pinned chats you haven't read",nudge<=0?"Off":nudge==60?"Every hour":"Every "+(nudge/60)+" hours",()->{
             List<String> labels=java.util.Arrays.asList("Every hour","Every 2 hours","Every 4 hours","Off");int[] values={60,120,240,0};List<Runnable> actions=new ArrayList<>();
-            for(int v:values)actions.add(()->{decoder.execute(()->Nudges.setMinutes(this,v));ui.postDelayed(this::settings,150);});
-            menuSheet("Remind me about unread pinned chats",labels,actions);}));
-        note(content,"When someone in a pinned chat messages you and it's still unread (or marked unread), you get a reminder, up to 3 times. Not between 10 PM and 8 AM, and not for muted or snoozed chats. \"Not until next message\" on the reminder stops it for that chat.");
-        if(nudge>0){TextView status=text("Checking…",13,muted,false);status.setPadding(dp(4),0,dp(4),dp(8));content.addView(status);
-            decoder.execute(()->{Nudges.reschedule(this);String line=Nudges.summary(this);ui.post(()->status.setText(line));});
-            content.addView(button("Send a test reminder",false,()->{Nudges.test(this);toast("Sent. Check your notifications.");}));gap(content,8);}
-        content.addView(button("Maps app for addresses: "+mapsAppLabel(),false,()->chooseMapsApp(null)));gap(content,8);
-        content.addView(button("Back up app data",false,this::backupNow));gap(content,8);
-        content.addView(button("Restore from a backup",false,()->{try{startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*").putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/json","text/plain","application/octet-stream"}),RESTORE_BACKUP);}catch(Exception e){toast("No file picker is available.");}}));gap(content,8);
-        String mentionNames=getSharedPreferences("paired",MODE_PRIVATE).getString("mention_name","");
-        content.addView(button(mentionNames.isEmpty()?"Mention alerts: add your name":"Mention alerts for @"+mentionNames,false,this::editMentionNames));gap(content,8);
-        boolean undoOn=undoSendOn();content.addView(button(undoOn?"Undo send: on (5 seconds to take a message back)":"Undo send: off",false,()->{getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("undo_send",!undoOn).apply();settings();}));gap(content,8);
-        boolean copyOn=PairedService.autoCopyCodes(this);
-        content.addView(button(copyOn?"Auto-copy verification codes: on":"Auto-copy verification codes: off",false,()->{getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("auto_copy_codes",!copyOn).apply();settings();}));gap(content,8);
-        content.addView(button("Hide the \"Message Center is running\" notification",false,()->{try{startActivity(PairedService.channelSettings(this,PairedService.RUNNING));}catch(Exception e){openAppSettings();}}));
-        note(content,"Android requires that notification while Message Center stays connected. Turn it off on the next screen and messages keep arriving. If the connection drops and doesn't come back within a few minutes, a separate notification tells you.");
-        content.addView(button("Bubble settings",false,()->startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()))));gap(content,8);
-        content.addView(button("Reconnect",true,()->{PairedService.disconnect(this,false);new android.os.Handler().postDelayed(()->{PairedService.start(this);settings();},300);}));gap(content,8);
-        content.addView(button("Sign in / pair again",false,this::signIn));gap(content,8);
-        content.addView(button("Allow Message Center notifications",false,()->{if(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},101);else startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()));}));gap(content,8);
-        if(!Avatars.canUsePhonePhotos(this)){content.addView(button("Use full-size photos from my contacts",false,()->{if(shouldShowRequestPermissionRationale(Manifest.permission.READ_CONTACTS)||!getSharedPreferences("paired",MODE_PRIVATE).getBoolean("asked_contacts",false)){getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("asked_contacts",true).apply();requestPermissions(new String[]{Manifest.permission.READ_CONTACTS},79);}
-            else startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())));}));gap(content,8);}
-        note(content,"Background reliability\n\nAndroid reports battery optimization: "+(batteryRestricted()?"on. If you already allowed background activity in ColorOS's own settings, that is enough; Android may still say on.":"off ✓")+"\n\nOn ColorOS, also open App settings → Battery and allow background activity and auto-launch, for both Message Center and Google Messages.");
-        if(batteryRestricted()){content.addView(button("Allow running in the background",true,this::allowBackground));gap(content,8);}
-        content.addView(button("App settings (battery, auto-launch)",false,this::openAppSettings));gap(content,8);
-        boolean full=fullPhotos();content.addView(button(full?"Photos in chats: full quality":"Photos in chats: previews only (uses less data)",false,()->{getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("full_photos",!full).apply();settings();}));gap(content,8);
-        boolean links=linkPreviewsOn();content.addView(button(links?"Link previews: on for contacts and chats you've written in":"Link previews: off",false,()->{getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("link_previews",!links).apply();settings();}));gap(content,8);
-        note(content,"History loads in pages from Google. Some older messages may not be available. Attachments download when you open them and are kept in the app's cache.");
-        content.addView(button("Open Google Messages",false,this::openGoogle));gap(content,8);
-        content.addView(button("Updates on GitHub",false,()->startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse("https://github.com/bags156/message-center/releases")))));gap(content,8);
-        content.addView(button("Stop background connection",false,()->{PairedService.disconnect(this,false);settings();}));gap(content,8);
-        content.addView(button("Forget pairing and synced messages",false,()->new AlertDialog.Builder(this).setTitle("Forget this connection?").setMessage("Removes this app's pairing and synced cache from this phone. Your Google Messages chats stay in Google Messages. Remove Message Center in Google's Device pairing list to revoke it there too.").setNegativeButton("Cancel",null).setPositiveButton("Forget",(d,w)->{PairedService.disconnect(this,true);CookieManager.getInstance().removeAllCookies(null);inbox();}).show()));
+            for(int v:values)actions.add(()->{decoder.execute(()->Nudges.setMinutes(this,v));ui.postDelayed(()->{if(screen.equals("settings"))settings();},150);});
+            menuSheet("Remind me about unread pinned chats",labels,actions);});
+        if(nudge>0){decoder.execute(()->{Nudges.reschedule(this);String line=Nudges.summary(this);ui.post(()->reminderLine.setText(line+"\nUp to 3 times, not 10 PM–8 AM, not for muted or snoozed chats."));});
+            settingRow(alerts,"Send a test reminder",null,null,()->{Nudges.test(this);toast("Sent. Check your notifications.");});}
+        String keywords=prefs.getString("alert_keywords","");
+        settingRow(alerts,"Keyword alerts","Notify for these words, even in muted chats",keywords.isEmpty()?"None":keywords,this::editKeywords);
+        String mentionNames=prefs.getString("mention_name","");
+        settingRow(alerts,"Mention alerts","Notify when someone @mentions you",mentionNames.isEmpty()?"Off":"@"+mentionNames,this::editMentionNames);
+        settingSwitch(alerts,"Auto-copy verification codes","New codes go straight to the clipboard",PairedService.autoCopyCodes(this),on->prefs.edit().putBoolean("auto_copy_codes",on).apply());
+        settingRow(alerts,"Bubbles","Chats that float over other apps",null,()->startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName())));
+        settingRow(alerts,"Hide \"Message Center is running\"","Android requires it while connected. Turn it off and messages still arrive; you're told if the connection drops.",null,()->{try{startActivity(PairedService.channelSettings(this,PairedService.RUNNING));}catch(Exception e){openAppSettings();}});
+
+        LinearLayout looks=settingsGroup(content,"Appearance");
+        String themeMode=prefs.getString("theme","system");
+        settingRow(looks,"Theme",null,themeMode.equals("light")?"Light":themeMode.equals("dark")?"Dark":"Match phone",()->menuSheet("Theme",java.util.Arrays.asList("Match phone","Light","Dark"),java.util.Arrays.<Runnable>asList(()->{appTheme("system");settings();},()->{appTheme("light");settings();},()->{appTheme("dark");settings();})));
+        settingRow(looks,"Text size",null,scaleLabel(textScale),()->{float[] sizes={0.9f,1f,1.15f,1.3f};List<Runnable> actions=new ArrayList<>();
+            for(float f:sizes)actions.add(()->{prefs.edit().putFloat("text_scale",f).apply();settings();});
+            menuSheet("Text size",java.util.Arrays.asList("Small","Default","Large","Larger"),actions);});
+
+        LinearLayout link=settingsGroup(content,"Connection");
+        settingRow(link,"Reconnect","Restart the connection to Google Messages",null,()->{PairedService.disconnect(this,false);new android.os.Handler().postDelayed(()->{PairedService.start(this);if(screen.equals("settings"))settings();},300);});
+        settingRow(link,"Sign in / pair again",null,null,this::signIn);
+        boolean restricted=batteryRestricted();
+        settingRow(link,"Background activity",restricted?"Battery optimization is on. Allow background activity so messages keep arriving.":"Battery optimization is off. On ColorOS, also allow auto-launch for Message Center and Google Messages.",restricted?"Fix":"OK",restricted?this::allowBackground:this::openAppSettings);
+        settingRow(link,"Open Google Messages","It must stay your default texting app",null,this::openGoogle);
+
+        LinearLayout data=settingsGroup(content,"Your data");
+        settingRow(data,"Back up app data","Starred messages, nicknames, reminders and settings, to Downloads",null,this::backupNow);
+        settingRow(data,"Restore from a backup",null,null,()->{try{startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*").putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/json","text/plain","application/octet-stream"}),RESTORE_BACKUP);}catch(Exception e){toast("No file picker is available.");}});
+        settingRow(data,"Delete old verification codes",null,null,this::clearOldCodes);
+
+        LinearLayout about=settingsGroup(content,"About");
+        settingRow(about,"Message Center","Connects this phone directly to Google. Older history loads in pages and may be incomplete.",BuildConfig.VERSION_NAME,null);
+        settingRow(about,"Updates on GitHub",null,null,()->startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse("https://github.com/bags156/message-center/releases"))));
+
+        LinearLayout stop=settingsGroup(content,"Disconnect");
+        settingRow(stop,"Stop background connection","Messages stop arriving here until you reconnect",null,()->{PairedService.disconnect(this,false);settings();});
+        TextView forget=settingRow(stop,"Forget pairing and synced messages",null,null,()->new AlertDialog.Builder(this).setTitle("Forget this connection?").setMessage("Removes this app's pairing and synced cache from this phone. Your Google Messages chats stay in Google Messages. Remove Message Center in Google's Device pairing list to revoke it there too.").setNegativeButton("Cancel",null).setPositiveButton("Forget",(d,w)->{PairedService.disconnect(this,true);CookieManager.getInstance().removeAllCookies(null);inbox();}).show());
+        ((TextView)((LinearLayout)forget.getParent()).getChildAt(0)).setTextColor(danger);
+        restoreScroll(sc,keep);
     }
+    /** A titled group of settings on one rounded card. */
+    private LinearLayout settingsGroup(LinearLayout content,String title){TextView h=text(title,13,BLUE,true);h.setPadding(dp(20),dp(20),dp(20),dp(8));content.addView(h);
+        LinearLayout g=vertical();g.setBackground(shape(card,20));g.setClipToOutline(true);content.addView(g,new LinearLayout.LayoutParams(-1,-2));return g;}
+    private void addSettingRow(LinearLayout group,View row){if(group.getChildCount()>0){View line=new View(this);line.setBackgroundColor((ink&0x00ffffff)|0x14000000);LinearLayout.LayoutParams ll=new LinearLayout.LayoutParams(-1,Math.max(1,dp(1)/2));ll.setMarginStart(dp(16));group.addView(line,ll);}
+        group.addView(row,new LinearLayout.LayoutParams(-1,-2));}
+    /** A setting: title, an optional line under it, and an optional current value on the right. Returns the line so it can update. */
+    private TextView settingRow(LinearLayout group,String title,String sub,String value,Runnable tap){
+        LinearLayout r=row();r.setGravity(Gravity.CENTER_VERTICAL);r.setPadding(dp(16),dp(14),dp(16),dp(14));r.setMinimumHeight(dp(56));
+        LinearLayout texts=vertical();texts.addView(text(title,16,ink,false));
+        TextView line=text(sub==null?"":sub,13,muted,false);line.setPadding(0,dp(2),0,0);line.setVisibility(sub==null?View.GONE:View.VISIBLE);texts.addView(line);
+        r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));
+        if(value!=null){TextView v=text(value,14,tap==null?muted:BLUE,false);v.setPadding(dp(12),0,0,0);v.setMaxWidth(dp(150));v.setSingleLine(true);v.setEllipsize(TextUtils.TruncateAt.END);r.addView(v);}
+        if(tap!=null){r.setBackground(ripple());r.setOnClickListener(x->tap.run());}
+        r.setContentDescription(title+(value==null?"":", "+value)+(sub==null?"":". "+sub));
+        addSettingRow(group,r);return line;}
+    /** An on/off setting with a switch; changing it saves at once and leaves the screen where it is. */
+    private void settingSwitch(LinearLayout group,String title,String sub,boolean on,java.util.function.Consumer<Boolean> change){
+        LinearLayout r=row();r.setGravity(Gravity.CENTER_VERTICAL);r.setPadding(dp(16),dp(12),dp(12),dp(12));r.setMinimumHeight(dp(56));r.setBackground(ripple());
+        LinearLayout texts=vertical();texts.addView(text(title,16,ink,false));if(sub!=null){TextView line=text(sub,13,muted,false);line.setPadding(0,dp(2),0,0);texts.addView(line);}
+        r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));
+        android.widget.Switch sw=new android.widget.Switch(this);sw.setChecked(on);sw.setContentDescription(title);
+        int[][] states={{android.R.attr.state_checked},{}};
+        sw.setThumbTintList(new ColorStateList(states,new int[]{BLUE,dark?0xffb8bcc6:0xfff4f5f8}));sw.setTrackTintList(new ColorStateList(states,new int[]{(BLUE&0x00ffffff)|0x80000000,(muted&0x00ffffff)|0x60000000}));
+        sw.setOnCheckedChangeListener((b,checked)->change.accept(checked));r.setOnClickListener(x->sw.toggle());r.addView(sw);
+        addSettingRow(group,r);}
+    /** Scrolls to y once the content has been laid out (scrolling before that is ignored). */
+    private void restoreScroll(ScrollView s,int y){if(y<=0)return;s.getViewTreeObserver().addOnGlobalLayoutListener(new android.view.ViewTreeObserver.OnGlobalLayoutListener(){int tries;
+        @Override public void onGlobalLayout(){View c=s.getChildAt(0);if(c!=null&&c.getHeight()>0){s.scrollTo(0,y);s.getViewTreeObserver().removeOnGlobalLayoutListener(this);}else if(++tries>5)s.getViewTreeObserver().removeOnGlobalLayoutListener(this);}});}
     private void signIn(){remember();new AlertDialog.Builder(this).setTitle("Connect on this phone").setMessage("Sign in to the Google account selected in Google Messages → Device pairing. The app keeps the Google session on this phone, encrypted with Android Keystore after pairing, and sends it only to Google.\n\nApprove the matching emoji in Google Messages when asked. A new pairing replaces this app's synced cache. Google may reject sign-in in an embedded browser; this test does not bypass that restriction.")
         .setNegativeButton("Cancel",null).setPositiveButton("Sign in",(d,w)->login()).show();}
     @android.annotation.SuppressLint("SetJavaScriptEnabled")

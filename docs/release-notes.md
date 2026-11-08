@@ -1,9 +1,10 @@
-Message Center 1.0.7.
+Message Center 1.0.8.
 
-**Message times show again**
-- Dragging a chat left slides the whole conversation and each message's time appears on the right. In 1.0.6 the times were cut off.
+**A cleaner Settings screen**
+- Settings are grouped (Chats, Notifications, Appearance, Connection, Your data, About) on cards, with on/off switches, the current choice shown on the right, and a short line explaining each one. Longer explanations, like read receipts, open when you tap.
+- Changing a setting no longer jumps you back to the top.
 
-**Full first names**
-- "Is typing", reactions, replies, @ suggestions and pinned chats now use the first name saved in your contacts, so a two-word first name like "Hannah Kay" stays whole. Without contacts access, Google's first name is used; a nickname you set always wins.
+**Back keeps your place**
+- Going back from a chat returns the conversation list to where you were. If you replied, it goes to the top, where that chat now is. The same goes for coming back from Settings.
 
-Install over 1.0.6; the package and signing key are unchanged.
+Install over 1.0.7; the package and signing key are unchanged.
