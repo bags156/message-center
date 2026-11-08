@@ -130,6 +130,7 @@ final class MediaCache {
      * never decoded larger than needed.
      */
     static Bitmap decodeToCover(File file, int boxWidth, int boxHeight, boolean video) {
+        final int lenientSide = Math.max(boxWidth, boxHeight) * 2;
         String key = file.getName() + "@" + boxWidth + "x" + boxHeight;
         Bitmap cached = memory.get(key);
         if (cached != null) return cached;
@@ -149,8 +150,10 @@ final class MediaCache {
                 });
             }
         } catch (Exception | OutOfMemoryError e) {
-            return null;
+            bitmap = null;
         }
+        // The stricter decoder refuses some slightly damaged or unusual JPEGs that the older one still shows.
+        if (bitmap == null && !video) bitmap = decodeLeniently(file, lenientSide);
         if (bitmap != null) memory.put(key, bitmap);
         return bitmap;
     }
@@ -171,6 +174,7 @@ final class MediaCache {
      * longest edge, or a video's first frame. Returns null if Android cannot read it.
      */
     static Bitmap decode(File file, int maxSide, boolean video) {
+        final int lenientSide = maxSide;
         String key = file.getName() + "@" + maxSide;
         Bitmap cached = memory.get(key);
         if (cached != null) return cached;
@@ -189,10 +193,56 @@ final class MediaCache {
                 });
             }
         } catch (Exception | OutOfMemoryError e) {
-            return null;
+            bitmap = null;
         }
+        // The stricter decoder refuses some slightly damaged or unusual JPEGs that the older one still shows.
+        if (bitmap == null && !video) bitmap = decodeLeniently(file, lenientSide);
         if (bitmap != null) memory.put(key, bitmap);
         return bitmap;
+    }
+
+    private static Bitmap decodeLeniently(File file, int maxSide) {
+        try {
+            android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options(); o.inJustDecodeBounds = true;
+            android.graphics.BitmapFactory.decodeFile(file.getPath(), o);
+            if (o.outWidth <= 0 || o.outHeight <= 0) return null;
+            int sample = 1; while (Math.max(o.outWidth, o.outHeight) / (sample * 2) >= maxSide) sample *= 2;
+            android.graphics.BitmapFactory.Options d = new android.graphics.BitmapFactory.Options(); d.inSampleSize = sample;
+            return android.graphics.BitmapFactory.decodeFile(file.getPath(), d);
+        } catch (Exception | OutOfMemoryError e) { return null; }
+    }
+
+    /** "2.1 MB, HEIC": what a downloaded file actually is, from its first bytes. */
+    static String describe(File file) {
+        byte[] b = new byte[16]; int n = 0;
+        try (java.io.FileInputStream in = new java.io.FileInputStream(file)) { n = Math.max(0, in.read(b)); } catch (Exception ignored) {}
+        long size = file.length();
+        return (size >= 104858 ? String.format(java.util.Locale.US, "%.1f MB", size / 1048576.0) : (size / 1024) + " KB") + ", " + kind(b, n);
+    }
+
+    static String kind(byte[] b, int n) {
+        if (n <= 0) return "an empty file";
+        String a = new String(b, 0, n, java.nio.charset.StandardCharsets.ISO_8859_1);
+        if (n >= 3 && (b[0] & 0xff) == 0xFF && (b[1] & 0xff) == 0xD8 && (b[2] & 0xff) == 0xFF) return "JPEG";
+        if (n >= 4 && (b[0] & 0xff) == 0x89 && a.startsWith("PNG", 1)) return "PNG";
+        if (a.startsWith("GIF8")) return "GIF";
+        if (a.startsWith("RIFF") && a.length() >= 12 && a.startsWith("WEBP", 8)) return "WebP";
+        if (n >= 2 && (b[0] & 0xff) == 0xFF && (b[1] & 0xff) == 0x0A || a.startsWith("JXL ", 4)) return "JPEG XL";
+        if (a.length() >= 12 && a.startsWith("ftyp", 4)) {
+            String brand = a.substring(8, 12).trim();
+            if (brand.startsWith("hei") || brand.startsWith("hev") || brand.equals("mif1") || brand.equals("msf1")) return "HEIC";
+            if (brand.startsWith("avi")) return "AVIF";
+            return "video (" + brand + ")";
+        }
+        String t = a.trim();
+        if (t.startsWith("<") || t.startsWith("{")) return "a web page or error, not a photo";
+        return "unrecognized data";
+    }
+
+    /** Drops any decoded copies of a file that was deleted. */
+    static void forget(File file) {
+        String prefix = file.getName() + "@";
+        for (String k : memory.snapshot().keySet()) if (k.startsWith(prefix)) memory.remove(k);
     }
 
     static String mime(JSONObject media) {

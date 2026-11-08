@@ -13,12 +13,13 @@ import java.util.List;
 final class PairedStore extends SQLiteOpenHelper {
     PairedStore(Context context) {super(context,"paired-messages.db",null,1);setWriteAheadLoggingEnabled(true);}
     @Override public void onCreate(SQLiteDatabase db) {
-        db.execSQL("CREATE TABLE chats(id TEXT PRIMARY KEY, data TEXT NOT NULL, updated INTEGER NOT NULL, folder INTEGER NOT NULL)");
-        db.execSQL("CREATE TABLE items(id TEXT PRIMARY KEY,chat TEXT NOT NULL,data TEXT NOT NULL,time INTEGER NOT NULL,version INTEGER NOT NULL)");
-        db.execSQL("CREATE INDEX items_chat_time ON items(chat,time)");
-        db.execSQL("CREATE TABLE pages(id TEXT PRIMARY KEY,cursor TEXT NOT NULL,note TEXT NOT NULL)");
-        db.execSQL("CREATE TABLE meta(id INTEGER PRIMARY KEY,value INTEGER NOT NULL)");
-        db.execSQL("INSERT INTO meta VALUES(1,0)");
+        // IF NOT EXISTS: two parts of the app opening the database at once on first run must not collide.
+        db.execSQL("CREATE TABLE IF NOT EXISTS chats(id TEXT PRIMARY KEY, data TEXT NOT NULL, updated INTEGER NOT NULL, folder INTEGER NOT NULL)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS items(id TEXT PRIMARY KEY,chat TEXT NOT NULL,data TEXT NOT NULL,time INTEGER NOT NULL,version INTEGER NOT NULL)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS items_chat_time ON items(chat,time)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS pages(id TEXT PRIMARY KEY,cursor TEXT NOT NULL,note TEXT NOT NULL)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS meta(id INTEGER PRIMARY KEY,value INTEGER NOT NULL)");
+        db.execSQL("INSERT OR IGNORE INTO meta VALUES(1,0)");
     }
     @Override public void onUpgrade(SQLiteDatabase db,int before,int after) {throw new IllegalStateException("Unsupported database version");}
     private static JSONObject json(String s) {try{return new JSONObject(s);}catch(Exception e){return new JSONObject();}}

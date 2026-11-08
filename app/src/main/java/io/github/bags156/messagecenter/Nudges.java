@@ -35,6 +35,11 @@ public final class Nudges extends BroadcastReceiver {
         reschedule(context);
     }
 
+    /** Records when a message actually arrived here (its timestamp is when it was sent, which can be much earlier). */
+    static void arrived(Context context, JSONObject message) {
+        String chat = message.optString("conversationID"), mid = message.optString("messageID");
+        if (!chat.isEmpty() && !mid.isEmpty()) state(context).edit().putString("arrival:" + chat, mid + "|" + System.currentTimeMillis()).apply();
+    }
     static void cancel(Context context, String chat) { context.getSystemService(NotificationManager.class).cancel("nudge:" + chat, NOTIFICATION_ID); }
 
     /** Posts any nudges that are due and sets an alarm for the next one. Safe to call often. */
@@ -49,13 +54,21 @@ public final class Nudges extends BroadcastReceiver {
         SharedPreferences s = state(app);
         ChatSettings settings = new ChatSettings(app);
         Nicknames.load(app);
-        try (PairedStore store = new PairedStore(app)) {
+        PairedStore shared = PairedService.sharedStore(), own = shared == null ? new PairedStore(app) : null, store = shared != null ? shared : own;
+        SharedPreferences.Editor edit = s.edit();
+        try {
             for (JSONObject chat : store.chats("", 1)) {
                 String id = chat.optString("conversationID");
-                if (delay <= 0 || !settings.pinned(chat) || !settings.unread(chat) || settings.muted(id) || settings.snoozed(id)) { nm.cancel("nudge:" + id, NOTIFICATION_ID); continue; }
+                if (delay <= 0 || !settings.pinned(chat) || !settings.unread(chat) || settings.muted(id) || settings.snoozed(id)) { nm.cancel("nudge:" + id, NOTIFICATION_ID); edit.remove("since:" + id); continue; }
+                // Count from when the chat started qualifying (just pinned, just marked unread), not only from the message.
+                long since = s.getLong("since:" + id, 0);
+                if (since == 0) { since = now; edit.putLong("since:" + id, now); }
                 JSONObject last = store.latestIncoming(id);
                 if (last == null) continue;
                 String mid = last.optString("messageID"); long received = PairedProtocol.time(last);
+                String arrival = s.getString("arrival:" + id, "");
+                if (arrival.startsWith(mid + "|")) try { received = Math.max(received, Long.parseLong(arrival.substring(mid.length() + 1))); } catch (NumberFormatException ignored) {}
+                received = Math.max(received, since);
                 if (mid.equals(s.getString("dismissed:" + id, ""))) { nm.cancel("nudge:" + id, NOTIFICATION_ID); continue; }
                 boolean same = mid.equals(s.getString("for:" + id, ""));
                 long lastNudge = same ? s.getLong("at:" + id, 0) : 0; int sent = same ? s.getInt("count:" + id, 0) : 0;
@@ -69,7 +82,8 @@ public final class Nudges extends BroadcastReceiver {
                 }
                 next = Math.min(next, due);
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        } finally { edit.apply(); if (own != null) own.close(); }
         if (next == Long.MAX_VALUE) alarms.cancel(check);
         else alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next, check);
     }

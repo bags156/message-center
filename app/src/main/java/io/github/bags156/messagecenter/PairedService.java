@@ -154,6 +154,8 @@ public final class PairedService extends Service {
                     if(!PairedProtocol.outgoing(message) && typing.remove(message.optString("conversationID"))!=null)changed("TYPING");
                     // Answered on the phone: this chat's notification here is no longer needed.
                     if(PairedProtocol.outgoing(message)&&!envelope.optBoolean("old",true))dismiss(message.optString("conversationID"));
+                    // Reminders count from when a message reached this app, even if it was sent long before (phone offline, app restarted).
+                    if(!existed&&!PairedProtocol.outgoing(message))Nudges.arrived(this,message);
                     if(PairedProtocol.notifyLive(envelope.optBoolean("old",true),existed,message)){autoCopy(message);notifyMessage(message);maybeAutoReply(message);}
                     changed(kind);
                 }
@@ -323,6 +325,8 @@ public final class PairedService extends Service {
     }
     static void sendTyping(String chatJSON) {PairedService s=current;if(s==null||!s.ready)return;execute(c->{c.setTyping(chatJSON);return "";},(v,e)->{});}
     /** Opening a chat clears its notification and the messages collected in it. */
+    /** The running service's database, so background checks don't open a second copy. */
+    static PairedStore sharedStore(){PairedService s=current;return s==null?null:s.store;}
     static void clearNotification(Context context,String id) {
         PairedService s=current;if(s!=null)synchronized(s.notified){s.notified.remove(id);}
         NotificationManager nm=context.getSystemService(NotificationManager.class);Nudges.cancel(context,id);

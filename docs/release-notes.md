@@ -20,4 +20,9 @@ Message Center 1.0.
 - **Busy auto-reply:** Settings → Busy auto-reply, for an hour, 3 hours, until morning, or until you turn it off. It answers once an hour per person, only saved contacts in one-to-one chats. A banner in the chat list reminds you it's on.
 - **Search filters:** in search, tap Photos, Links, Last 7 days, Last 30 days, or From… (or type from:Name, has:photo, has:link, last:7d).
 
+**Fixes**
+- **Unread reminders** now count from when a message reached Message Center (or when you pinned the chat or marked it unread), not from when it was sent. A message that arrived late, after the app had been closed or your phone was offline, no longer triggers a reminder early.
+- **Photos that won't open** keep showing their preview instead of a black screen, and the message now says what the downloaded file actually is. A broken download is thrown away so opening it again fetches a fresh copy. Photos that Android's newer decoder rejects are tried with the older one.
+- Fixed a rare crash when two parts of the app opened the message database at the same moment on first launch.
+
 Install over 0.9.3; the package and signing key are unchanged.

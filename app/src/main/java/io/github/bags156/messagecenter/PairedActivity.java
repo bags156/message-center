@@ -1064,7 +1064,10 @@ public class PairedActivity extends Activity {
             t.setOnClickListener(v->{if(full[0]==null){toast("Still downloading…");return;}if(a[0].equals("Save"))saveToPhone(full[0],media);else share(full[0],media);});bar.addView(t);}
         box.addView(bar,new FrameLayout.LayoutParams(-1,-2,Gravity.TOP));image.setOnTap(()->bar.setVisibility(bar.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE));
         d.setContentView(box);d.show();
-        File thumb=MediaCache.file(this,media,true);if(thumb.isFile()){Bitmap t=MediaCache.peek(thumb,Math.round(getResources().getDisplayMetrics().widthPixels*0.66f));if(t!=null){image.setImageBitmap(t);if(MediaCache.tiny(thumb))soft(image);}}
+        File thumb=MediaCache.file(this,media,true);if(thumb.isFile()){int side=Math.round(getResources().getDisplayMetrics().widthPixels*0.66f);Bitmap t=MediaCache.peek(thumb,side);
+            if(t!=null){image.setImageBitmap(t);if(MediaCache.tiny(thumb))soft(image);}
+            // Not decoded yet (the chat was scrolled, or reopened): decode it now so the screen is never just black.
+            else decoder.execute(()->{Bitmap tb=MediaCache.decode(thumb,side,false);boolean tiny=tb!=null&&MediaCache.tiny(thumb);ui.post(()->{if(tb!=null&&d.isShowing()&&image.getDrawable()==null){image.setImageBitmap(tb);if(tiny)soft(image);}});});}
         if(!MediaCache.file(this,media,false).isFile()&&!PairedService.ready()){spinner.setVisibility(View.GONE);toast("Connect to Google Messages to download the full photo.");return;}
         if(!MediaCache.hasFull(media)&&!MediaCache.file(this,media,false).isFile()){
             TextView note=text("Getting the full photo from your phone…",14,Color.WHITE,false);note.setPadding(dp(14),dp(8),dp(14),dp(8));note.setBackground(shape(0x99000000,16));
@@ -1084,7 +1087,19 @@ public class PairedActivity extends Activity {
         ui.postDelayed(check[0],1500);}
     private void showFullPhoto(JSONObject media,Dialog d,ZoomImageView image,ProgressBar spinner,File[] full){
         MediaCache.fetch(this,media,false,(file,error)->{if(file==null){spinner.setVisibility(View.GONE);if(d.isShowing())toast(error);return;}full[0]=file;
-            decoder.execute(()->{Bitmap b=MediaCache.decode(file,2560,false);ui.post(()->{spinner.setVisibility(View.GONE);if(b!=null){image.setImageBitmap(b);sharp(image);}else toast("This photo can't be shown here. Use Share to open it in another app.");});});});
+            decoder.execute(()->{Bitmap b=MediaCache.decode(file,2560,false);String what=b==null?MediaCache.describe(file):"";
+                ui.post(()->{spinner.setVisibility(View.GONE);if(b!=null){image.setImageBitmap(b);sharp(image);}else if(d.isShowing())photoProblem(file,media,what);});});});
+    }
+    /** The full photo arrived but won't display: keep the preview on screen and say what the file is. */
+    private void photoProblem(File file,JSONObject media,String what){
+        android.util.Log.w("MessageCenter","Full photo won't decode: "+what+", sent as "+MediaCache.mime(media));
+        boolean broken=what.contains("empty")||what.contains("web page")||what.contains("unrecognized");
+        // A broken download is thrown away so opening the photo again fetches it fresh.
+        if(broken&&file.delete())MediaCache.forget(file);
+        AlertDialog.Builder b=new AlertDialog.Builder(this).setTitle("Can't show this photo").setPositiveButton("OK",null)
+            .setMessage(broken?"The download didn't contain a photo ("+what+"). Open it again to retry.":"It downloaded ("+what+"), but Android couldn't display it. Share opens it in another app, such as Photos.");
+        if(!broken)b.setNeutralButton("Share",(x,y)->share(file,media));
+        b.show();
     }
     private static final int TAKE_PHOTO=43;private File pendingCapture;
     /** ⊕ button: a panel with Photos & videos (Android's photo picker, no storage permission), Camera, and Files. */
