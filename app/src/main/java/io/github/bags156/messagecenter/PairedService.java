@@ -325,7 +325,7 @@ public final class PairedService extends Service {
     /** Opening a chat clears its notification and the messages collected in it. */
     static void clearNotification(Context context,String id) {
         PairedService s=current;if(s!=null)synchronized(s.notified){s.notified.remove(id);}
-        NotificationManager nm=context.getSystemService(NotificationManager.class);
+        NotificationManager nm=context.getSystemService(NotificationManager.class);Nudges.cancel(context,id);
         // Cancelling a bubbled chat's notification would also close its bubble.
         for(StatusBarNotification n:nm.getActiveNotifications())if(("chat:"+id).equals(n.getTag())&&(n.getNotification().flags&Notification.FLAG_BUBBLE)!=0)return;
         nm.cancel("chat:"+id,1);
@@ -504,7 +504,7 @@ public final class PairedService extends Service {
     static void markReadFromNotification(Context context,String chat,Runnable done) {
         PairedService s=current;
         if(s!=null)synchronized(s.notified){s.notified.remove(chat);}
-        context.getSystemService(NotificationManager.class).cancel("chat:"+chat,1);
+        context.getSystemService(NotificationManager.class).cancel("chat:"+chat,1);Nudges.cancel(context,chat);
         ChatSettings settings=new ChatSettings(context);settings.setMarkedUnread(chat,false);
         // Clear the unread dot here even when no read receipt goes to the sender.
         PairedStore own=s==null?new PairedStore(context):null,store=own!=null?own:s.store;JSONObject c=store.chat(chat),latest=store.latestIncoming(chat);if(own!=null)own.close();
@@ -550,7 +550,7 @@ public final class PairedService extends Service {
         return Avatars.initial(PairedProtocol.initial(name),PairedProtocol.color(p==null?"":p.optString("avatarHexColor"),Avatars.fallbackColor(name)),128);
     }
     private void update(String value) {status=value;if(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED)getSystemService(NotificationManager.class).notify(FOREGROUND_ID,connectionNotification());changed("STATUS");}
-    private final Runnable widgetRefresh=()->{try{MessagesWidget.update(this);}catch(Exception ignored){}};
+    private final Runnable widgetRefresh=()->{try{MessagesWidget.update(this);}catch(Exception ignored){}new Thread(()->Nudges.reschedule(this),"nudges").start();};
     private void changed(String kind) {sendBroadcast(new Intent(CHANGED).setPackage(getPackageName()).putExtra("kind",kind));
         // The home screen widget follows chat changes, at most every two seconds.
         if(kind.equals("CONVERSATION")||kind.equals("MESSAGE")){main.removeCallbacks(widgetRefresh);main.postDelayed(widgetRefresh,2000);}}

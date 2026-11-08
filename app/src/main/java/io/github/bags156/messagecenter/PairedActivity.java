@@ -382,7 +382,7 @@ public class PairedActivity extends Activity {
         labels.add("Delete conversation…");actions.add(()->deleteChat(c));
         menuSheet(PairedProtocol.title(c),labels,actions);}
     private void openBubble(String id){String problem=PairedService.showBubble(this,id);if(!problem.isEmpty())toast(problem);}
-    private void togglePin(JSONObject c){String id=c.optString("conversationID");boolean now=!chatSettings.pinned(c);chatSettings.setPinned(id,now);
+    private void togglePin(JSONObject c){String id=c.optString("conversationID");boolean now=!chatSettings.pinned(c);chatSettings.setPinned(id,now);decoder.execute(()->Nudges.reschedule(this));
         toast(now?"Pinned to the top of Message Center":"Unpinned");if(screen.equals("inbox"))renderInbox();}
     private void chooseTheme(String id){
         LinearLayout list=vertical();Dialog[] dialog=new Dialog[1];TextView heading=text("Chat theme",18,ink,true);heading.setPadding(dp(8),0,dp(8),dp(6));list.addView(heading);
@@ -1656,6 +1656,12 @@ public class PairedActivity extends Activity {
         String themeMode=getSharedPreferences("paired",MODE_PRIVATE).getString("theme","system");
         content.addView(button("Theme: "+(themeMode.equals("light")?"Light":themeMode.equals("dark")?"Dark":"Match phone")+" (tap to change)",false,()->{String next=themeMode.equals("system")?"light":themeMode.equals("light")?"dark":"system";appTheme(next);}));gap(content,8);
         content.addView(button("Text size: "+scaleLabel(textScale)+" (tap to change)",false,()->{float next=textScale<1f?1f:textScale<1.15f?1.15f:textScale<1.3f?1.3f:0.9f;getSharedPreferences("paired",MODE_PRIVATE).edit().putFloat("text_scale",next).apply();settings();}));gap(content,8);
+        int nudge=Nudges.minutes(this);
+        content.addView(button(nudge<=0?"Unread reminders for pinned chats: off":"Unread reminders for pinned chats: every "+(nudge<60?nudge+" minutes":nudge==60?"hour":(nudge/60)+" hours"),false,()->{
+            List<String> labels=java.util.Arrays.asList("Every hour","Every 2 hours","Every 4 hours","Off");int[] values={60,120,240,0};List<Runnable> actions=new ArrayList<>();
+            for(int v:values)actions.add(()->{decoder.execute(()->Nudges.setMinutes(this,v));ui.postDelayed(this::settings,150);});
+            menuSheet("Remind me about unread pinned chats",labels,actions);}));
+        note(content,"When someone in a pinned chat messages you and it's still unread (or marked unread), you get a reminder, up to 3 times. Not between 10 PM and 8 AM, and not for muted or snoozed chats. \"Not until next message\" on the reminder stops it for that chat.");
         content.addView(button("Maps app for addresses: "+mapsAppLabel(),false,()->chooseMapsApp(null)));gap(content,8);
         content.addView(button("Back up app data",false,this::backupNow));gap(content,8);
         content.addView(button("Restore from a backup",false,()->{try{startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*").putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/json","text/plain","application/octet-stream"}),RESTORE_BACKUP);}catch(Exception e){toast("No file picker is available.");}}));gap(content,8);
