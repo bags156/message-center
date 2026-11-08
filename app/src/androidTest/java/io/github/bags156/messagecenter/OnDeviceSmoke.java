@@ -17,7 +17,7 @@ public final class OnDeviceSmoke extends Instrumentation {
     private void textMessage(PairedStore store,String chat,int i)throws Exception{boolean mine=i%3==0;
         store.message(new JSONObject().put("messageID",chat+i).put("conversationID",chat).put("participantID",mine?"me":"p1").put("timestamp",1794000400000000L+i*60_000_000L)
             .put("messageStatus",new JSONObject().put("status",mine?"OUTGOING_DELIVERED":"INCOMING_COMPLETE"))
-            .put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","Line "+i+" of a long conversation"))))),0,true);}
+            .put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","Line "+i+" of a long conversation")))),0,true);}
     /** Scrolled up reading: a refresh from Google, new messages, redraws and a trip to Details must leave you where you are. */
     private void checkChatKeepsItsPlace()throws Exception{
         try(PairedStore store=new PairedStore(getTargetContext())){
