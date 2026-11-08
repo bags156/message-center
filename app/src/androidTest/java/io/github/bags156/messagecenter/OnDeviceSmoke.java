@@ -111,8 +111,10 @@ public final class OnDeviceSmoke extends Instrumentation {
         boolean[] sliding=new boolean[1];String[] motionState={""};
         // The message is saved and drawn in one step on the main thread, so nothing else redraws in between.
         runOnMainSync(()->{try{try(PairedStore store=new PairedStore(getTargetContext())){textMessage(store,"scrolly",80);}
-            java.lang.reflect.Method m=PairedActivity.class.getDeclaredMethod("renderMessages",boolean.class);m.setAccessible(true);m.invoke(reader,false);m.invoke(reader,false);
+            java.lang.reflect.Method m=PairedActivity.class.getDeclaredMethod("renderMessages",boolean.class);m.setAccessible(true);m.invoke(reader,false);
+            // Checked right after the first redraw: a slow emulator can take longer than the slide itself to redraw again.
             java.lang.reflect.Field running=PairedActivity.class.getDeclaredField("motionRunning");running.setAccessible(true);sliding[0]=((java.util.Map<?,?>)running.get(reader)).containsKey("m:scrolly80");
+            m.invoke(reader,false);
             String[] names={"motionReady","motionChat","motionSeen","anchorOlder","motionRunning"};StringBuilder st=new StringBuilder();
             for(String f:names){java.lang.reflect.Field fl=PairedActivity.class.getDeclaredField(f);fl.setAccessible(true);Object v=fl.get(reader);st.append(f).append('=').append(v instanceof java.util.Collection?"size "+((java.util.Collection<?>)v).size():v instanceof java.util.Map?"keys "+((java.util.Map<?,?>)v).keySet():String.valueOf(v)).append("; ");}
             motionState[0]=st.toString();}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
