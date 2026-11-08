@@ -140,14 +140,44 @@ public final class PairedService extends Service {
         } catch(Exception e) {
             ready=false;emoji="";
             update(e.getMessage()==null?"Could not open the saved connection. Sign in again.":e.getMessage());
+            if(cookies==null&&generation.get()==token)main.post(()->scheduleAutoReconnect("couldn't connect"));
         }
     }
+    // ---- Reconnecting on its own ----
+    /**
+     * While stuck (Google Messages not answering, the connection ended, or it couldn't connect),
+     * the connection is opened fresh from the saved session, like tapping Reconnect: after 1, 2,
+     * 5 and 15 minutes, then every 30. Only while online; recovering cancels it.
+     */
+    private static final long[] AUTO_RECONNECT_MS={60_000,120_000,300_000,900_000,1_800_000};
+    private int autoTries;private String autoWhy="";
+    private final Runnable autoReconnect=this::autoReconnectNow;
+    private void scheduleAutoReconnect(String why){
+        if(main.hasCallbacks(autoReconnect))return;autoWhy=why;
+        main.postDelayed(autoReconnect,AUTO_RECONNECT_MS[Math.min(autoTries,AUTO_RECONNECT_MS.length-1)]);}
+    private void stopAutoReconnect(){main.removeCallbacks(autoReconnect);autoTries=0;}
+    private void autoReconnectNow(){
+        if(ready||inactive||!vault.exists()||!getSharedPreferences("paired",MODE_PRIVATE).getBoolean("enabled",false))return;
+        // Offline: a new connection can't help yet. Look again in a minute (the network watcher also nudges a sync when it's back).
+        if(!online()){main.postDelayed(autoReconnect,60_000);return;}
+        autoTries++;Diagnostics.note("Reconnecting on its own (try "+autoTries+", "+autoWhy+")");
+        network.execute(()->open(null));
+        // If this try doesn't connect, the next one comes later; connecting cancels it.
+        scheduleAutoReconnect(autoWhy);}
+    private boolean online(){try{android.net.ConnectivityManager cm=getSystemService(android.net.ConnectivityManager.class);android.net.Network n=cm.getActiveNetwork();
+        android.net.NetworkCapabilities c=n==null?null:cm.getNetworkCapabilities(n);return c!=null&&c.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET);}catch(Exception e){return true;}}
+    /** Reconnect (the inbox, chats and Settings): restarts the connection from the saved session, like turning it off and on. */
+    static void restart(Context context){Diagnostics.note("Reconnect tapped");disconnect(context,false);new Handler(android.os.Looper.getMainLooper()).postDelayed(()->start(context),300);}
+    /** Whether Reconnect would help now: signed in and not connected, and not already connecting or waiting on a sign-in. */
+    static boolean canReconnect(Context context){if(ready())return false;String s=status(context);
+        if(s==null||s.startsWith("Connecting")||s.startsWith("Sign in")||s.startsWith("Approve")||s.startsWith("Starting device pairing")||s.startsWith("Paired.")||s.startsWith("Google session expired")||s.startsWith("Google Messages for web is open"))return false;
+        return new SessionVault(context).exists();}
     private void event(int token,String kind,String payload) {
         try {
             switch(kind) {
                 case "PAIR_EMOJI" -> {emoji=new JSONObject(payload).optString("emoji");update("Approve the matching emoji in Google Messages");}
                 case "READY" -> {
-                    ready=true;emoji="";update("Connected to Google Messages");scheduleCodeSweep();
+                    ready=true;emoji="";stopAutoReconnect();update("Connected to Google Messages");scheduleCodeSweep();
                     saveSession(token);main.post(this::flushOutbox);main.post(this::flushReadReceipts);scheduleSync();
                     network.execute(()->{if(generation.get()==token)try{chats(client,"",1);}catch(Exception e){update("Connected • tap Refresh to load conversations");}});
                 }
@@ -173,12 +203,12 @@ public final class PairedService extends Service {
                     if(t.optBoolean("typing"))people.put(number,System.currentTimeMillis()+TYPING_TIMEOUT_MS);else if(number.isEmpty())people.clear();else people.remove(number);
                     changed(kind);
                 }
-                case "AUTH_REQUIRED" -> {ready=false;getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("enabled",false).apply();update("Google session expired. Sign in again.");}
-                case "DISCONNECTED" -> {ready=false;update("Connection ended. Tap Reconnect in Settings.");}
-                case "RECONNECTING" -> {ready=false;update("Waiting for Google Messages • check network and battery settings");}
-                case "RECOVERED" -> {ready=true;update("Connected to Google Messages");scheduleCodeSweep();main.post(this::flushOutbox);main.post(this::flushReadReceipts);main.post(()->requestSync(false));}
+                case "AUTH_REQUIRED" -> {ready=false;stopAutoReconnect();getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("enabled",false).apply();update("Google session expired. Sign in again.");}
+                case "DISCONNECTED" -> {ready=false;update("Connection ended • reconnecting on its own");scheduleAutoReconnect("connection ended");}
+                case "RECONNECTING" -> {ready=false;update("Waiting for Google Messages • reconnecting on its own");scheduleAutoReconnect("waiting for Google Messages");}
+                case "RECOVERED" -> {ready=true;stopAutoReconnect();update("Connected to Google Messages");scheduleCodeSweep();main.post(this::flushOutbox);main.post(this::flushReadReceipts);main.post(()->requestSync(false));}
                 case "STALE" -> main.post(()->requestSync(true));
-                case "INACTIVE" -> {inactive=true;update("Google Messages for web is open somewhere else. Open Message Center to switch back.");}
+                case "INACTIVE" -> {inactive=true;stopAutoReconnect();update("Google Messages for web is open somewhere else. Open Message Center to switch back.");}
                 default -> { }
             }
         }catch(Exception e){update("A Google update could not be saved. Refresh the conversation.");}
@@ -407,7 +437,7 @@ public final class PairedService extends Service {
         if(ready&&!inactive){problemSince=0;main.removeCallbacks(problemCheck);getSystemService(NotificationManager.class).cancel(PROBLEM_ID);return;}
         // Signing in and pairing are things you're doing right now; nothing to warn about.
         if(now.startsWith("Sign in")||now.startsWith("Approve")||now.startsWith("Starting device pairing")||now.startsWith("Paired.")){main.removeCallbacks(problemCheck);problemSince=0;return;}
-        boolean act=inactive||now.startsWith("Google session expired")||now.startsWith("Connection ended")||now.startsWith("Could not open")||now.startsWith("Session could not");
+        boolean act=inactive||now.startsWith("Google session expired")||now.startsWith("Could not open")||now.startsWith("Session could not");
         if(act){showProblem(true);return;}
         if(problemSince==0){problemSince=System.currentTimeMillis();main.removeCallbacks(problemCheck);main.postDelayed(problemCheck,PROBLEM_GRACE_MS);}
         else if(isProblemShowing())showProblem(true); // keep its text current
@@ -696,7 +726,7 @@ public final class PairedService extends Service {
         if(kind.equals("CONVERSATION")||kind.equals("MESSAGE")){main.removeCallbacks(widgetRefresh);main.postDelayed(widgetRefresh,2000);}}
     @Override public IBinder onBind(Intent intent) {return null;}
     @Override public void onDestroy() {
-        generation.incrementAndGet();ready=false;main.removeCallbacks(syncTick);main.removeCallbacks(problemCheck);main.removeCallbacks(codeSweep);main.removeCallbacks(receiptRetry);if(current==this)current=null;
+        generation.incrementAndGet();ready=false;main.removeCallbacks(autoReconnect);main.removeCallbacks(syncTick);main.removeCallbacks(problemCheck);main.removeCallbacks(codeSweep);main.removeCallbacks(receiptRetry);if(current==this)current=null;
         try{if(screenReceiver!=null)unregisterReceiver(screenReceiver);}catch(Exception ignored){}
         try{if(networkCallback!=null)getSystemService(android.net.ConnectivityManager.class).unregisterNetworkCallback(networkCallback);}catch(Exception ignored){}
         Client old=client;client=null;network.shutdownNow();events.shutdownNow();media.shutdownNow();phoneRequests.shutdownNow();readRequests.shutdownNow();

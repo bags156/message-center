@@ -96,7 +96,7 @@ public class PairedActivity extends Activity {
     private int bg,card,ink,muted,surface,fab,onFab,danger,folder=1,limit=300;
     private boolean dark;
     private PairedStore store;private ChatSettings chatSettings;
-    private FrameLayout frame;private LinearLayout root,items,replyPanel,typingRow;private TextView statusView,replyLabel,replyQuote,typingLabel;private ObjectAnimator typingPulse;
+    private FrameLayout frame;private LinearLayout root,items,replyPanel,typingRow;private LinearLayout statusRow;private TextView reconnectButton;private TextView statusView,replyLabel,replyQuote,typingLabel;private ObjectAnimator typingPulse;
     private ScrollView scroll;private EditText composer;private WebView login;private LinearLayout searchRow;private TextView receiptStatusView;
     private String screen="inbox",chatId="",query="",replyId="";
     private Drafts drafts;
@@ -174,7 +174,7 @@ public class PairedActivity extends Activity {
         receiptStatusView=null;
         // Screenshots are always allowed (an older version could leave them blocked after signing in).
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);if(!name.equals("login"))setRecentsScreenshotEnabled(true);
-        if(recorder!=null)cancelRecording();recordBar=null;composeRow=null;sendButton=null;recordClock=null;screen=name;batteryCard=null;jumpButton=null;statusView=null;composer=null;items=null;scroll=null;searchRow=null;attachStrip=null;attachScroll=null;replyPanel=null;typingRow=null;messageViews.clear();ui.removeCallbacks(typingTick);if(typingPulse!=null){typingPulse.cancel();typingPulse=null;}
+        if(recorder!=null)cancelRecording();recordBar=null;composeRow=null;sendButton=null;recordClock=null;screen=name;batteryCard=null;jumpButton=null;statusView=null;statusRow=null;reconnectButton=null;composer=null;items=null;scroll=null;searchRow=null;attachStrip=null;attachScroll=null;replyPanel=null;typingRow=null;messageViews.clear();ui.removeCallbacks(typingTick);if(typingPulse!=null){typingPulse.cancel();typingPulse=null;}
         dark=(getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;
         textScale=getSharedPreferences("paired",MODE_PRIVATE).getFloat("text_scale",1f);quickRow=null;quickScroll=null;searchChips=null;selecting=false;chosen.clear();selectionBar=null;chatFrame=null;
         bg=dark?0xff111318:0xfff8f9fc;card=dark?0xff1d2026:Color.WHITE;surface=dark?0xff23252b:0xffe9edf4;ink=dark?0xffe3e2e9:0xff1a1b20;muted=dark?0xffabaeb8:0xff5d5f67;
@@ -198,10 +198,18 @@ public class PairedActivity extends Activity {
         i.setLayoutParams(new LinearLayout.LayoutParams(dp(48),dp(48)));return i;}
     private EditText input(String hint){EditText e=new EditText(this);e.setHint(hint);e.setTextColor(ink);e.setHintTextColor(muted);e.setTextSize(16);e.setPadding(dp(16),dp(12),dp(16),dp(12));e.setBackground(shape(card,18));return e;}
     private void header(String title,Runnable back){LinearLayout r=row();if(back!=null)r.addView(icon(R.drawable.ic_back,ink,"Back",back));TextView heading=text(title,24,ink,false);heading.setPadding(dp(back==null?4:8),0,dp(8),0);r.addView(heading,new LinearLayout.LayoutParams(0,-2,1));root.addView(r);gap(root,10);}
-    private void connection(){statusView=text(PairedService.status(this),13,muted,false);statusView.setPadding(dp(4),0,dp(4),dp(8));root.addView(statusView);updateStatus();}
+    /** The connection line, with a Reconnect button on the inbox and in chats when that would help. */
+    private void connection(){LinearLayout line=row();line.setGravity(Gravity.CENTER_VERTICAL);line.setPadding(dp(4),0,dp(4),dp(8));statusRow=line;
+        statusView=text(PairedService.status(this),13,muted,false);line.addView(statusView,new LinearLayout.LayoutParams(0,-2,1));
+        int accent=ChatTheme.of("default").accent(dark);
+        reconnectButton=text("Reconnect",14,accent,true);reconnectButton.setPadding(dp(14),dp(7),dp(14),dp(7));reconnectButton.setBackground(shape((accent&0x00FFFFFF)|0x26000000,16));
+        reconnectButton.setContentDescription("Reconnect to Google Messages");reconnectButton.setOnClickListener(v->{PairedService.restart(this);reconnectButton.setVisibility(View.GONE);});
+        LinearLayout.LayoutParams bl=new LinearLayout.LayoutParams(-2,-2);bl.setMarginStart(dp(10));line.addView(reconnectButton,bl);root.addView(line);updateStatus();}
     /** The connection line only shows while something needs attention. */
     private void updateStatus(){if(statusView==null)return;statusView.setText(PairedService.status(this));
-        boolean quiet=(screen.equals("inbox")||screen.equals("chat"))&&PairedService.ready();statusView.setVisibility(quiet?View.GONE:View.VISIBLE);}
+        boolean main=screen.equals("inbox")||screen.equals("chat"),quiet=main&&PairedService.ready();
+        if(statusRow!=null)statusRow.setVisibility(quiet?View.GONE:View.VISIBLE);
+        if(reconnectButton!=null)reconnectButton.setVisibility(main&&!bubble()&&PairedService.canReconnect(this)?View.VISIBLE:View.GONE);}
     private void note(LinearLayout parent,String value){TextView t=text(value,14,muted,false);t.setPadding(dp(15),dp(12),dp(15),dp(12));t.setBackground(shape(card,18));parent.addView(t);gap(parent,10);}
     private void toast(String value){Toast.makeText(this,value,Toast.LENGTH_LONG).show();}
     private void error(String value){if(!isFinishing())new AlertDialog.Builder(this).setTitle("Message Center").setMessage(value).setPositiveButton("OK",null).show();}
@@ -2180,7 +2188,7 @@ public class PairedActivity extends Activity {
             menuSheet("Text size",java.util.Arrays.asList("Small","Default","Large","Larger"),actions);});
 
         LinearLayout link=settingsGroup(content,"Connection");
-        settingRow(link,"Reconnect","Restart the connection to Google Messages",null,()->{PairedService.disconnect(this,false);new android.os.Handler().postDelayed(()->{PairedService.start(this);if(screen.equals("settings"))settings();},300);});
+        settingRow(link,"Reconnect","Restart the connection to Google Messages. It also does this on its own when it gets stuck.",null,()->{PairedService.restart(this);new android.os.Handler().postDelayed(()->{if(screen.equals("settings"))settings();},400);});
         settingRow(link,"Sign in / pair again",null,null,this::signIn);
         boolean restricted=batteryRestricted();
         settingRow(link,"Background activity",restricted?"Battery optimization is on. Allow background activity so messages keep arriving.":"Battery optimization is off. On ColorOS, also allow auto-launch for Message Center and Google Messages.",restricted?"Fix":"OK",restricted?this::allowBackground:this::openAppSettings);

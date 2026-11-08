@@ -236,6 +236,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         android.view.View plus=found.get(0);runOnMainSync(plus::performClick);waitForIdleSync();
         check(bubble.hasWindowFocus()==false,"Attach panel did not open");bubble.finish();waitForIdleSync();
         checkChatKeepsItsPlace();
+        check(!PairedService.canReconnect(getTargetContext()),"Reconnect offered with no saved session to reconnect with");
         try(PairedStore store=new PairedStore(getTargetContext())){store.clear();}
         Outbox box=new Outbox(getTargetContext());for(JSONObject o:box.all())box.remove(o.optString("id"));
         getTargetContext().getSharedPreferences("transcripts",0).edit().clear().commit();
