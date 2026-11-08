@@ -22,7 +22,6 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
-import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.VideoView;
@@ -35,8 +34,10 @@ import java.util.Locale;
  */
 public final class VideoPlayerActivity extends Activity {
     private static final String PATH = "path", MIME = "mime", NAME = "name";
+    /** Optional extras: where to start (ms) and whether to start muted, when coming from a chat's inline player. */
+    static final String AT = "at", MUTED = "muted";
     private final Handler ui = new Handler(Looper.getMainLooper());
-    private VideoView video; private SeekBar seek; private TextView elapsed, total; private ImageView play; private View top, bottom; private ProgressBar spinner;
+    private VideoView video; private Scrubber seek; private TextView elapsed, total; private ImageView play, sound; private View top, bottom; private ProgressBar spinner; private android.media.MediaPlayer media; private boolean muted;
     private File file; private String mime, name;
     private int resumeAt; private boolean wasPlaying = true, prepared, dragging;
 
@@ -47,7 +48,7 @@ public final class VideoPlayerActivity extends Activity {
     private int dp(int v) { return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics())); }
 
     private final Runnable tick = new Runnable() { @Override public void run() {
-        if (prepared && !dragging) { int at = video.getCurrentPosition(); seek.setProgress(at); elapsed.setText(clock(at)); }
+        if (prepared && !dragging) { int at = video.getCurrentPosition(); seek.setValue(at); elapsed.setText(clock(at)); }
         ui.postDelayed(this, 250);
     } };
     private final Runnable hideControls = () -> { if (video.isPlaying()) showControls(false); };
@@ -58,41 +59,58 @@ public final class VideoPlayerActivity extends Activity {
         String path = getIntent().getStringExtra(PATH); mime = getIntent().getStringExtra(MIME); name = getIntent().getStringExtra(NAME);
         if (path == null || !(file = new File(path)).isFile()) { finish(); return; }
         if (state != null) { resumeAt = state.getInt("at", 0); wasPlaying = state.getBoolean("playing", true); }
+        else resumeAt = getIntent().getIntExtra(AT, 0);
+        muted = state != null ? state.getBoolean("muted", false) : getIntent().getBooleanExtra(MUTED, false);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         FrameLayout box = new FrameLayout(this); box.setBackgroundColor(Color.BLACK);
         video = new VideoView(this); box.addView(video, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
         spinner = new ProgressBar(this); box.addView(spinner, new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.CENTER));
 
-        LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL); bar.setPadding(dp(8), dp(36), dp(8), dp(8)); bar.setBackgroundColor(0x66000000);
-        ImageView close = new ImageView(this); close.setImageResource(R.drawable.ic_close); close.setPadding(dp(12), dp(12), dp(12), dp(12)); close.setContentDescription("Close"); close.setOnClickListener(v -> finish());
-        bar.addView(close, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        // Top: close, sound, Save, Share over a soft fade; middle: a big play/pause; bottom: times and a slim scrubber.
+        LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL); bar.setPadding(dp(8), dp(36), dp(8), dp(24));
+        bar.setBackground(new android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM, new int[]{0x99000000, 0x00000000}));
+        ImageView close = icon(R.drawable.ic_close, "Close"); close.setOnClickListener(v -> finish()); bar.addView(close, new LinearLayout.LayoutParams(dp(48), dp(48)));
         bar.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
+        sound = icon(muted ? R.drawable.ic_volume_off : R.drawable.ic_volume_on, muted ? "Turn sound on" : "Turn sound off"); sound.setOnClickListener(v -> setMuted(!muted));
+        bar.addView(sound, new LinearLayout.LayoutParams(dp(48), dp(48)));
         bar.addView(action("Save", v -> save())); bar.addView(action("Share", v -> share()));
         top = bar; box.addView(bar, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
 
-        LinearLayout controls = new LinearLayout(this); controls.setGravity(Gravity.CENTER_VERTICAL); controls.setPadding(dp(8), dp(8), dp(16), dp(28)); controls.setBackgroundColor(0x66000000);
-        play = new ImageView(this); play.setImageResource(R.drawable.ic_pause); play.setPadding(dp(12), dp(12), dp(12), dp(12)); play.setContentDescription("Pause");
-        play.setOnClickListener(v -> toggle()); controls.addView(play, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        play = new ImageView(this); play.setImageResource(R.drawable.ic_pause); play.setPadding(dp(20), dp(20), dp(20), dp(20)); play.setContentDescription("Pause");
+        android.graphics.drawable.GradientDrawable round = new android.graphics.drawable.GradientDrawable(); round.setShape(android.graphics.drawable.GradientDrawable.OVAL); round.setColor(0x66000000); play.setBackground(round);
+        play.setOnClickListener(v -> toggle()); box.addView(play, new FrameLayout.LayoutParams(dp(72), dp(72), Gravity.CENTER));
+
+        LinearLayout controls = new LinearLayout(this); controls.setGravity(Gravity.CENTER_VERTICAL); controls.setPadding(dp(14), dp(32), dp(14), dp(30));
+        controls.setBackground(new android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP, new int[]{0xA6000000, 0x00000000}));
         elapsed = label("0:00"); controls.addView(elapsed);
-        seek = new SeekBar(this); controls.addView(seek, new LinearLayout.LayoutParams(0, -2, 1));
+        seek = new Scrubber(this, true); controls.addView(seek, new LinearLayout.LayoutParams(0, dp(36), 1));
         total = label("0:00"); controls.addView(total);
         bottom = controls; box.addView(controls, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM));
-        box.setOnClickListener(v -> { boolean show = top.getVisibility() != View.VISIBLE; showControls(show); if (show) scheduleHide(); });
+        // Tap shows or hides the controls; double-tap the left or right side to skip back or ahead 10 seconds.
+        android.view.GestureDetector taps = new android.view.GestureDetector(this, new android.view.GestureDetector.SimpleOnGestureListener() {
+            @Override public boolean onDown(android.view.MotionEvent e) { return true; }
+            @Override public boolean onSingleTapConfirmed(android.view.MotionEvent e) { boolean show = top.getVisibility() != View.VISIBLE; showControls(show); if (show) scheduleHide(); return true; }
+            @Override public boolean onDoubleTap(android.view.MotionEvent e) {
+                if (!prepared) return false; boolean back = e.getX() < box.getWidth() / 2f;
+                int to = Math.max(0, Math.min(video.getDuration(), video.getCurrentPosition() + (back ? -10_000 : 10_000))); video.seekTo(to); seek.setValue(to); elapsed.setText(clock(to));
+                Toast.makeText(VideoPlayerActivity.this, back ? "− 10 seconds" : "+ 10 seconds", Toast.LENGTH_SHORT).show(); return true; }
+        });
+        box.setOnTouchListener((v, e) -> taps.onTouchEvent(e));
         setContentView(box);
 
-        seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override public void onProgressChanged(SeekBar s, int value, boolean fromUser) { if (fromUser) { elapsed.setText(clock(value)); video.seekTo(value); } }
-            @Override public void onStartTrackingTouch(SeekBar s) { dragging = true; ui.removeCallbacks(hideControls); }
-            @Override public void onStopTrackingTouch(SeekBar s) { dragging = false; scheduleHide(); }
+        seek.setListener((value, done) -> {
+            dragging = !done; elapsed.setText(clock(value)); video.seekTo(value);
+            if (done) scheduleHide(); else ui.removeCallbacks(hideControls);
         });
         video.setOnPreparedListener(mp -> {
             prepared = true; spinner.setVisibility(View.GONE);
-            int length = video.getDuration(); seek.setMax(Math.max(0, length)); total.setText(clock(length));
+            media = mp; mp.setVolume(muted ? 0 : 1, muted ? 0 : 1);
+            int length = video.getDuration(); seek.setMax(Math.max(1, length)); total.setText(clock(length));
             if (resumeAt > 0) video.seekTo(resumeAt);
             if (wasPlaying) { video.start(); scheduleHide(); }
             updatePlay(); ui.removeCallbacks(tick); ui.post(tick);
         });
-        video.setOnCompletionListener(mp -> { updatePlay(); showControls(true); seek.setProgress(seek.getMax()); });
+        video.setOnCompletionListener(mp -> { updatePlay(); showControls(true); seek.setValue(Integer.MAX_VALUE); });
         video.setOnErrorListener((mp, what, extra) -> { spinner.setVisibility(View.GONE); Diagnostics.badFile(file, "video player error " + what + "/" + extra + ", " + mime); cantPlay(); return true; });
         video.setVideoPath(file.getPath());
     }
@@ -101,7 +119,12 @@ public final class VideoPlayerActivity extends Activity {
         TextView t = new TextView(this); t.setText(text); t.setTextColor(Color.WHITE); t.setTextSize(16); t.setTypeface(t.getTypeface(), android.graphics.Typeface.BOLD);
         t.setPadding(dp(14), dp(10), dp(14), dp(10)); t.setOnClickListener(click); return t;
     }
-    private TextView label(String text) { TextView t = new TextView(this); t.setText(text); t.setTextColor(Color.WHITE); t.setTextSize(13); t.setPadding(dp(6), 0, dp(6), 0); return t; }
+    private ImageView icon(int res, String label) { ImageView i = new ImageView(this); i.setImageResource(res); i.setPadding(dp(12), dp(12), dp(12), dp(12)); i.setContentDescription(label); return i; }
+    private void setMuted(boolean on) {
+        muted = on; try { if (media != null) media.setVolume(on ? 0 : 1, on ? 0 : 1); } catch (Exception ignored) {}
+        sound.setImageResource(on ? R.drawable.ic_volume_off : R.drawable.ic_volume_on); sound.setContentDescription(on ? "Turn sound on" : "Turn sound off");
+    }
+    private TextView label(String text) { TextView t = new TextView(this); t.setText(text); t.setTextColor(Color.WHITE); t.setTextSize(12); t.setPadding(dp(6), 0, dp(6), 0); t.setMinWidth(dp(40)); t.setGravity(Gravity.CENTER); t.setFontFeatureSettings("tnum"); return t; }
 
     private void toggle() {
         if (video.isPlaying()) { video.pause(); showControls(true); ui.removeCallbacks(hideControls); }
@@ -112,7 +135,7 @@ public final class VideoPlayerActivity extends Activity {
         boolean playing = video.isPlaying();
         play.setImageResource(playing ? R.drawable.ic_pause : R.drawable.ic_play); play.setContentDescription(playing ? "Pause" : "Play");
     }
-    private void showControls(boolean show) { int v = show ? View.VISIBLE : View.GONE; top.setVisibility(v); bottom.setVisibility(v); }
+    private void showControls(boolean show) { int v = show ? View.VISIBLE : View.GONE; top.setVisibility(v); bottom.setVisibility(v); play.setVisibility(v); }
     private void scheduleHide() { ui.removeCallbacks(hideControls); ui.postDelayed(hideControls, 3000); }
 
     static String clock(int ms) {
@@ -167,7 +190,7 @@ public final class VideoPlayerActivity extends Activity {
         if (video != null && prepared) { video.seekTo(resumeAt); if (wasPlaying) { video.start(); scheduleHide(); } updatePlay(); }
     }
 
-    @Override protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); out.putInt("at", resumeAt); out.putBoolean("playing", wasPlaying); }
+    @Override protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); out.putInt("at", resumeAt); out.putBoolean("playing", wasPlaying); out.putBoolean("muted", muted); }
 
     @Override protected void onDestroy() { ui.removeCallbacksAndMessages(null); if (video != null) video.stopPlayback(); super.onDestroy(); }
 }

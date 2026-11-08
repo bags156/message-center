@@ -145,7 +145,7 @@ public class PairedActivity extends Activity {
             if(screen.equals("chat")){renderMessages(false);if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();if(!bubble())PairedService.clearNotification(this,chatId);}
             else if(screen.equals("inbox")){if(batteryCard!=null&&!showBatteryCard()){root.removeView(batteryCard);batteryCard=null;}renderInbox();refreshInbox(false);
                 if(!bubble()&&PairedService.ready()&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED)askContactPhotos();}}}
-    @Override protected void onPause(){resumed=false;remember();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&player.isPlaying()){player.pause();updatePlayLabel();}if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
+    @Override protected void onPause(){resumed=false;remember();if(inline!=null)inline.pause();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&player.isPlaying()){player.pause();updatePlayLabel();}if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
     @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);if(focused)refreshDraft();if(focused&&store!=null){markReadIfAllowed();updateReceiptStatus();}}
     /** Picks up a draft typed in the other window (bubble or full app) so you carry on where you left off. */
     private void refreshDraft(){if(composer==null||drafts==null||chatId.isEmpty()||!screen.equals("chat"))return;String stored=drafts.getOrDefault(chatId,"");
@@ -156,6 +156,7 @@ public class PairedActivity extends Activity {
     // ---- Shared building blocks ----
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
     private void base(String name){
+        if(!name.equals("chat"))stopInline();
         if(screen.equals("inbox")&&!name.equals("inbox")&&scroll!=null){inboxScrollY=scroll.getScrollY();inboxKey=inboxKey();repliedSinceInbox=false;}
         receiptStatusView=null;
         // Screenshots are always allowed (an older version could leave them blocked after signing in).
@@ -483,6 +484,7 @@ public class PairedActivity extends Activity {
 
     // ---- Conversation ----
     private void thread(String id){
+        if(!id.equals(chatId))stopInline();
         // Opening a chat with unread messages: remember where they start, for the "New messages" line.
         if(!id.equals(chatId)||!screen.equals("chat")){JSONObject before=store.chat(id);unreadSince=before!=null&&chatSettings.unread(before)?chatSettings.seen(id):-1;unreadJump=unreadSince>0;}
         remember();chatId=id;limit=300;replyId="";base("chat");JSONObject c=store.chat(id);ChatTheme theme=chatSettings.theme(id);
@@ -552,7 +554,7 @@ public class PairedActivity extends Activity {
             case 9->searchChat();case 10->toggleMute(chatId);case 11->archive(c,!archived);case 12->block(c);case 13->deleteChat(c);case 14->snoozeMenu(chatId);default->{}}return true;});menu.show();}
     private void renderMessages(boolean bottom){if(items==null||!screen.equals("chat"))return;
         int y=scroll.getScrollY();View content=scroll.getChildAt(0);int before=content.getHeight();
-        boolean atBottom=bottom||before-scroll.getHeight()-y<dp(80);items.removeAllViews();unreadDivider=null;
+        boolean atBottom=bottom||before-scroll.getHeight()-y<dp(80);items.removeAllViews();unreadDivider=null;inlineSeen=false;
         JSONObject c=store.chat(chatId);ChatTheme theme=chatSettings.theme(chatId);boolean group=c!=null&&PairedProtocol.other(c)==null;
         List<JSONObject> messages=new ArrayList<>();for(JSONObject m:store.messages(chatId,limit))if(!PairedProtocol.body(m).isEmpty()||!PairedProtocol.event(m,c).isEmpty())messages.add(m);
         if(messages.size()>=limit-5)items.addView(button("Show more saved messages",false,()->{limit+=300;renderMessages(false);}));
@@ -590,7 +592,7 @@ public class PairedActivity extends Activity {
             if(starred.has(m.optString("messageID"))){TextView st=text("★ Starred",11,muted,false);st.setGravity(out[i]?Gravity.END:Gravity.START);st.setPadding(dp(16),dp(2),dp(16),0);items.addView(st,new LinearLayout.LayoutParams(-1,-2));}
             if(i==lastOut||(out[i]&&PairedProtocol.failed(m)))items.addView(statusRow(m,theme));
         }
-        renderOutbox(theme);renderScheduled(theme);
+        renderOutbox(theme);renderScheduled(theme);if(inline!=null&&!inlineSeen)stopInline();
         // Count messages that arrived while scrolled up, for the ↓ button.
         long newest=0;int arrived=0;for(int i=0;i<n;i++){newest=Math.max(newest,at[i]);if(newestSeenTime>0&&at[i]>newestSeenTime&&!out[i]&&ev[i].isEmpty())arrived++;}
         if(atBottom)newWhileAway=0;else newWhileAway+=arrived;newestSeenTime=Math.max(newestSeenTime,newest);if(atBottom)pinnedBottom=true;updateJumpButton();
@@ -994,15 +996,19 @@ public class PairedActivity extends Activity {
             FrameLayout box=new FrameLayout(this);box.setBackground(shape(surface,20));
             box.setOutlineProvider(new ViewOutlineProvider(){@Override public void getOutline(View v,Outline o){o.setRoundRect(0,0,v.getWidth(),v.getHeight(),dp(20));}});box.setClipToOutline(true);
             ImageView img=new ImageView(this);img.setScaleType(ImageView.ScaleType.CENTER_CROP);box.addView(img,new FrameLayout.LayoutParams(-1,-1));
-            if(kind.equals("video")){TextView play=text("▶",20,Color.WHITE,false);play.setGravity(Gravity.CENTER);play.setBackground(oval(0x99000000));box.addView(play,new FrameLayout.LayoutParams(dp(52),dp(52),Gravity.CENTER));}
+            View[] badge={null};
+            if(kind.equals("video")){ImageView play=new ImageView(this);play.setImageResource(R.drawable.ic_play);play.setPadding(dp(15),dp(15),dp(13),dp(15));play.setBackground(oval(0x8C000000));play.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+                box.addView(play,new FrameLayout.LayoutParams(dp(56),dp(56),Gravity.CENTER));badge[0]=play;}
             TextView state=text("",13,Color.WHITE,false);state.setPadding(dp(12),dp(6),dp(12),dp(6));state.setBackground(shape(0x99000000,14));state.setVisibility(View.GONE);
             FrameLayout.LayoutParams stl=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);stl.bottomMargin=dp(12);box.addView(state,stl);img.setTag(R.id.tile_state,state);
-            box.setContentDescription(kind.equals("video")?"Video. Tap to play.":"Photo. Tap to view.");
-            box.setOnClickListener(v->{String problem=mediaErrors.get(mediaKey(media));if(problem!=null&&!MediaCache.file(this,media,false).isFile())mediaProblem(media,problem,img,kind.equals("video"),box);else openMedia(media);});box.setOnLongClickListener(v->{messageSheet(m);return true;});
+            box.setContentDescription(kind.equals("video")?"Video. Tap to play here; full screen button while playing.":"Photo. Tap to view.");
+            box.setOnClickListener(v->{String problem=mediaErrors.get(mediaKey(media));if(problem!=null&&!MediaCache.file(this,media,false).isFile())mediaProblem(media,problem,img,kind.equals("video"),box);else if(kind.equals("video"))playInline(media,box,img,badge[0]);else openMedia(media);});box.setOnLongClickListener(v->{messageSheet(m);return true;});
             int height=Math.round(width*ratio);
             // Genmoji and stickers (see-through pictures) sit on the chat like a big emoji, not in a photo frame.
             if(kind.equals("image")&&MediaCache.isSticker(MediaCache.file(this,media,false))){int[] sz=stickerSize(w,h);width=sz[0];height=sz[1];stickerStyle(box,img);}
             line.addView(box,new LinearLayout.LayoutParams(width,height));loadPreview(media,img,kind.equals("video"),width,height);
+            // A video playing here keeps playing when the chat redraws: it moves into the new tile.
+            if(kind.equals("video")&&inline!=null&&screen.equals("chat")&&inline.key.equals(mediaKey(media))){inline.attach(box,badge[0]);inlineSeen=true;}
         } else if(PairedProtocol.contactCard(media)){line.addView(contactCardView(m,media,outgoing,theme));
         } else {
             LinearLayout card=row();card.setPadding(dp(14),dp(12),dp(18),dp(12));card.setBackground(shape(outgoing?theme.bubble(dark):surface,22));int fg=outgoing?theme.onBubble(dark):ink;
@@ -1030,7 +1036,7 @@ public class PairedActivity extends Activity {
         if(!video&&MediaCache.maybeAnimated(media))playAnimated(media,img,width,height);
         boolean thumb=MediaCache.hasThumbnail(media);long size=media.optLong("size");File full=MediaCache.file(this,media,false);
         boolean stickerFile=!video&&full.isFile()&&MediaCache.isSticker(full);
-        boolean wantFull=stickerFile||!video&&MediaCache.hasFull(media)&&(!thumb||(fullPhotos()&&size<=(25L<<20)));
+        boolean wantFull=stickerFile||(video?full.isFile()||MediaCache.hasFull(media)&&(!thumb||fullPhotos()&&size>0&&size<=(20L<<20)):MediaCache.hasFull(media)&&(!thumb||(fullPhotos()&&size<=(25L<<20))));
         // Google sometimes sends a photo with only a preview, or nothing at all, on linked devices (end-to-end
         // encrypted chats do this). The phone sends the full photo when asked, and the message updates by itself.
         boolean ask=!video&&MediaCache.needsPhone(media)&&(fullPhotos()||!thumb)&&!full.isFile();
@@ -1042,12 +1048,12 @@ public class PairedActivity extends Activity {
             else if(t.isFile()||PairedService.ready()||MediaCache.hasInline(media))MediaCache.fetch(this,media,true,(file,err)->{if(file==null)return;
                 decoder.execute(()->{Bitmap d=MediaCache.decodeToCover(file,width,height,false);boolean small=MediaCache.tiny(file);
                     if(d!=null)img.post(()->{if(img.getTag()==null){img.setImageBitmap(d);if(small)soft(img);}});});});}
-        else if(video&&size>(15L<<20))return;
+        else if(video&&!wantFull&&size>(15L<<20))return;
         if(!wantFull&&thumb)return;
         if(!full.isFile()&&!PairedService.ready())return;
         if(!full.isFile()&&!MediaCache.hasFull(media))return; // waiting for the phone (above); nothing to download yet
         MediaCache.fetch(this,media,false,(file,err)->{if(file==null){tileState(img,media,thumb?"Only a preview • Tap for details":"Couldn't load • Tap for details",err);return;}
-            decoder.execute(()->{Bitmap d=MediaCache.decodeToCover(file,width,height,video&&!thumb);img.post(()->{if("animated".equals(img.getTag()))return;if(d!=null){img.setTag("full");img.setImageBitmap(d);sharp(img);tileState(img,media,null,null);if(!video&&MediaCache.sticker(d))becomeSticker(img,d);}
+            decoder.execute(()->{Bitmap d=MediaCache.decodeToCover(file,width,height,video);img.post(()->{if("animated".equals(img.getTag()))return;if(d!=null){img.setTag("full");img.setImageBitmap(d);sharp(img);tileState(img,media,null,null);if(!video&&MediaCache.sticker(d))becomeSticker(img,d);}
                 else if(!thumb)tileState(img,media,"Can't show this photo here • Tap for details","The file downloaded but Android couldn't read it as a picture.");});});});
     }
     /** GIFs and animated stickers play right in the chat (once their file is here; small ones download by themselves). */
@@ -1101,6 +1107,25 @@ public class PairedActivity extends Activity {
         View left=new View(this);left.setBackgroundColor((BLUE&0x00ffffff)|0x66000000);r.addView(left,new LinearLayout.LayoutParams(0,Math.max(1,dp(1)),1));
         TextView t=text(count==1?"1 new message":count+" new messages",12,BLUE,true);t.setPadding(dp(10),0,dp(10),0);r.addView(t);
         View right=new View(this);right.setBackgroundColor((BLUE&0x00ffffff)|0x66000000);r.addView(right,new LinearLayout.LayoutParams(0,Math.max(1,dp(1)),1));return r;}
+    private InlineVideo inline;private boolean inlineSeen;private String pendingInline="";
+    /** Tap a video: it plays right in its tile (downloading first if needed). Tap again to pause. */
+    private void playInline(JSONObject media,FrameLayout box,ImageView img,View badge){String key=mediaKey(media);
+        if(inline!=null&&inline.key.equals(key)){inline.attach(box,badge);inline.toggle();return;}
+        if(inline!=null){inline.release();inline=null;}
+        File have=MediaCache.file(this,media,false);if(have.isFile()){startInline(media,box,badge,have);return;}
+        if(!PairedService.ready()){toast("Connect to Google Messages to download the video.");return;}
+        if(!MediaCache.hasFull(media)){openMedia(media);return;}
+        tileState(img,media,"Loading video…",null);pendingInline=key;
+        MediaCache.fetch(this,media,false,(file,err)->{if(file==null){tileState(img,media,"Couldn't load • Tap for details",err);return;}tileState(img,media,null,null);
+            if(!key.equals(pendingInline)||!screen.equals("chat")||!box.isAttachedToWindow())return;pendingInline="";startInline(media,box,badge,file);});}
+    private void startInline(JSONObject media,FrameLayout box,View badge,File file){
+        inline=new InlineVideo(this,mediaKey(media),file,MediaCache.mime(media),false,new InlineVideo.Host(){
+            @Override public void fullScreen(InlineVideo v){int at=v.position();boolean quiet=v.muted();v.pause();
+                Intent play=VideoPlayerActivity.open(PairedActivity.this,v.file,v.mime,displayName(media)).putExtra(VideoPlayerActivity.AT,at).putExtra(VideoPlayerActivity.MUTED,quiet);
+                if(bubble())play.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);startActivity(play);}
+            @Override public void failed(InlineVideo v,String why){Diagnostics.badFile(v.file,why);v.release();if(inline==v)inline=null;openMedia(media);}});
+        inline.attach(box,badge);}
+    private void stopInline(){if(inline!=null){inline.release();inline=null;}pendingInline="";}
     private static final int STICKER_DP=150;
     /** A sticker's size on screen: STICKER_DP on its longest side, keeping its shape. */
     private int[] stickerSize(long w,long h){int side=dp(STICKER_DP);if(w<=0||h<=0)return new int[]{side,side};
@@ -2127,5 +2152,5 @@ public class PairedActivity extends Activity {
     private void pairing(){base("pair");header("Pair this phone",null);connection();String emoji=PairedService.emoji();shownEmoji=emoji;TextView symbol=text(emoji.isEmpty()?"…":emoji,72,ink,false);symbol.setGravity(Gravity.CENTER);root.addView(symbol);gap(root,16);
         note(root,"Open Google Messages → Device pairing and approve the matching emoji. Return here afterward.\n\nIf Google reports no device, check that Device pairing uses the same Google account you just signed into.");root.addView(button("Open Google Messages",true,this::openGoogle));gap(root,8);root.addView(button("Back to inbox",false,this::inbox));}
     private void openGoogle(){Intent intent=getPackageManager().getLaunchIntentForPackage("com.google.android.apps.messaging");if(intent!=null)startActivity(intent);else toast("Google Messages is not installed.");}
-    @Override protected void onDestroy(){if(drafts!=null)drafts.prefs().unregisterOnSharedPreferenceChangeListener(draftChanged);destroyLogin();cancelRecording();stopAudio();decoder.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy(){stopInline();if(drafts!=null)drafts.prefs().unregisterOnSharedPreferenceChangeListener(draftChanged);destroyLogin();cancelRecording();stopAudio();decoder.shutdownNow();super.onDestroy();}
 }
