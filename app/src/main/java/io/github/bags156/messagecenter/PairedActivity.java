@@ -1461,8 +1461,14 @@ public class PairedActivity extends Activity {
             else {TextView t=text("📄\n"+o.name,11,ink,false);t.setGravity(Gravity.CENTER);t.setMaxLines(3);t.setEllipsize(TextUtils.TruncateAt.END);t.setPadding(dp(4),dp(4),dp(4),dp(4));tile.addView(t,new FrameLayout.LayoutParams(-1,-1));}
             if(o.sending){TextView s=text("Sending…",11,Color.WHITE,true);s.setGravity(Gravity.CENTER);s.setBackgroundColor(0x99000000);tile.addView(s,new FrameLayout.LayoutParams(-1,-1));}
             else {ImageView x=new ImageView(this);x.setImageResource(R.drawable.ic_close);x.setImageTintList(ColorStateList.valueOf(Color.WHITE));x.setBackground(oval(0x99000000));x.setPadding(dp(3),dp(3),dp(3),dp(3));
-                x.setContentDescription("Remove "+o.name);x.setOnClickListener(v->{outgoing.remove(o);o.file.delete();renderAttachments();});tile.addView(x,new FrameLayout.LayoutParams(dp(22),dp(22),Gravity.TOP|Gravity.END));}
+                x.setContentDescription("Remove "+o.name);x.setOnClickListener(v->{outgoing.remove(o);o.file.delete();renderAttachments();});tile.addView(x,new FrameLayout.LayoutParams(dp(22),dp(22),Gravity.TOP|Gravity.END));
+                // Photos can be marked up before sending (not GIFs, which would stop moving).
+                if(o.mime.startsWith("image/")&&!o.mime.equals("image/gif")){TextView pen=text("✎",12,Color.WHITE,true);pen.setGravity(Gravity.CENTER);pen.setBackground(oval(0x99000000));
+                    tile.addView(pen,new FrameLayout.LayoutParams(dp(22),dp(22),Gravity.BOTTOM|Gravity.START));tile.setContentDescription("Mark up "+o.name);tile.setOnClickListener(v->markUp(o));}}
             LinearLayout.LayoutParams tl=new LinearLayout.LayoutParams(dp(72),dp(72));tl.setMarginEnd(dp(8));attachStrip.addView(tile,tl);}updateComposeButton();}
+    /** Opens an attached photo to draw on, add text to, or crop; the edited copy takes its place. */
+    private void markUp(Outgoing o){if(o.sending)return;MarkupEditor.open(this,o.file,edited->{int i=outgoing.indexOf(o);if(i<0||o.sending){edited.delete();return;}
+        String name=o.name.replaceAll("\\.[A-Za-z0-9]+$","")+".jpg";outgoing.set(i,new Outgoing(edited,name,"image/jpeg"));o.file.delete();renderAttachments();});}
     /** Sends the picked attachments one message each; the typed text goes with the first as its caption. */
     private void sendAttachments(JSONObject c,String caption,String reply){String id=chatId;List<Outgoing> batch=new ArrayList<>();for(Outgoing o:outgoing)if(!o.sending)batch.add(o);
         if(batch.isEmpty())return;for(Outgoing o:batch)o.sending=true;renderAttachments();busy=true;

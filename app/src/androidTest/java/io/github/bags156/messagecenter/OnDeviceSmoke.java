@@ -57,6 +57,34 @@ public final class OnDeviceSmoke extends Instrumentation {
         tap(face,2,2);check("inbox".equals(screen.get(a)),"A tap outside the round photo opened the chat");
         tap(face,face.getWidth()/2f,face.getHeight()/2f);check("chat".equals(screen.get(a)),"A tap on the photo didn't open the chat");
         new ChatSettings(getTargetContext()).setPinned("smoke",false);onMain(a,"inbox");}
+    /** Mark up: draw a stroke through the middle of a plain photo, crop it, save, and check the saved copy. */
+    private void checkMarkup(PairedActivity a)throws Exception{
+        java.io.File photo=new java.io.File(getTargetContext().getCacheDir(),"markup-test-"+System.nanoTime()+".png");
+        android.graphics.Bitmap gray=android.graphics.Bitmap.createBitmap(2000,1500,android.graphics.Bitmap.Config.ARGB_8888);gray.eraseColor(0xFF808080);
+        try(java.io.FileOutputStream f=new java.io.FileOutputStream(photo)){gray.compress(android.graphics.Bitmap.CompressFormat.PNG,100,f);}
+        java.io.File[] saved=new java.io.File[1];
+        runOnMainSync(()->MarkupEditor.open(a,photo,f->saved[0]=f));
+        for(int i=0;i<50&&MarkupEditor.shown==null;i++)Thread.sleep(100);
+        MarkupEditor editor=MarkupEditor.shown;check(editor!=null,"Markup editor didn't open");waitForIdleSync();
+        java.lang.reflect.Field boardField=MarkupEditor.class.getDeclaredField("board");boardField.setAccessible(true);android.view.View board=(android.view.View)boardField.get(editor);
+        check(board.getWidth()>0&&board.getHeight()>0,"Markup canvas wasn't laid out");
+        // A short stroke through the middle of the photo (the canvas fits the photo in the middle).
+        float cx=board.getWidth()/2f,cy=board.getHeight()/2f;
+        runOnMainSync(()->{long t=android.os.SystemClock.uptimeMillis();
+            android.view.MotionEvent down=android.view.MotionEvent.obtain(t,t,android.view.MotionEvent.ACTION_DOWN,cx-30,cy,0),move=android.view.MotionEvent.obtain(t,t+20,android.view.MotionEvent.ACTION_MOVE,cx,cy,0),
+                move2=android.view.MotionEvent.obtain(t,t+40,android.view.MotionEvent.ACTION_MOVE,cx+30,cy,0),up=android.view.MotionEvent.obtain(t,t+60,android.view.MotionEvent.ACTION_UP,cx+30,cy,0);
+            board.dispatchTouchEvent(down);board.dispatchTouchEvent(move);board.dispatchTouchEvent(move2);board.dispatchTouchEvent(up);down.recycle();move.recycle();move2.recycle();up.recycle();});
+        java.lang.reflect.Field cropField=MarkupEditor.class.getDeclaredField("crop");cropField.setAccessible(true);
+        runOnMainSync(()->{try{((android.graphics.RectF)cropField.get(editor)).set(500,375,1500,1125);
+            java.lang.reflect.Method save=MarkupEditor.class.getDeclaredMethod("save");save.setAccessible(true);save.invoke(editor);}catch(Exception e){throw new RuntimeException(e);}});
+        for(int i=0;i<50&&saved[0]==null;i++)Thread.sleep(100);waitForIdleSync();
+        check(saved[0]!=null&&saved[0].isFile(),"Marked-up photo wasn't saved");
+        android.graphics.Bitmap out=android.graphics.BitmapFactory.decodeFile(saved[0].getPath());
+        check(out!=null&&out.getWidth()==1000&&out.getHeight()==750,"Crop wasn't applied: "+(out==null?"unreadable":out.getWidth()+"×"+out.getHeight()));
+        int mid=out.getPixel(500,375);check(android.graphics.Color.red(mid)>170&&android.graphics.Color.green(mid)<110,"The drawing isn't in the saved photo (middle pixel "+Integer.toHexString(mid)+")");
+        int corner=out.getPixel(5,5);check(Math.abs(android.graphics.Color.red(corner)-0x80)<12,"The rest of the photo changed (corner "+Integer.toHexString(corner)+")");
+        check(MarkupEditor.shown==null,"Markup editor didn't close after saving");
+        saved[0].delete();photo.delete();}
     private static void collectDescriptions(android.view.View v,java.util.List<android.view.View> faces,java.util.List<String> seen){if(v==null)return;
         CharSequence d=v.getContentDescription();if(d!=null&&d.toString().contains("pinned")){seen.add(d.toString());if(d.toString().startsWith("Smoke group")&&d.toString().endsWith(", pinned"))faces.add(v);}
         if(v instanceof android.view.ViewGroup){android.view.ViewGroup g=(android.view.ViewGroup)v;for(int i=0;i<g.getChildCount();i++)collectDescriptions(g.getChildAt(i),faces,seen);}}
@@ -279,6 +307,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkChatKeepsItsPlace();
         check(!PairedService.canReconnect(getTargetContext()),"Reconnect offered with no saved session to reconnect with");
         checkPinnedTap((PairedActivity)activity);
+        checkMarkup((PairedActivity)activity);
         try(PairedStore store=new PairedStore(getTargetContext())){store.clear();}
         Outbox box=new Outbox(getTargetContext());for(JSONObject o:box.all())box.remove(o.optString("id"));
         getTargetContext().getSharedPreferences("transcripts",0).edit().clear().commit();getTargetContext().getSharedPreferences("phone_media",0).edit().clear().commit();
