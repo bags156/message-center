@@ -131,6 +131,7 @@ public class PairedActivity extends Activity {
         if(bubble()&&chatId.isEmpty()){finish();return;}
         if(!chatId.isEmpty()){thread(chatId);showFromIntent(getIntent());}else if(state!=null&&"settings".equals(state.getString("screen"))&&!bubble()){pendingSettingsY=state.getInt("settings_y",0);settings();}else inbox();
         if(state==null&&!bubble())receiveShare(getIntent());
+        if(state==null&&!bubble()&&"settings".equals(getIntent().getStringExtra("open")))settings();
         if(state==null&&MessagesWidget.NEW_CHAT.equals(getIntent().getAction()))newMessage();
         if(new SessionVault(this).exists() && getSharedPreferences("paired",MODE_PRIVATE).getBoolean("enabled",true))PairedService.start(this);
     }
