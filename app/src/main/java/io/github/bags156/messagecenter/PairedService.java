@@ -158,7 +158,7 @@ public final class PairedService extends Service {
                 case "CONVERSATION" -> {applyChat(new JSONObject(payload));changed(kind);}
                 case "MESSAGE" -> {
                     JSONObject envelope=new JSONObject(payload),message=envelope.getJSONObject("message");
-                    boolean existed=store.message(message,0,true);touch(message);
+                    boolean existed=store.message(message,0,true);touch(message);fullArrived(message);
                     if(!PairedProtocol.outgoing(message) && typing.remove(message.optString("conversationID"))!=null)changed("TYPING");
                     // Answered on the phone: this chat's notification here is no longer needed.
                     if(PairedProtocol.outgoing(message)&&!envelope.optBoolean("old",true))dismiss(message.optString("conversationID"));
@@ -279,22 +279,38 @@ public final class PairedService extends Service {
         s.changed("MESSAGE");return "";
     },done);}
     /** Downloads contact photos for these participant IDs into the private photo cache. */
-    /** Asks the phone (once per attachment) to send the full-size copy of an attachment that arrived as a preview. */
-    private static final java.util.Set<String> fullRequested=java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());
+    /**
+     * Asks the phone to send the full copy of an attachment that arrived without one. The phone
+     * answers at once but sends the photo later, as an update to the message. If it hasn't come
+     * after a few minutes, the next look at the chat asks again (the phone may have been asleep).
+     */
+    private static final Map<String,Long> fullAskedAt=new ConcurrentHashMap<>();
     private static final Map<String,Long> fullFailedAt=new ConcurrentHashMap<>();private static final Map<String,String> fullFailure=new ConcurrentHashMap<>();
+    static final long ASK_AGAIN_MS=180_000;
+    /** When the phone was last asked for this attachment, or 0. */
+    static long askedAt(JSONObject media){Long t=fullAskedAt.get(media.optString("_message")+":"+media.optString("_part"));return t==null?0:t;}
     static void requestFullMedia(JSONObject media,boolean again,Result done) {
         String message=media.optString("_message"),part=media.optString("_part");
         if(message.isEmpty()||part.isEmpty()){done.done("","This attachment can't be requested from your phone.");return;}
-        String key=message+":"+part;Long failed=fullFailedAt.get(key);
+        String key=message+":"+part;long now=System.currentTimeMillis();Long failed=fullFailedAt.get(key),asked=fullAskedAt.get(key);
         // After a failure, wait a couple of minutes before asking again on its own (Retry asks right away).
-        if(!again&&failed!=null&&System.currentTimeMillis()-failed<120_000){done.done("",fullFailure.getOrDefault(key,"Your phone didn't send it."));return;}
-        if(!fullRequested.add(key)&&!again){done.done("","");return;}
+        if(!again&&failed!=null&&now-failed<120_000){done.done("",fullFailure.getOrDefault(key,"Your phone didn't send it."));return;}
+        // Asked a moment ago: the phone may still be sending it.
+        if(!again&&asked!=null&&now-asked<ASK_AGAIN_MS){done.done("","");return;}
         // Its own queue: the phone can take a while to answer, and that must not hold up sending or downloads.
-        PairedService s=current;if(s==null||!s.ready||s.client==null){fullRequested.remove(message+":"+part);done.done("","Connect to Google Messages first.");return;}
+        PairedService s=current;if(s==null||!s.ready||s.client==null){done.done("","Connect to Google Messages first.");return;}
+        fullAskedAt.put(key,now);
         s.phoneRequests.execute(()->{String err="";try{s.client.requestFullMedia(message,part);}catch(Exception e){err=e.getMessage()==null?"Your phone didn't respond.":e.getMessage();}
-            String fe=err;if(!fe.isEmpty()){fullRequested.remove(key);fullFailedAt.put(key,System.currentTimeMillis());fullFailure.put(key,fe);}else fullFailedAt.remove(key);
+            String fe=err;if(!fe.isEmpty()){fullAskedAt.remove(key);fullFailedAt.put(key,System.currentTimeMillis());fullFailure.put(key,fe);}else fullFailedAt.remove(key);
+            Diagnostics.note(fe.isEmpty()?"Asked phone for attachment "+shortId(key)+(asked!=null?" (again)":""):"Phone refused attachment "+shortId(key)+": "+fe);
             s.main.post(()->done.done("",fe));});
     }
+    /** Notes in the problem report when an attachment the phone was asked for shows up (IDs only, never content). */
+    private static void fullArrived(JSONObject message){
+        for(JSONObject media:PairedProtocol.media(message)){if(!MediaCache.hasFull(media))continue;String key=media.optString("_message")+":"+media.optString("_part");
+            Long asked=fullAskedAt.remove(key);if(asked!=null)Diagnostics.note("Phone sent attachment "+shortId(key)+" after "+Math.max(0,(System.currentTimeMillis()-asked)/1000)+"s");}
+    }
+    private static String shortId(String key){String digits=key.replaceAll("[^A-Za-z0-9:]","");return digits.length()>14?"…"+digits.substring(digits.length()-14):digits;}
     static void loadPhotos(java.util.List<String> ids,Result done) {
         execute(c->{JSONObject photos=new JSONObject(c.thumbnails(String.join(",",ids)));
             for(java.util.Iterator<String> keys=photos.keys();keys.hasNext();){String id=keys.next();

@@ -226,9 +226,8 @@ public final class OnDeviceSmoke extends Instrumentation {
         bubble.getWindow().getDecorView().findViewsWithText(found,"loved an image",android.view.View.FIND_VIEWS_WITH_TEXT);check(!found.isEmpty(),"An iPhone reaction with no photo before it disappeared");found.clear();
         bubble.getWindow().getDecorView().findViewsWithText(found,"Sam Example left",android.view.View.FIND_VIEWS_WITH_TEXT);check(!found.isEmpty(),"Group event is missing");found.clear();
         bubble.getWindow().getDecorView().findViewsWithText(found,"Find the original message for this reply",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);check(!found.isEmpty(),"Reply without a reference has no refresh action");found.clear();
-        // A photo sent without download details says it's being fetched from the phone (not a blank box).
-        bubble.getWindow().getDecorView().findViewsWithText(found,"Loading full photo",android.view.View.FIND_VIEWS_WITH_TEXT);check(!found.isEmpty(),"Placeholder-only photo doesn't say the full photo is loading");found.clear();
-        bubble.getWindow().getDecorView().findViewsWithText(found,"Getting photo from your phone",android.view.View.FIND_VIEWS_WITH_TEXT);check(!found.isEmpty(),"Photo without download details shows nothing");found.clear();
+        // Photos that need the phone say what they're waiting for (not a blank box). Offline here, so: the connection.
+        bubble.getWindow().getDecorView().findViewsWithText(found,"Waiting for the connection",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.size()>=2,"Photos waiting on the phone don't say so offline ("+found.size()+")");found.clear();
         // Screenshots are allowed.
         check((bubble.getWindow().getAttributes().flags&android.view.WindowManager.LayoutParams.FLAG_SECURE)==0,"Screenshots are blocked in chats");
         check((activity.getWindow().getAttributes().flags&android.view.WindowManager.LayoutParams.FLAG_SECURE)==0,"Screenshots are blocked in the inbox");

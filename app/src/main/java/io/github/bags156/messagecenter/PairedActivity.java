@@ -1108,8 +1108,8 @@ public class PairedActivity extends Activity {
         // Google sometimes sends a photo with only a preview, or nothing at all, on linked devices (end-to-end
         // encrypted chats do this). The phone sends the full photo when asked, and the message updates by itself.
         boolean ask=!video&&MediaCache.needsPhone(media)&&(fullPhotos()||!thumb)&&!full.isFile();
-        if(ask)tileState(img,media,thumb?"Loading full photo…":"Getting photo from your phone…",null);
-        if(ask&&PairedService.ready())PairedService.requestFullMedia(media,false,(v,e)->{if(!e.isEmpty())tileState(img,media,thumb?"Only a preview • Tap for details":"Couldn't get this photo • Tap for details",e);});
+        if(ask)tileState(img,media,!PairedService.ready()?"Waiting for the connection…":thumb?"Loading full photo…":"Getting photo from your phone…",null);
+        if(ask&&PairedService.ready())PairedService.requestFullMedia(media,false,(v,e)->{if(!e.isEmpty())tileState(img,media,thumb?"Only a preview • Tap for details":"Couldn't get this photo • Tap for details",e);else waitForPhone(img,media,thumb);});
         if(wantFull&&full.isFile()){Bitmap b=MediaCache.peekCover(full,width,height);if(b!=null){img.setTag("full");img.setImageBitmap(b);sharp(img);tileState(img,media,null,null);return;}}
         if(thumb&&!stickerFile){File t=MediaCache.file(this,media,true);Bitmap b=t.isFile()?MediaCache.peekCover(t,width,height):null;
             if(b!=null){img.setImageBitmap(b);if(MediaCache.tiny(t))soft(img);}
@@ -1124,6 +1124,19 @@ public class PairedActivity extends Activity {
             decoder.execute(()->{Bitmap d=MediaCache.decodeToCover(file,width,height,video);img.post(()->{if("animated".equals(img.getTag()))return;if(d!=null){img.setTag("full");img.setImageBitmap(d);sharp(img);tileState(img,media,null,null);if(!video&&MediaCache.sticker(d))becomeSticker(img,d);}
                 else if(!thumb)tileState(img,media,"Can't show this photo here • Tap for details","The file downloaded but Android couldn't read it as a picture.");});});});
     }
+    /** How long a photo may take to arrive after the phone is asked, before the tile says it hasn't come. */
+    private static final long PHONE_PATIENCE_MS=45_000;
+    /**
+     * After the phone is asked for a photo: if it hasn't arrived within PHONE_PATIENCE_MS, the tile
+     * says so (instead of "Getting photo…" forever) and a tap asks again. A newly arrived photo
+     * redraws the chat, which replaces this tile, so nothing here fires for it.
+     */
+    private void waitForPhone(ImageView img,JSONObject media,boolean thumb){long asked=PairedService.askedAt(media);if(asked==0)return;
+        img.postDelayed(()->{if(!img.isAttachedToWindow()||"full".equals(img.getTag()))return;
+            JSONObject now=store.message(media.optString("_message"));if(now!=null)for(JSONObject a:PairedProtocol.media(now))if(a.optString("_part").equals(media.optString("_part"))&&MediaCache.hasFull(a))return;
+            tileState(img,media,thumb?"Only a preview • Tap to ask again":"Not sent yet • Tap to ask again",
+                "Your phone was asked for this photo but hasn't sent it. It may be asleep or offline, or it may not have the photo any more. Check that it opens in Google Messages on your phone.");},
+            Math.max(0,asked+PHONE_PATIENCE_MS-System.currentTimeMillis()));}
     /** GIFs and animated stickers play right in the chat (once their file is here; small ones download by themselves). */
     private void playAnimated(JSONObject media,ImageView img,int width,int height){File full=MediaCache.file(this,media,false);
         Runnable go=()->decoder.execute(()->{android.graphics.drawable.Drawable d=MediaCache.animated(full,width,height);if(d==null)return;
@@ -1177,6 +1190,8 @@ public class PairedActivity extends Activity {
         View right=new View(this);right.setBackgroundColor((BLUE&0x00ffffff)|0x66000000);r.addView(right,new LinearLayout.LayoutParams(0,Math.max(1,dp(1)),1));return r;}
     /** Photos and videos sent together: a grid of up to four in one rounded block, "+N" on the last when there are more. */
     private View albumView(JSONObject m,List<JSONObject> parts,boolean outgoing){
+        if(parts.size()>4&&PairedService.ready())for(JSONObject hidden:parts.subList(4,parts.size()))
+            if(PairedProtocol.mediaKind(hidden).equals("image")&&MediaCache.needsPhone(hidden)&&(fullPhotos()||!MediaCache.hasThumbnail(hidden))&&!MediaCache.file(this,hidden,false).isFile())PairedService.requestFullMedia(hidden,false,(v,e)->{});
         int width=Math.round(getResources().getDisplayMetrics().widthPixels*0.66f),gap=dp(3),half=(width-gap)/2,n=parts.size();
         LinearLayout line=row();line.setGravity(outgoing?Gravity.END:Gravity.START);LinearLayout grid=vertical();
         grid.setOutlineProvider(new ViewOutlineProvider(){@Override public void getOutline(View v,Outline o){o.setRoundRect(0,0,v.getWidth(),v.getHeight(),dp(20));}});grid.setClipToOutline(true);
@@ -1238,7 +1253,7 @@ public class PairedActivity extends Activity {
     private void mediaProblem(JSONObject media,String problem,ImageView img,boolean video,FrameLayout box){
         new AlertDialog.Builder(this).setTitle("This photo didn't load").setMessage(problem+"\n\nRetry asks your phone to send it again.")
             .setPositiveButton("Retry",(d,w)->{mediaErrors.remove(mediaKey(media));tileState(img,media,"Getting photo from your phone…",null);
-                if(MediaCache.needsPhone(media))PairedService.requestFullMedia(media,true,(v,e)->{if(!e.isEmpty())tileState(img,media,"Couldn't get this photo • Tap for details",e);});
+                if(MediaCache.needsPhone(media))PairedService.requestFullMedia(media,true,(v,e)->{if(!e.isEmpty())tileState(img,media,"Couldn't get this photo • Tap for details",e);else waitForPhone(img,media,MediaCache.hasThumbnail(media));});
                 else loadPreview(media,img,video,box.getWidth(),box.getHeight());})
             .setNegativeButton("Close",null).show();}
     /** Photos open in the viewer; videos, audio and files open in another app. */
