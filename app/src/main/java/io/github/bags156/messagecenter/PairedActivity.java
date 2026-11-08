@@ -97,7 +97,7 @@ public class PairedActivity extends Activity {
     private int bg,card,ink,muted,surface,fab,onFab,danger,folder=1,limit=300;
     private boolean dark;
     private PairedStore store;private ChatSettings chatSettings;
-    private FrameLayout frame;private LinearLayout root,items,replyPanel,typingRow;private LinearLayout statusRow;private TextView reconnectButton;private TextView statusView,replyLabel,replyQuote,typingLabel;private ObjectAnimator typingPulse;
+    private FrameLayout frame;private LinearLayout root,items,replyPanel,typingRow;private LinearLayout statusRow;private TextView reconnectButton,receiptsMark;private TextView statusView,replyLabel,replyQuote,typingLabel;private ObjectAnimator typingPulse;
     private ScrollView scroll;private EditText composer;private WebView login;private LinearLayout searchRow;private TextView receiptStatusView;
     private String screen="inbox",chatId="",query="",replyId="";
     private Drafts drafts;
@@ -175,7 +175,7 @@ public class PairedActivity extends Activity {
         receiptStatusView=null;
         // Screenshots are always allowed (an older version could leave them blocked after signing in).
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);if(!name.equals("login"))setRecentsScreenshotEnabled(true);
-        if(recorder!=null)cancelRecording();if(dictation!=null)stopDictation();recordBar=null;composeRow=null;sendButton=null;recordClock=null;screen=name;batteryCard=null;jumpButton=null;statusView=null;statusRow=null;reconnectButton=null;composer=null;items=null;scroll=null;searchRow=null;attachStrip=null;attachScroll=null;replyPanel=null;typingRow=null;messageViews.clear();ui.removeCallbacks(typingTick);if(typingPulse!=null){typingPulse.cancel();typingPulse=null;}
+        if(recorder!=null)cancelRecording();if(dictation!=null)stopDictation();recordBar=null;composeRow=null;sendButton=null;recordClock=null;screen=name;batteryCard=null;jumpButton=null;statusView=null;statusRow=null;reconnectButton=null;receiptsMark=null;composer=null;items=null;scroll=null;searchRow=null;attachStrip=null;attachScroll=null;replyPanel=null;typingRow=null;messageViews.clear();ui.removeCallbacks(typingTick);if(typingPulse!=null){typingPulse.cancel();typingPulse=null;}
         dark=(getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;
         textScale=getSharedPreferences("paired",MODE_PRIVATE).getFloat("text_scale",1f);quickRow=null;quickScroll=null;searchChips=null;selecting=false;chosen.clear();selectionBar=null;chatFrame=null;
         bg=dark?0xff111318:0xfff8f9fc;card=dark?0xff1d2026:Color.WHITE;surface=dark?0xff23252b:0xffe9edf4;ink=dark?0xffe3e2e9:0xff1a1b20;muted=dark?0xffabaeb8:0xff5d5f67;
@@ -519,7 +519,16 @@ public class PairedActivity extends Activity {
                 .setPositiveButton("Open Google Messages",(d,w)->openGoogle()).setNegativeButton("Close",null).show();
             else toast("Read receipts enabled. Viewed messages will be requested, including after reconnection.");
             markReadIfAllowed();}
-        if(screen.equals("details"))details();}
+        if(screen.equals("details"))details();else if(screen.equals("chat")){updateReceiptsMark();renderMessages(false);}}
+    private void updateReceiptsMark(){if(receiptsMark!=null)receiptsMark.setVisibility(!chatId.isEmpty()&&chatSettings.receipts(chatId)?View.VISIBLE:View.GONE);}
+    /** "Read 2:34 PM" under the message a read receipt went out for, or why it hasn't (yet). */
+    private View readLine(JSONObject entry){String state=ReadReceiptQueue.state(entry,true,PairedService.ready(),chatSettings.receiptAvailability());long at=entry.optLong("requestedAt");
+        String label=switch(state){
+            case "accepted"->"Read "+(android.text.format.DateUtils.isToday(at)?timeOnly(at):separatorStamp(at));
+            case "google_off"->"Read receipt not sent • Google Messages' “Send read receipts” is off";
+            case "waiting","queued","retrying"->"Read receipt sending…";
+            default->null;};
+        if(label==null)return null;TextView t=text(label,11,muted,false);t.setPadding(dp(16),dp(2),dp(16),0);t.setContentDescription(label+". Tap for details.");t.setOnClickListener(v->details());return t;}
     private void loadChats(boolean more){if(busy)return;busy=true;int selected=folder;String cursor=more?store.page("folder:"+selected,false):"";
         PairedService.loadChats(cursor,selected,(v,e)->{busy=false;if(!e.isEmpty()&&!more)toast(e);if(screen.equals("inbox"))renderInbox();});}
 
@@ -533,8 +542,13 @@ public class PairedActivity extends Activity {
         root.setPadding(dp(4),dp(4),dp(4),dp(8));
         LinearLayout bar=row();if(!bubble())bar.addView(icon(R.drawable.ic_back,ink,"Back",this::inbox));else bar.setPadding(dp(12),0,0,0);
         LinearLayout who=row();View face=avatar(c,40);who.addView(face);
-        TextView name=text(c==null?"Conversation":PairedProtocol.title(c),20,ink,false);name.setSingleLine(true);name.setEllipsize(TextUtils.TruncateAt.END);name.setPadding(dp(14),0,dp(8),0);
-        who.addView(name,new LinearLayout.LayoutParams(0,-2,1));who.setContentDescription("Conversation details");who.setOnClickListener(v->details());
+        TextView name=text(c==null?"Conversation":PairedProtocol.title(c),20,ink,false);name.setSingleLine(true);name.setEllipsize(TextUtils.TruncateAt.END);
+        // Chats that send read receipts say so up top, so you know before reading.
+        LinearLayout titles=vertical();titles.setGravity(Gravity.CENTER_VERTICAL);titles.setPadding(dp(14),0,dp(8),0);titles.addView(name);
+        receiptsMark=text("Read receipts on",12,muted,false);receiptsMark.setSingleLine(true);receiptsMark.setCompoundDrawablePadding(dp(5));
+        android.graphics.drawable.Drawable eye=getDrawable(R.drawable.ic_eye);if(eye!=null){eye=eye.mutate();eye.setTint(muted);eye.setBounds(0,0,dp(14),dp(14));receiptsMark.setCompoundDrawablesRelative(eye,null,null,null);}
+        titles.addView(receiptsMark);updateReceiptsMark();
+        who.addView(titles,new LinearLayout.LayoutParams(0,-2,1));who.setGravity(Gravity.CENTER_VERTICAL);who.setContentDescription("Conversation details");who.setOnClickListener(v->details());
         bar.addView(who,new LinearLayout.LayoutParams(0,-1,1));
         String number=PairedProtocol.number(PairedProtocol.other(c));
         if(SmartText.shortCodeSender(number)){TextView stop=text("Unsubscribe",14,ink,true);stop.setPadding(dp(12),dp(8),dp(12),dp(8));stop.setBackground(shape(surface,16));stop.setOnClickListener(v->unsubscribe(id,c));
@@ -632,6 +646,8 @@ public class PairedActivity extends Activity {
             replyTo[i]=ReplyReferences.isReply(m);
             reacted[i]=!reactorsOf(m).isEmpty();}
         int lastOut=-1;for(int i=n-1;i>=0;i--)if(out[i]&&line[i]==null){lastOut=i;break;}
+        // Read receipts on: when (or whether) the receipt went out, under the message it's for.
+        JSONObject receipt=chatSettings.receipts(chatId)?new ReadReceiptQueue(this).get(chatId):null;
         // Link previews open the page, which tells its owner you looked; only do that for people you know or have written to.
         boolean wrote=false;for(boolean o:out)wrote|=o;chatTrusted=c!=null&&(PairedProtocol.allKnown(c)||wrote);
         TimeZone zone=TimeZone.getDefault();
@@ -655,6 +671,7 @@ public class PairedActivity extends Activity {
             JSONObject rem=Reminders.forMessage(this,m.optString("messageID"));
             if(rem!=null){TextView rt=text("⏰ Reminder "+separatorStamp(rem.optLong("at")),11,muted,false);rt.setGravity(out[i]?Gravity.END:Gravity.START);rt.setPadding(dp(16),dp(2),dp(16),0);rt.setOnClickListener(v->remindMenu(m));items.addView(rt,new LinearLayout.LayoutParams(-1,-2));}
             if(starred.has(m.optString("messageID"))){TextView st=text("★ Starred",11,muted,false);st.setGravity(out[i]?Gravity.END:Gravity.START);st.setPadding(dp(16),dp(2),dp(16),0);items.addView(st,new LinearLayout.LayoutParams(-1,-2));}
+            if(!out[i]&&receipt!=null&&receipt.optString("messageID").equals(m.optString("messageID"))){View read=readLine(receipt);if(read!=null)items.addView(read,new LinearLayout.LayoutParams(-1,-2));}
             if(i==lastOut||(out[i]&&PairedProtocol.failed(m)))items.addView(statusRow(m,theme));
         }
         renderOutbox(theme);renderScheduled(theme);if(inline!=null&&!inlineSeen)stopInline();

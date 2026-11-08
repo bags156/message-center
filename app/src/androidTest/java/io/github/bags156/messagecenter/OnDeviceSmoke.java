@@ -194,6 +194,10 @@ public final class OnDeviceSmoke extends Instrumentation {
             // A photo the phone was asked for three times and never sent: labeled as not on the phone.
             store.message(new JSONObject("{messageID:'gone',conversationID:'smoke',participantID:'p1',timestamp:1794000298500000,messageStatus:{status:'INCOMING_COMPLETE'},messageInfo:[{actionMessageID:'z9',mediaContent:{mimeType:'image/jpeg',mediaName:'IMG_9.jpg',size:1000}}]}"),0,true);
             getTargetContext().getSharedPreferences("phone_media",0).edit().putInt("gone:z9",PairedService.MISSING_AFTER).commit();
+            // Read receipts on for this chat, with the receipt for its newest incoming message already sent.
+            new ChatSettings(getTargetContext()).setReceipts("smoke",true);ReadReceiptQueue receipts=new ReadReceiptQueue(getTargetContext());
+            JSONObject newest=store.latestIncoming("smoke");check(newest!=null,"No incoming message to mark read");receipts.viewed(store.chat("smoke"),newest,true);
+            receipts.accepted("smoke",newest.optString("messageID"),receipts.get("smoke").optLong("revision"),System.currentTimeMillis());
             check(!store.searchAll("verification",10).isEmpty(),"Search across chats did not find a message");
             Nudges.reschedule(getTargetContext()); // unread reminders: must run against real data without crashing
             // Photo files: real photos decode and are named; a downloaded error page is recognized as not a photo.
@@ -294,6 +298,9 @@ public final class OnDeviceSmoke extends Instrumentation {
         bubble.getWindow().getDecorView().findViewsWithText(found,"loved an image",android.view.View.FIND_VIEWS_WITH_TEXT);check(!found.isEmpty(),"An iPhone reaction with no photo before it disappeared");found.clear();
         bubble.getWindow().getDecorView().findViewsWithText(found,"Sam Example left",android.view.View.FIND_VIEWS_WITH_TEXT);check(!found.isEmpty(),"Group event is missing");found.clear();
         bubble.getWindow().getDecorView().findViewsWithText(found,"Find the original message for this reply",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);check(!found.isEmpty(),"Reply without a reference has no refresh action");found.clear();
+        bubble.getWindow().getDecorView().findViewsWithText(found,"Read receipts on",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.size()==1,"A chat with read receipts on doesn't say so at the top ("+found.size()+")");found.clear();
+        bubble.getWindow().getDecorView().findViewsWithText(found,". Tap for details.",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);
+        boolean readShown=false;for(android.view.View v:found)if(v.getContentDescription().toString().matches("Read \\d.*"))readShown=true;check(readShown,"No \"Read <time>\" under the message the receipt went out for");found.clear();
         bubble.getWindow().getDecorView().findViewsWithText(found,"Not on your phone",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.size()==1,"A photo the phone never sent isn't labeled as missing ("+found.size()+")");found.clear();
         // Photos that need the phone say what they're waiting for (not a blank box). Offline here, so: the connection.
         bubble.getWindow().getDecorView().findViewsWithText(found,"Waiting for the connection",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.size()>=2,"Photos waiting on the phone don't say so offline ("+found.size()+")");found.clear();
@@ -310,6 +317,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkMarkup((PairedActivity)activity);
         try(PairedStore store=new PairedStore(getTargetContext())){store.clear();}
         Outbox box=new Outbox(getTargetContext());for(JSONObject o:box.all())box.remove(o.optString("id"));
+        new ChatSettings(getTargetContext()).setReceipts("smoke",false);new ReadReceiptQueue(getTargetContext()).cancel("smoke");
         getTargetContext().getSharedPreferences("transcripts",0).edit().clear().commit();getTargetContext().getSharedPreferences("phone_media",0).edit().clear().commit();
         for(JSONObject o:Scheduled.forChat(getTargetContext(),"smoke"))Scheduled.remove(getTargetContext(),o.optString("id"));
         getTargetContext().getSharedPreferences("starred",0).edit().clear().commit();
