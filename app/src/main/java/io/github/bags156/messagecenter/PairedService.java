@@ -348,7 +348,7 @@ public final class PairedService extends Service {
             Notification.BubbleMetadata.Builder b=meta.getShortcutId()!=null?new Notification.BubbleMetadata.Builder(meta.getShortcutId()):new Notification.BubbleMetadata.Builder(meta.getIntent(),meta.getIcon());
             if(meta.getDesiredHeight()>0)b.setDesiredHeight(meta.getDesiredHeight());if(meta.getDeleteIntent()!=null)b.setDeleteIntent(meta.getDeleteIntent());
             b.setAutoExpandBubble(false).setSuppressNotification(true);
-            nm.notify(sbn.getTag(),sbn.getId(),Notification.Builder.recoverBuilder(context,old).setBubbleMetadata(b.build()).setOnlyAlertOnce(true).setSilent(true).build());
+            nm.notify(sbn.getTag(),sbn.getId(),Notification.Builder.recoverBuilder(context,old).setBubbleMetadata(b.build()).setOnlyAlertOnce(true).build());
         }catch(Exception ignored){}
     }
     /**
