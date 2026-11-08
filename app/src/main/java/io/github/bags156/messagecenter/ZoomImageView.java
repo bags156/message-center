@@ -10,17 +10,24 @@ import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.widget.ImageView;
 
-/** An image that fits the screen and can be pinched, double-tapped, and dragged. */
+/** An image that fits the screen and can be pinched, double-tapped, and dragged; when not zoomed, swipe sideways for the next one. */
 final class ZoomImageView extends ImageView {
     private final Matrix matrix = new Matrix();
     private final ScaleGestureDetector scaler;
     private final GestureDetector gestures;
     private float base = 1f, scale = 1f;
     private Runnable onTap;
+    /** Swiping between pictures: whether there is one that way (+1 next, -1 previous), and moving to it. */
+    interface Swipe { boolean can(int dir); void go(int dir); }
+    private Swipe swipe;
+    private float downX, downY;
+    private boolean sliding;
+    private final int slop;
 
     ZoomImageView(Context context) {
         super(context);
         setScaleType(ScaleType.MATRIX);
+        slop = android.view.ViewConfiguration.get(context).getScaledTouchSlop();
         scaler = new ScaleGestureDetector(context, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
             @Override public boolean onScale(ScaleGestureDetector d) { zoomBy(d.getScaleFactor(), d.getFocusX(), d.getFocusY()); return true; }
         });
@@ -33,6 +40,7 @@ final class ZoomImageView extends ImageView {
     }
 
     void setOnTap(Runnable tap) { onTap = tap; }
+    void setSwipe(Swipe s) { swipe = s; }
 
     @Override public void setImageDrawable(Drawable drawable) { super.setImageDrawable(drawable); post(this::fit); }
     @Override protected void onSizeChanged(int w, int h, int ow, int oh) { super.onSizeChanged(w, h, ow, oh); fit(); }
@@ -68,6 +76,30 @@ final class ZoomImageView extends ImageView {
 
     @SuppressLint("ClickableViewAccessibility")
     @Override public boolean onTouchEvent(MotionEvent event) {
+        // Not zoomed in: a sideways drag pulls the picture along and lets go into the next one.
+        if (swipe != null && scale <= 1.01f) {
+            float dx = event.getRawX() - downX, dy = event.getRawY() - downY;
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN: downX = event.getRawX(); downY = event.getRawY(); sliding = false; animate().cancel(); break;
+                case MotionEvent.ACTION_POINTER_DOWN: if (sliding) { sliding = false; animate().translationX(0).setDuration(150).start(); } break;
+                case MotionEvent.ACTION_MOVE:
+                    if (event.getPointerCount() > 1) break;
+                    if (!sliding && Math.abs(dx) > slop && Math.abs(dx) > Math.abs(dy) * 1.2f) { sliding = true; MotionEvent cancel = MotionEvent.obtain(event); cancel.setAction(MotionEvent.ACTION_CANCEL); gestures.onTouchEvent(cancel); cancel.recycle(); }
+                    if (sliding) { setTranslationX(swipe.can(dx < 0 ? 1 : -1) ? dx : dx * 0.25f); return true; }
+                    break;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    if (sliding) {
+                        sliding = false; int dir = dx < 0 ? 1 : -1; float w = getWidth();
+                        if (event.getActionMasked() == MotionEvent.ACTION_UP && Math.abs(dx) > w * 0.2f && swipe.can(dir))
+                            animate().translationX(-dir * w).setDuration(150).withEndAction(() -> { swipe.go(dir); setTranslationX(dir * w); animate().translationX(0).setDuration(180).start(); }).start();
+                        else animate().translationX(0).setDuration(150).start();
+                        return true;
+                    }
+                    break;
+                default: break;
+            }
+        }
         scaler.onTouchEvent(event);
         gestures.onTouchEvent(event);
         if (scale > 1.01f && getParent() != null) getParent().requestDisallowInterceptTouchEvent(true);

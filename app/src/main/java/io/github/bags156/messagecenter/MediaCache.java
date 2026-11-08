@@ -37,12 +37,20 @@ final class MediaCache {
     /** Pictures with a see-through background (Genmoji, stickers): shown on their own, like a big emoji. */
     private static final java.util.Set<String> stickers = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
     static boolean isSticker(File file) { return stickers.contains(file.getName()); }
-    /** See-through at the corners: a cut-out picture rather than a photo. */
+    /**
+     * A cut-out picture (Genmoji, sticker) rather than a photo: roughly square-ish, and see-through
+     * around most of its edge. Screenshots and photos with a few clear pixels don't count.
+     */
     static boolean sticker(Bitmap b) {
         if (b == null || !b.hasAlpha() || b.getWidth() < 2 || b.getHeight() < 2) return false;
-        int w = b.getWidth() - 1, h = b.getHeight() - 1, clear = 0;
-        for (int[] p : new int[][]{{0, 0}, {w, 0}, {0, h}, {w, h}}) if ((b.getPixel(p[0], p[1]) >>> 24) < 32) clear++;
-        return clear >= 2;
+        int w = b.getWidth(), h = b.getHeight(); float ratio = w / (float) h;
+        if (ratio < 0.5f || ratio > 2f) return false;
+        int clear = 0, total = 0;
+        for (int i = 0; i <= 20; i++) {
+            int x = (w - 1) * i / 20, y = (h - 1) * i / 20;
+            for (int[] p : new int[][]{{x, 0}, {x, h - 1}, {0, y}, {w - 1, y}}) { total++; if ((b.getPixel(p[0], p[1]) >>> 24) < 32) clear++; }
+        }
+        return clear >= total * 0.6f;
     }
 
     static File dir(Context context) {

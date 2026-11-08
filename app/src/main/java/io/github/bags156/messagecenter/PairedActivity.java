@@ -500,7 +500,9 @@ public class PairedActivity extends Activity {
         else if(!number.isEmpty())bar.addView(icon(R.drawable.ic_call,ink,"Call",()->{try{startActivity(new Intent(Intent.ACTION_DIAL,Uri.parse("tel:"+number)));}catch(Exception e){toast("No phone app is available.");}}));
         ImageView more=icon(R.drawable.ic_more,ink,"More options",null);more.setBackground(ripple());more.setOnClickListener(this::chatMenu);bar.addView(more);
         root.addView(bar,new LinearLayout.LayoutParams(-1,dp(64)));connection();
-        scroll=new ScrollView(this);scroll.setVerticalScrollBarEnabled(false);items=vertical();items.setPadding(dp(12),dp(8),dp(12),dp(8));scroll.addView(items);
+        scroll=new ScrollView(this);scroll.setVerticalScrollBarEnabled(false);items=vertical();items.setPadding(dp(12),dp(8),dp(12),dp(8));
+        // A short chat sits at the bottom, just above the message box, like any messaging app.
+        scroll.setFillViewport(true);items.setGravity(Gravity.BOTTOM);scroll.addView(items);
         chatFrame=new FrameLayout(this);addChatBackground(chatFrame,id);
         TimeRevealLayout reveal=new TimeRevealLayout(this,dp(TIME_REVEAL_DP),this::revealTimes);reveal.addView(scroll,new FrameLayout.LayoutParams(-1,-1));chatFrame.addView(reveal,new FrameLayout.LayoutParams(-1,-1));root.addView(chatFrame,new LinearLayout.LayoutParams(-1,0,1));
         jumpButton=text("↓",15,ink,true);jumpButton.setPadding(dp(18),dp(10),dp(18),dp(10));jumpButton.setBackground(shape(card,22));jumpButton.setElevation(dp(4));jumpButton.setVisibility(View.GONE);
@@ -617,7 +619,10 @@ public class PairedActivity extends Activity {
         LinearLayout wrap=vertical();String body=PairedProtocol.text(m),fallback=ChatText.replyFallbackBody(body);List<JSONObject> media=PairedProtocol.media(m);
         String target=store.replyTarget(m);
         if(ReplyReferences.isReply(m))addReplyContext(wrap,m,c,theme,outgoing,target);
-        for(int k=0;k<media.size();k++){if(k>0)gap(wrap,4);wrap.addView(mediaView(m,media.get(k),outgoing,theme),new LinearLayout.LayoutParams(-1,-2));}
+        // Several photos or videos sent together become one album grid; anything else is shown on its own.
+        List<JSONObject> visual=new ArrayList<>(),rest=new ArrayList<>();for(JSONObject a:media){String k=PairedProtocol.mediaKind(a);if((k.equals("image")||k.equals("video"))&&!PairedProtocol.contactCard(a))visual.add(a);else rest.add(a);}
+        if(visual.size()>=2){wrap.addView(albumView(m,visual,outgoing),new LinearLayout.LayoutParams(-1,-2));if(!rest.isEmpty())gap(wrap,4);}else rest=media;
+        for(int k=0;k<rest.size();k++){if(k>0)gap(wrap,4);wrap.addView(mediaView(m,rest.get(k),outgoing,theme),new LinearLayout.LayoutParams(-1,-2));}
         JSONObject place=PairedProtocol.location(m);if(place!=null){if(!media.isEmpty())gap(wrap,4);wrap.addView(locationCard(m,place,outgoing,theme),new LinearLayout.LayoutParams(-1,-2));}
         if((!media.isEmpty()||place!=null)&&(fallback!=null?fallback:body).isEmpty())return wrap;
         if(!media.isEmpty()||place!=null)gap(wrap,4);
@@ -1114,6 +1119,29 @@ public class PairedActivity extends Activity {
         View left=new View(this);left.setBackgroundColor((BLUE&0x00ffffff)|0x66000000);r.addView(left,new LinearLayout.LayoutParams(0,Math.max(1,dp(1)),1));
         TextView t=text(count==1?"1 new message":count+" new messages",12,BLUE,true);t.setPadding(dp(10),0,dp(10),0);r.addView(t);
         View right=new View(this);right.setBackgroundColor((BLUE&0x00ffffff)|0x66000000);r.addView(right,new LinearLayout.LayoutParams(0,Math.max(1,dp(1)),1));return r;}
+    /** Photos and videos sent together: a grid of up to four in one rounded block, "+N" on the last when there are more. */
+    private View albumView(JSONObject m,List<JSONObject> parts,boolean outgoing){
+        int width=Math.round(getResources().getDisplayMetrics().widthPixels*0.66f),gap=dp(3),half=(width-gap)/2,n=parts.size();
+        LinearLayout line=row();line.setGravity(outgoing?Gravity.END:Gravity.START);LinearLayout grid=vertical();
+        grid.setOutlineProvider(new ViewOutlineProvider(){@Override public void getOutline(View v,Outline o){o.setRoundRect(0,0,v.getWidth(),v.getHeight(),dp(20));}});grid.setClipToOutline(true);
+        if(n==2){int h=Math.round(width*0.62f);LinearLayout r=row();r.addView(albumCell(m,parts,0,0),new LinearLayout.LayoutParams(half,h));
+            LinearLayout.LayoutParams second=new LinearLayout.LayoutParams(half,h);second.setMarginStart(gap);r.addView(albumCell(m,parts,1,0),second);grid.addView(r);}
+        else if(n==3){grid.addView(albumCell(m,parts,0,0),new LinearLayout.LayoutParams(width,Math.round(width*0.56f)));int h=Math.round(half*0.9f);
+            LinearLayout r=row();LinearLayout.LayoutParams rl=new LinearLayout.LayoutParams(-1,-2);rl.topMargin=gap;r.addView(albumCell(m,parts,1,0),new LinearLayout.LayoutParams(half,h));
+            LinearLayout.LayoutParams third=new LinearLayout.LayoutParams(half,h);third.setMarginStart(gap);r.addView(albumCell(m,parts,2,0),third);grid.addView(r,rl);}
+        else for(int rr=0;rr<2;rr++){LinearLayout r=row();LinearLayout.LayoutParams rl=new LinearLayout.LayoutParams(-1,-2);if(rr>0)rl.topMargin=gap;
+            for(int col=0;col<2;col++){int i=rr*2+col;LinearLayout.LayoutParams cl=new LinearLayout.LayoutParams(half,half);if(col>0)cl.setMarginStart(gap);r.addView(albumCell(m,parts,i,i==3&&n>4?n-4:0),cl);}
+            grid.addView(r,rl);}
+        line.addView(grid,new LinearLayout.LayoutParams(width,-2));return line;}
+    private View albumCell(JSONObject m,List<JSONObject> parts,int i,int more){JSONObject media=parts.get(i);boolean video=PairedProtocol.mediaKind(media).equals("video");
+        FrameLayout cell=new FrameLayout(this);cell.setTag("album");cell.setBackgroundColor(surface);ImageView img=new ImageView(this);img.setScaleType(ImageView.ScaleType.CENTER_CROP);cell.addView(img,new FrameLayout.LayoutParams(-1,-1));
+        if(video&&more==0){ImageView play=new ImageView(this);play.setImageResource(R.drawable.ic_play);play.setPadding(dp(10),dp(10),dp(9),dp(10));play.setBackground(oval(0x8C000000));cell.addView(play,new FrameLayout.LayoutParams(dp(40),dp(40),Gravity.CENTER));}
+        TextView state=text("",11,Color.WHITE,false);state.setPadding(dp(8),dp(4),dp(8),dp(4));state.setBackground(shape(0x99000000,10));state.setVisibility(View.GONE);
+        FrameLayout.LayoutParams sl=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);sl.bottomMargin=dp(8);cell.addView(state,sl);img.setTag(R.id.tile_state,state);
+        if(more>0){TextView plus=text("+"+more,26,Color.WHITE,true);plus.setGravity(Gravity.CENTER);plus.setBackgroundColor(0x8C000000);cell.addView(plus,new FrameLayout.LayoutParams(-1,-1));}
+        cell.setContentDescription((video?"Video ":"Photo ")+(i+1)+" of "+parts.size()+(more>0?", and "+more+" more":"")+". Tap to open.");
+        cell.setOnClickListener(v->openMedia(more>0&&parts.size()>4?parts.get(3):media));cell.setOnLongClickListener(v->{messageSheet(m);return true;});
+        cell.post(()->loadPreview(media,img,video,Math.max(1,cell.getWidth()),Math.max(1,cell.getHeight())));return cell;}
     private InlineVideo inline;private boolean inlineSeen;private String pendingInline="";
     /** Tap a video: it plays right in its tile (downloading first if needed). Tap again to pause. */
     private void playInline(JSONObject media,FrameLayout box,ImageView img,View badge){String key=mediaKey(media);
@@ -1139,7 +1167,7 @@ public class PairedActivity extends Activity {
         return w>=h?new int[]{side,Math.max(dp(40),Math.round(side*h/(float)w))}:new int[]{Math.max(dp(40),Math.round(side*w/(float)h)),side};}
     private void stickerStyle(FrameLayout box,ImageView img){box.setBackground(null);box.setClipToOutline(false);img.setScaleType(ImageView.ScaleType.FIT_CENTER);box.setContentDescription("Sticker. Tap to view.");}
     /** A picture that turned out to be see-through once decoded: drop the photo frame and shrink to sticker size. */
-    private void becomeSticker(ImageView img,Bitmap b){if(!(img.getParent() instanceof FrameLayout))return;FrameLayout box=(FrameLayout)img.getParent();
+    private void becomeSticker(ImageView img,Bitmap b){if(!(img.getParent() instanceof FrameLayout))return;FrameLayout box=(FrameLayout)img.getParent();if("album".equals(box.getTag()))return;
         if(box.getBackground()==null)return;stickerStyle(box,img);ViewGroup.LayoutParams lp=box.getLayoutParams();if(lp==null)return;
         int[] sz=stickerSize(b.getWidth(),b.getHeight());lp.width=sz[0];lp.height=sz[1];box.setLayoutParams(lp);}
     /** A tiny preview is blurred while the full photo loads, instead of showing as big blocks. */
@@ -1205,43 +1233,67 @@ public class PairedActivity extends Activity {
             catch(Exception e){if(item!=null)getContentResolver().delete(item,null,null);result="Could not save it to your phone.";}
             String r=result;ui.post(()->toast(r));});}
     /** Full screen, pinch or double-tap to zoom. Shows the preview at once and the full photo when it arrives. */
-    private void viewer(JSONObject media){
-        Dialog d=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);FrameLayout box=new FrameLayout(this);box.setBackgroundColor(Color.BLACK);
-        ZoomImageView image=new ZoomImageView(this);box.addView(image,new FrameLayout.LayoutParams(-1,-1));
-        ProgressBar spinner=new ProgressBar(this);box.addView(spinner,new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.CENTER));
-        LinearLayout bar=row();bar.setPadding(dp(8),dp(36),dp(8),dp(8));bar.setBackgroundColor(0x66000000);
-        bar.addView(icon(R.drawable.ic_close,Color.WHITE,"Close",d::dismiss));View space=new View(this);bar.addView(space,new LinearLayout.LayoutParams(0,1,1));
-        File[] full={null};
-        for(String[] a:new String[][]{{"Save"},{"Share"}}){TextView t=text(a[0],16,Color.WHITE,true);t.setPadding(dp(14),dp(10),dp(14),dp(10));
-            t.setOnClickListener(v->{if(full[0]==null){toast("Still downloading…");return;}if(a[0].equals("Save"))saveToPhone(full[0],media);else share(full[0],media);});bar.addView(t);}
-        box.addView(bar,new FrameLayout.LayoutParams(-1,-2,Gravity.TOP));image.setOnTap(()->bar.setVisibility(bar.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE));
-        d.setContentView(box);d.show();
-        File thumb=MediaCache.file(this,media,true);if(thumb.isFile()){int side=Math.round(getResources().getDisplayMetrics().widthPixels*0.66f);Bitmap t=MediaCache.peek(thumb,side);
-            if(t!=null){image.setImageBitmap(t);if(MediaCache.tiny(thumb))soft(image);}
-            // Not decoded yet (the chat was scrolled, or reopened): decode it now so the screen is never just black.
-            else decoder.execute(()->{Bitmap tb=MediaCache.decode(thumb,side,false);boolean tiny=tb!=null&&MediaCache.tiny(thumb);ui.post(()->{if(tb!=null&&d.isShowing()&&image.getDrawable()==null){image.setImageBitmap(tb);if(tiny)soft(image);}});});}
-        if(!MediaCache.file(this,media,false).isFile()&&!PairedService.ready()){spinner.setVisibility(View.GONE);toast("Connect to Google Messages to download the full photo.");return;}
-        if(!MediaCache.hasFull(media)&&!MediaCache.file(this,media,false).isFile()){
-            TextView note=text("Getting the full photo from your phone…",14,Color.WHITE,false);note.setPadding(dp(14),dp(8),dp(14),dp(8));note.setBackground(shape(0x99000000,16));
-            FrameLayout.LayoutParams nl=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);nl.bottomMargin=dp(48);box.addView(note,nl);
-            PairedService.requestFullMedia(media,true,(v,e)->{if(!e.isEmpty()&&d.isShowing()){note.setText(e);spinner.setVisibility(View.GONE);}});
-            awaitFull(media,45_000,updated->{if(!d.isShowing())return;
-                if(updated==null){spinner.setVisibility(View.GONE);note.setText("Your phone hasn't sent the full photo yet. Showing the preview.");if(thumb.isFile())full[0]=thumb;return;}
-                box.removeView(note);showFullPhoto(updated,d,image,spinner,full);});
+    /** The open full-screen viewer: its views, which picture of the chat it shows, and that picture's file. */
+    private static final class Viewer { Dialog d; FrameLayout box; ZoomImageView image; ProgressBar spinner; TextView note,counter; ImageView play; List<JSONObject> gallery; int index,gen; File full; }
+    /** Full-screen photos (and video posters) for this chat: pinch to zoom, swipe sideways for the next or previous one. */
+    private void viewer(JSONObject start){Viewer v=new Viewer();
+        // Every photo and video in this chat, oldest first, so swiping goes the way the chat reads.
+        v.gallery=new ArrayList<>();
+        if(!chatId.isEmpty()){List<JSONObject> msgs=store.mediaMessages(chatId,500);java.util.Collections.reverse(msgs);
+            for(JSONObject m:msgs)for(JSONObject a:PairedProtocol.media(m)){String k=PairedProtocol.mediaKind(a);if(k.equals("image")||k.equals("video"))v.gallery.add(a);}}
+        String key=mediaKey(start);v.index=-1;for(int i=0;i<v.gallery.size();i++)if(mediaKey(v.gallery.get(i)).equals(key)){v.index=i;break;}
+        if(v.index<0){v.gallery.clear();v.gallery.add(start);v.index=0;}
+        v.d=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);v.box=new FrameLayout(this);v.box.setBackgroundColor(Color.BLACK);
+        v.image=new ZoomImageView(this);v.box.addView(v.image,new FrameLayout.LayoutParams(-1,-1));
+        v.spinner=new ProgressBar(this);v.box.addView(v.spinner,new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.CENTER));
+        v.play=new ImageView(this);v.play.setImageResource(R.drawable.ic_play);v.play.setPadding(dp(22),dp(22),dp(20),dp(22));v.play.setBackground(oval(0x8C000000));v.play.setContentDescription("Play video");
+        v.play.setOnClickListener(x->{JSONObject media=v.gallery.get(v.index);withFile(media,"Downloading the video…",file->startActivity(VideoPlayerActivity.open(this,file,MediaCache.mime(media),displayName(media))));});
+        v.box.addView(v.play,new FrameLayout.LayoutParams(dp(76),dp(76),Gravity.CENTER));
+        v.note=text("",14,Color.WHITE,false);v.note.setPadding(dp(14),dp(8),dp(14),dp(8));v.note.setBackground(shape(0x99000000,16));v.note.setVisibility(View.GONE);
+        FrameLayout.LayoutParams nl=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);nl.bottomMargin=dp(48);v.box.addView(v.note,nl);
+        LinearLayout bar=row();bar.setPadding(dp(8),dp(36),dp(8),dp(20));
+        bar.setBackground(new android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,new int[]{0x99000000,0x00000000}));
+        bar.addView(icon(R.drawable.ic_close,Color.WHITE,"Close",v.d::dismiss));
+        v.counter=text("",14,0xCCFFFFFF,false);v.counter.setPadding(dp(8),0,0,0);bar.addView(v.counter,new LinearLayout.LayoutParams(0,-2,1));
+        for(String a:new String[]{"Save","Share"}){TextView t=text(a,16,Color.WHITE,true);t.setPadding(dp(14),dp(10),dp(14),dp(10));
+            t.setOnClickListener(x->{JSONObject media=v.gallery.get(v.index);File have=v.full!=null?v.full:MediaCache.file(this,media,false);
+                if(!have.isFile()){if(PairedProtocol.mediaKind(media).equals("video"))withFile(media,"Downloading the video…",file->{if(a.equals("Save"))saveToPhone(file,media);else share(file,media);});else toast("Still downloading…");return;}
+                if(a.equals("Save"))saveToPhone(have,media);else share(have,media);});bar.addView(t);}
+        v.box.addView(bar,new FrameLayout.LayoutParams(-1,-2,Gravity.TOP));v.image.setOnTap(()->bar.setVisibility(bar.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE));
+        v.image.setSwipe(new ZoomImageView.Swipe(){
+            @Override public boolean can(int dir){int next=v.index+dir;return next>=0&&next<v.gallery.size();}
+            @Override public void go(int dir){v.index+=dir;viewerShow(v);}});
+        v.d.setOnDismissListener(x->v.gen++);
+        v.d.setContentView(v.box);v.d.show();viewerShow(v);}
+    /** Shows the gallery's current picture: its preview at once, then the full photo (or a play button for a video). */
+    private void viewerShow(Viewer v){int g=++v.gen;JSONObject media=v.gallery.get(v.index);boolean video=PairedProtocol.mediaKind(media).equals("video");v.full=null;
+        v.counter.setText(v.gallery.size()>1?(v.index+1)+" of "+v.gallery.size():"");v.note.setVisibility(View.GONE);
+        v.play.setVisibility(video?View.VISIBLE:View.GONE);v.spinner.setVisibility(video?View.GONE:View.VISIBLE);v.image.setImageDrawable(null);sharp(v.image);
+        File thumb=MediaCache.file(this,media,true),file=MediaCache.file(this,media,false);int side=Math.round(getResources().getDisplayMetrics().widthPixels*0.66f);
+        decoder.execute(()->{Bitmap pre=video&&file.isFile()?MediaCache.decode(file,2560,true):null;boolean tiny=false;
+            if(pre==null&&thumb.isFile()){pre=MediaCache.decode(thumb,side,false);tiny=pre!=null&&MediaCache.tiny(thumb);}
+            Bitmap shown=pre;boolean soft=tiny;ui.post(()->{if(v.gen!=g||shown==null)return;if(video||v.image.getDrawable()==null){v.image.setImageBitmap(shown);if(soft)soft(v.image);}});});
+        if(video){if(file.isFile())v.full=file;return;}
+        if(!file.isFile()&&!PairedService.ready()){v.spinner.setVisibility(View.GONE);viewerNote(v,"Connect to Google Messages to download the full photo.");return;}
+        if(!MediaCache.hasFull(media)&&!file.isFile()){viewerNote(v,"Getting the full photo from your phone…");
+            PairedService.requestFullMedia(media,true,(x,e)->{if(!e.isEmpty()&&v.gen==g){viewerNote(v,e);v.spinner.setVisibility(View.GONE);}});
+            awaitFull(media,45_000,updated->{if(v.gen!=g)return;
+                if(updated==null){v.spinner.setVisibility(View.GONE);viewerNote(v,"Your phone hasn't sent the full photo yet. Showing the preview.");if(thumb.isFile())v.full=thumb;return;}
+                v.note.setVisibility(View.GONE);viewerFull(v,updated,g);});
             return;}
-        showFullPhoto(media,d,image,spinner,full);
-    }
-    /** Waits (up to timeout) for the phone to update a preview-only attachment with its download details. */
+        viewerFull(v,media,g);}
+    private void viewerNote(Viewer v,String text){v.note.setText(text);v.note.setVisibility(View.VISIBLE);}
+    private void viewerFull(Viewer v,JSONObject media,int g){
+        MediaCache.fetch(this,media,false,(file,error)->{if(v.gen!=g)return;if(file==null){v.spinner.setVisibility(View.GONE);viewerNote(v,error);return;}v.full=file;
+            decoder.execute(()->{android.graphics.drawable.Drawable moving=MediaCache.animated(file,0,0);Bitmap b=moving!=null?null:MediaCache.decode(file,2560,false);String what=b==null&&moving==null?MediaCache.describe(file):"";
+                ui.post(()->{if(v.gen!=g)return;v.spinner.setVisibility(View.GONE);
+                    if(moving!=null){v.image.setImageDrawable(moving);sharp(v.image);((android.graphics.drawable.AnimatedImageDrawable)moving).start();}
+                    else if(b!=null){v.image.setImageBitmap(b);sharp(v.image);}else if(v.d.isShowing())photoProblem(file,media,what);});});});}
     private void awaitFull(JSONObject media,long timeout,java.util.function.Consumer<JSONObject> done){long until=android.os.SystemClock.uptimeMillis()+timeout;String id=media.optString("_message");int index=media.optInt("_index",-1);
         Runnable[] check=new Runnable[1];check[0]=()->{JSONObject m=store.message(id);
             if(m!=null)for(JSONObject part:PairedProtocol.media(m))if(part.optInt("_index",-2)==index&&MediaCache.hasFull(part)){done.accept(part);return;}
             if(android.os.SystemClock.uptimeMillis()>until){done.accept(null);return;}ui.postDelayed(check[0],1500);};
         ui.postDelayed(check[0],1500);}
-    private void showFullPhoto(JSONObject media,Dialog d,ZoomImageView image,ProgressBar spinner,File[] full){
-        MediaCache.fetch(this,media,false,(file,error)->{if(file==null){spinner.setVisibility(View.GONE);if(d.isShowing())toast(error);return;}full[0]=file;
-            decoder.execute(()->{android.graphics.drawable.Drawable moving=MediaCache.animated(file,0,0);Bitmap b=moving!=null?null:MediaCache.decode(file,2560,false);String what=b==null&&moving==null?MediaCache.describe(file):"";
-                ui.post(()->{spinner.setVisibility(View.GONE);if(moving!=null){image.setImageDrawable(moving);sharp(image);((android.graphics.drawable.AnimatedImageDrawable)moving).start();}else if(b!=null){image.setImageBitmap(b);sharp(image);}else if(d.isShowing())photoProblem(file,media,what);});});});
-    }
     /** The full photo arrived but won't display: keep the preview on screen and say what the file is. */
     private void photoProblem(File file,JSONObject media,String what){
         android.util.Log.w("MessageCenter","Full photo won't decode: "+what+", sent as "+MediaCache.mime(media));Diagnostics.badFile(file,what+", sent as "+MediaCache.mime(media)+(HeifDecoder.lastProblem.isEmpty()?"":", "+HeifDecoder.lastProblem));
