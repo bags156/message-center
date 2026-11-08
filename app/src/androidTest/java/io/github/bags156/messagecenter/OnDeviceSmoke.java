@@ -35,21 +35,28 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(shown.contains("Daniel")!=mode.equals(NotificationPrivacy.NONE),"Name "+(mode.equals(NotificationPrivacy.NONE)?"shown":"missing")+" with '"+mode+"': "+shown);
             nm.cancel("reminder:"+rid,2);Thread.sleep(300);}
         NotificationPrivacy.set(ctx,NotificationPrivacy.ALL);}
-    /** Pinned chats open only from the round photo, with no highlight box; a tap on its corner (outside the circle) does nothing. */
+    /**
+     * Pinned chats open only from the round photo, with no highlight box; a tap on its corner
+     * (outside the circle) does nothing. Not signed in here, so the inbox has no chat list: the
+     * tile is built the same way and placed on the screen to be tapped.
+     */
     private void checkPinnedTap(PairedActivity a)throws Exception{
         new ChatSettings(getTargetContext()).setPinned("smoke",true);onMain(a,"inbox");
+        JSONObject smoke;try(PairedStore store=new PairedStore(getTargetContext())){smoke=store.chat("smoke");}check(smoke!=null,"Smoke chat missing");
+        java.lang.reflect.Field rootField=PairedActivity.class.getDeclaredField("root");rootField.setAccessible(true);
+        android.view.ViewGroup root=(android.view.ViewGroup)rootField.get(a);android.view.View[] cell=new android.view.View[1];
+        runOnMainSync(()->{try{java.lang.reflect.Method m=PairedActivity.class.getDeclaredMethod("pinnedCell",JSONObject.class);m.setAccessible(true);
+            cell[0]=(android.view.View)m.invoke(a,smoke);root.addView(cell[0],new android.widget.LinearLayout.LayoutParams(Math.round(130*a.getResources().getDisplayMetrics().density),-2));}catch(Exception e){throw new RuntimeException(e);}});
+        waitForIdleSync();
         java.util.ArrayList<android.view.View> faces=new java.util.ArrayList<>();java.util.ArrayList<String> seen=new java.util.ArrayList<>();
-        java.lang.reflect.Field itemsField=PairedActivity.class.getDeclaredField("items");itemsField.setAccessible(true);
-        android.view.ViewGroup items=(android.view.ViewGroup)itemsField.get(a);
-        runOnMainSync(()->collectDescriptions(items,faces,seen));
-        String state;try(PairedStore store=new PairedStore(getTargetContext())){JSONObject smoke=store.chat("smoke");
-            state="items="+(items==null?"none":items.getChildCount())+", smoke chat "+(smoke==null?"missing":"pinned="+new ChatSettings(getTargetContext()).pinned(smoke))+", seen="+seen;}
-        check(faces.size()==1,"Pinned photo not found ("+faces.size()+"; "+state+")");android.view.View face=faces.get(0);
-        check(((android.view.View)face.getParent()).getBackground()==null,"Pinned chat still draws a highlight box");
+        runOnMainSync(()->collectDescriptions(cell[0],faces,seen));
+        check(faces.size()==1,"Pinned photo not found ("+faces.size()+"; seen="+seen+")");android.view.View face=faces.get(0);
+        check(cell[0].getBackground()==null,"Pinned chat still draws a highlight box");
+        check(face.getWidth()>0,"Pinned photo wasn't laid out");
         java.lang.reflect.Field screen=PairedActivity.class.getDeclaredField("screen");screen.setAccessible(true);
         tap(face,2,2);check("inbox".equals(screen.get(a)),"A tap outside the round photo opened the chat");
         tap(face,face.getWidth()/2f,face.getHeight()/2f);check("chat".equals(screen.get(a)),"A tap on the photo didn't open the chat");
-        onMain(a,"inbox");new ChatSettings(getTargetContext()).setPinned("smoke",false);onMain(a,"inbox");}
+        new ChatSettings(getTargetContext()).setPinned("smoke",false);onMain(a,"inbox");}
     private static void collectDescriptions(android.view.View v,java.util.List<android.view.View> faces,java.util.List<String> seen){if(v==null)return;
         CharSequence d=v.getContentDescription();if(d!=null&&d.toString().contains("pinned")){seen.add(d.toString());if(d.toString().startsWith("Smoke group")&&d.toString().endsWith(", pinned"))faces.add(v);}
         if(v instanceof android.view.ViewGroup){android.view.ViewGroup g=(android.view.ViewGroup)v;for(int i=0;i<g.getChildCount();i++)collectDescriptions(g.getChildAt(i),faces,seen);}}
