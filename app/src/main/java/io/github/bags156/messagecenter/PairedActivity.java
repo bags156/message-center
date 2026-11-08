@@ -114,6 +114,8 @@ public class PairedActivity extends Activity {
     private android.view.ViewTreeObserver.OnPreDrawListener placing;private ScrollView placingIn;private boolean placeBottom;private Spot placeSpot;private int placeY,placeBefore;
     /** Where you were in a chat before opening its Details, and a spot the next redraw should go back to. */
     private String backChat="";private Spot backSpot,restoreSpot;private boolean backFromSaved;
+    /** iPhone reactions that arrived as text, placed on the messages they're about: message ID → {emoji, participant}. */
+    private Map<String,List<String[]>> tapbacks=new HashMap<>();
     private final Map<String,View> messageViews=new HashMap<>();
     private final android.os.Handler ui=new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable typingTick=this::updateTyping;
@@ -591,6 +593,8 @@ public class PairedActivity extends Activity {
         JSONObject c=store.chat(chatId);ChatTheme theme=chatSettings.theme(chatId);boolean group=c!=null&&PairedProtocol.other(c)==null;
         List<JSONObject> messages=new ArrayList<>();for(JSONObject m:store.messages(chatId,limit))if(!PairedProtocol.body(m).isEmpty()||!PairedProtocol.event(m,c).isEmpty())messages.add(m);
         if(messages.size()>=limit-5)items.addView(button("Show more saved messages",false,()->{limit+=300;renderMessages(false);}));
+        // iPhone reactions sent as text ("Laughed at an image") go on the message they're about, like any other reaction.
+        tapbacks=new HashMap<>();messages=placeTapbacks(messages,tapbacks);
         if(messages.isEmpty()){TextView empty=text(PairedService.ready()?"No messages have synced for this conversation yet.":"Messages will appear once the connection is ready.",14,muted,false);empty.setGravity(Gravity.CENTER);empty.setPadding(dp(24),dp(48),dp(24),dp(24));items.addView(empty);}
         else if(store.page("messages:"+chatId,false).isEmpty()&&!store.page("messages:"+chatId,true).isEmpty()){TextView end=text(store.page("messages:"+chatId,true),12,muted,false);end.setGravity(Gravity.CENTER);end.setPadding(dp(16),dp(8),dp(16),dp(8));items.addView(end);}
         int n=messages.size();boolean[] out=new boolean[n],replyTo=new boolean[n],reacted=new boolean[n];String[] who=new String[n],line=new String[n],ev=new String[n];long[] at=new long[n];
@@ -598,7 +602,7 @@ public class PairedActivity extends Activity {
             line[i]=ChatText.reactionLine(out[i]?"You":senderFirst(m,c),PairedProtocol.body(m));
             ev[i]=PairedProtocol.event(m,c);if(!ev[i].isEmpty())line[i]=ev[i];
             replyTo[i]=ReplyReferences.isReply(m);
-            reacted[i]=!PairedProtocol.reactors(m).isEmpty();}
+            reacted[i]=!reactorsOf(m).isEmpty();}
         int lastOut=-1;for(int i=n-1;i>=0;i--)if(out[i]&&line[i]==null){lastOut=i;break;}
         // Link previews open the page, which tells its owner you looked; only do that for people you know or have written to.
         boolean wrote=false;for(boolean o:out)wrote|=o;chatTrusted=c!=null&&(PairedProtocol.allKnown(c)||wrote);
@@ -617,7 +621,7 @@ public class PairedActivity extends Activity {
                 unreadCount=count;unreadDivider=newMessagesLine(count);items.addView(unreadDivider);}
             if(group&&!out[i]&&!joinPrev&&!replyTo[i]){TextView sender=text(senderName(m,c),12,muted,false);sender.setPadding(dp(14),0,0,dp(4));items.addView(sender);}
             View b=timed(swipeToReply(bubble(m,c,theme,out[i],joinPrev,joinNext),m),at[i],out[i]);if(selecting)b=selectable(b,m);items.addView(b);messageViews.put(m.optString("messageID"),b);
-            List<String[]> reactors=PairedProtocol.reactors(m);
+            List<String[]> reactors=reactorsOf(m);
             if(!reactors.isEmpty()){LinearLayout.LayoutParams rl=new LinearLayout.LayoutParams(-1,-2);rl.topMargin=-dp(7);items.addView(reactionPill(m,c,reactors,out[i]),rl);}
             if(!out[i]){String code=ChatText.oneTimeCode(PairedProtocol.text(m));if(!code.isEmpty())items.addView(codeChip(code,false,theme));}
             JSONObject rem=Reminders.forMessage(this,m.optString("messageID"));
@@ -642,6 +646,29 @@ public class PairedActivity extends Activity {
                 if(!found&&restoring){sv.scrollTo(0,sv.getChildAt(0).getHeight());pinnedBottom=true;}else{sv.scrollTo(0,found?Math.max(0,again.getTop()-keepOffset):y);pinnedBottom=sv.getChildAt(0).getHeight()-sv.getHeight()-sv.getScrollY()<dp(80);updateJumpButton();}}return true;};
         placing=once[0];placingIn=sv;sv.getViewTreeObserver().addOnPreDrawListener(once[0]);
     }
+    /** A message's reactions, including iPhone reactions that came as text and were placed on it. */
+    private List<String[]> reactorsOf(JSONObject m){List<String[]> all=PairedProtocol.reactors(m),more=tapbacks.get(m.optString("messageID"));
+        if(more==null||more.isEmpty())return all;all=new ArrayList<>(all);all.addAll(more);return all;}
+    /**
+     * Puts iPhone reaction texts on the messages they're about (see ChatText.tapbackTarget) and
+     * returns the messages left to show. A reaction it can't place stays as its own quiet line.
+     */
+    private List<JSONObject> placeTapbacks(List<JSONObject> messages,Map<String,List<String[]>> into){
+        int n=messages.size();List<ChatText.Said> said=new ArrayList<>(n);ChatText.Tapback[] tb=new ChatText.Tapback[n];boolean[] skip=new boolean[n];boolean any=false;
+        for(int i=0;i<n;i++){JSONObject m=messages.get(i);String text=PairedProtocol.text(m),reply=ChatText.replyFallbackBody(text);List<JSONObject> media=PairedProtocol.media(m);
+            boolean image=false,video=false,audio=false,file=false;
+            for(JSONObject a:media){String k=PairedProtocol.mediaKind(a);image|=k.equals("image");video|=k.equals("video");audio|=k.equals("audio");file|=k.equals("file");}
+            said.add(new ChatText.Said(m.optString("participantID"),reply!=null?reply:text,image,video,audio,file));
+            if(media.isEmpty()&&PairedProtocol.location(m)==null){tb[i]=ChatText.tapback(text);skip[i]=tb[i]!=null;any|=skip[i];}}
+        if(!any)return messages;
+        List<JSONObject> shown=new ArrayList<>(n);
+        for(int i=0;i<n;i++){ChatText.Tapback t=tb[i];if(t==null){shown.add(messages.get(i));continue;}
+            int j=ChatText.tapbackTarget(t,i,said,skip);if(j<0){shown.add(messages.get(i));continue;}
+            String who=said.get(i).sender;List<String[]> on=into.computeIfAbsent(messages.get(j).optString("messageID"),k->new ArrayList<>());
+            // One reaction each, as on an iPhone: a new one replaces theirs, and a removal takes it off.
+            on.removeIf(r->r[1].equals(who)&&(!t.removed||ReactionParser.sameEmoji(r[0],t.emoji)));
+            if(!t.removed)on.add(new String[]{t.emoji,who});}
+        return shown;}
     private View bubble(JSONObject m,JSONObject c,ChatTheme theme,boolean outgoing,boolean joinPrev,boolean joinNext){
         LinearLayout wrap=vertical();String body=PairedProtocol.text(m),fallback=ChatText.replyFallbackBody(body);List<JSONObject> media=PairedProtocol.media(m);
         String target=store.replyTarget(m);
@@ -831,7 +858,7 @@ public class PairedActivity extends Activity {
         d[0]=sheet(content);}
     /** Everyone who reacted, with photo or initial, filterable by emoji. */
     private void reactionSheet(JSONObject m,JSONObject c){
-        List<String[]> all=PairedProtocol.reactors(m);if(all.isEmpty())return;
+        List<String[]> all=reactorsOf(m);if(all.isEmpty())return;
         LinearLayout content=vertical();content.addView(text("Reactions",20,ink,true));gap(content,12);
         Map<String,Integer> counts=new LinkedHashMap<>();for(String[] r:all)counts.merge(r[0],1,Integer::sum);
         LinearLayout chips=row();HorizontalScrollView hs=new HorizontalScrollView(this);hs.setHorizontalScrollBarEnabled(false);hs.addView(chips);
@@ -909,7 +936,7 @@ public class PairedActivity extends Activity {
             thread(chat.getString("conversationID"));}catch(Exception ex){error("The new conversation could not be opened.");}});}
     /** Long-press a message: react (tap your current reaction to remove it), reply, copy, or see reactions. */
     private void messageSheet(JSONObject m){JSONObject c=store.chat(chatId);LinearLayout content=vertical();Dialog[] d=new Dialog[1];
-        List<String[]> reactors=PairedProtocol.reactors(m);String mine=myReaction(m,c);
+        List<String[]> reactors=reactorsOf(m);String mine=myReaction(m,c);
         List<String> choices=new ArrayList<>(java.util.Arrays.asList(REACTIONS));if(!mine.isEmpty()&&!choices.contains(mine)){choices.add(0,mine);choices.remove(choices.size()-1);}
         LinearLayout emojis=row();String current=mine;
         for(String e:choices){TextView t=text(e,26,ink,false);t.setGravity(Gravity.CENTER);boolean selected=e.equals(current);if(selected)t.setBackground(oval(fab));

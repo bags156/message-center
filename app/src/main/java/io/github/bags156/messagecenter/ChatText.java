@@ -20,6 +20,11 @@ final class ChatText {
         return m.matches() ? m.group(1).trim() : null;
     }
 
+    private static final String MEDIA_OBJECT = "(an image|a photo|a video|a movie|an attachment|an audio message|a sticker|a GIF|a link)";
+    private static final Pattern MEDIA_REMOVED = Pattern.compile(
+        "^Removed (a heart|a like|a dislike|a laugh|an emphasis|a question mark) from " + MEDIA_OBJECT + "$");
+    private static final Pattern MEDIA_CUSTOM = Pattern.compile("^(Reacted (.+?) to|Removed (.+?) from) " + MEDIA_OBJECT + "$");
+
     /** "Loved an image" style iPhone fallbacks: {emoji, verb, object}, or null. */
     static String[] mediaReaction(String body) {
         if (body == null) return null;
@@ -27,6 +32,96 @@ final class ChatText {
         if (!m.matches()) return null;
         return new String[]{emoji(m.group(1)), m.group(1).toLowerCase(Locale.ROOT), m.group(2)};
     }
+
+    /**
+     * Reaction text an iPhone sends instead of a real reaction ("Laughed at an image",
+     * Loved “See you soon”, "Removed a laugh from an image", "Reacted 🎉 to a photo").
+     * Exactly one of {@code object} (what kind of attachment) and {@code quote} is set.
+     */
+    static final class Tapback {
+        final String emoji, object, quote; final boolean removed;
+        Tapback(String emoji, String object, String quote, boolean removed) { this.emoji = emoji; this.object = object; this.quote = quote; this.removed = removed; }
+    }
+
+    static Tapback tapback(String body) {
+        if (body == null) return null;
+        String t = body.trim();
+        String[] media = mediaReaction(t);
+        if (media != null) return new Tapback(media[0], media[2], null, false);
+        Matcher removed = MEDIA_REMOVED.matcher(t);
+        if (removed.matches()) return new Tapback(removedEmoji(removed.group(1)), removed.group(2), null, true);
+        Matcher custom = MEDIA_CUSTOM.matcher(t);
+        if (custom.matches()) {
+            String emoji = custom.group(2) != null ? custom.group(2) : custom.group(3);
+            if (ReactionParser.isEmoji(emoji)) return new Tapback(emoji, custom.group(4), null, custom.group(3) != null);
+        }
+        ReactionParser.Reaction r = ReactionParser.parse(t);
+        return r == null ? null : new Tapback(r.emoji, null, r.quote, r.removed);
+    }
+
+    private static String removedEmoji(String what) {
+        switch (what) {
+            case "a heart": return "❤️";
+            case "a like": return "👍";
+            case "a dislike": return "👎";
+            case "a laugh": return "😂";
+            case "an emphasis": return "‼️";
+            default: return "❓";
+        }
+    }
+
+    /** A message as the reaction matcher sees it: who sent it, its typed text, and what's attached. */
+    static final class Said {
+        final String sender, text; final boolean image, video, audio, file;
+        Said(String sender, String text, boolean image, boolean video, boolean audio, boolean file) {
+            this.sender = sender == null ? "" : sender; this.text = text == null ? "" : text;
+            this.image = image; this.video = video; this.audio = audio; this.file = file;
+        }
+    }
+
+    private static final int TAPBACK_LOOKBACK = 300;
+    private static final Pattern LINK = Pattern.compile("(?i)\\b(https?://|www\\.)\\S+");
+
+    /**
+     * The message an iPhone reaction at {@code at} is about, or -1 when it can't be told.
+     * Quoted text goes to the latest earlier message with that text (a quote ending in "…"
+     * matches by its start). "An image" and the like go to the latest earlier message with
+     * that kind of attachment, someone else's before the reactor's own.
+     */
+    static int tapbackTarget(Tapback t, int at, List<Said> said, boolean[] skip) {
+        if (t == null || at <= 0 || at > said.size()) return -1;
+        String reactor = at < said.size() ? said.get(at).sender : "";
+        int stop = Math.max(0, at - TAPBACK_LOOKBACK), own = -1;
+        String quote = t.quote == null ? null : squash(t.quote);
+        boolean prefix = quote != null && (quote.endsWith("…") || quote.endsWith("..."));
+        if (prefix) quote = quote.replaceAll("(…|\\.\\.\\.)$", "").trim();
+        for (int j = at - 1; j >= stop; j--) {
+            if (skip != null && j < skip.length && skip[j]) continue;
+            Said s = said.get(j);
+            if (quote != null) {
+                String text = squash(s.text);
+                if (quote.isEmpty() || text.isEmpty()) continue;
+                if (prefix ? text.startsWith(quote) : text.equals(quote)) return j;
+                continue;
+            }
+            if (!fits(t.object, s)) continue;
+            if (!s.sender.equals(reactor) || reactor.isEmpty()) return j;
+            if (own < 0) own = j;
+        }
+        return own;
+    }
+
+    private static boolean fits(String object, Said s) {
+        switch (object) {
+            case "an image": case "a photo": case "a sticker": case "a GIF": return s.image;
+            case "a video": case "a movie": return s.video;
+            case "an audio message": return s.audio;
+            case "a link": return LINK.matcher(s.text).find();
+            default: return s.image || s.video || s.audio || s.file;
+        }
+    }
+
+    private static String squash(String text) { return text.replaceAll("\\s+", " ").trim(); }
 
     static String emoji(String verb) {
         switch (verb) {
@@ -41,12 +136,14 @@ final class ChatText {
 
     /**
      * A one-line description for reaction text an iPhone sent as a regular message, or null
-     * when the text is an ordinary message. The quoted text is kept; nothing is matched to
-     * another message by its wording.
+     * when the text is an ordinary message. Used where the reaction can't be put on the
+     * message it's about (see {@link #tapbackTarget}), and for notifications and the inbox.
      */
     static String reactionLine(String sender, String body) {
         String[] media = mediaReaction(body);
         if (media != null) return sender + " " + media[1] + " " + media[2] + " " + media[0];
+        Tapback t = tapback(body);
+        if (t != null && t.object != null) return sender + (t.removed ? " removed " + t.emoji + " from " : " reacted " + t.emoji + " to ") + t.object;
         ReactionParser.Reaction r = ReactionParser.parse(body);
         if (r == null) return null;
         String quote = r.quote.replaceAll("\\s+", " ").trim();

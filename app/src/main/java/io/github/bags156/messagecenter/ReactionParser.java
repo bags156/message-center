@@ -57,7 +57,7 @@ public final class ReactionParser {
     }
 
     /** Accept emoji sequences, not ordinary words that happen to precede 'to'. */
-    private static boolean isEmoji(String value) {
+    static boolean isEmoji(String value) {
         int[] points = value.codePoints().toArray();
         if (points.length == 0 || points.length > 64) return false;
         boolean base = false;
