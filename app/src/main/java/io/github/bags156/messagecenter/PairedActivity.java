@@ -948,7 +948,10 @@ public class PairedActivity extends Activity {
             FrameLayout.LayoutParams stl=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);stl.bottomMargin=dp(12);box.addView(state,stl);img.setTag(R.id.tile_state,state);
             box.setContentDescription(kind.equals("video")?"Video. Tap to play.":"Photo. Tap to view.");
             box.setOnClickListener(v->{String problem=mediaErrors.get(mediaKey(media));if(problem!=null&&!MediaCache.file(this,media,false).isFile())mediaProblem(media,problem,img,kind.equals("video"),box);else openMedia(media);});box.setOnLongClickListener(v->{messageSheet(m);return true;});
-            int height=Math.round(width*ratio);line.addView(box,new LinearLayout.LayoutParams(width,height));loadPreview(media,img,kind.equals("video"),width,height);
+            int height=Math.round(width*ratio);
+            // Genmoji and stickers (see-through pictures) sit on the chat like a big emoji, not in a photo frame.
+            if(kind.equals("image")&&MediaCache.isSticker(MediaCache.file(this,media,false))){int[] sz=stickerSize(w,h);width=sz[0];height=sz[1];stickerStyle(box,img);}
+            line.addView(box,new LinearLayout.LayoutParams(width,height));loadPreview(media,img,kind.equals("video"),width,height);
         } else {
             LinearLayout card=row();card.setPadding(dp(14),dp(12),dp(18),dp(12));card.setBackground(shape(outgoing?theme.bubble(dark):surface,22));int fg=outgoing?theme.onBubble(dark):ink;
             card.addView(text(kind.equals("audio")?"🎤":"📄",24,fg,false));LinearLayout texts=vertical();texts.setPadding(dp(12),0,0,0);
@@ -973,14 +976,15 @@ public class PairedActivity extends Activity {
      */
     private void loadPreview(JSONObject media,ImageView img,boolean video,int width,int height){
         boolean thumb=MediaCache.hasThumbnail(media);long size=media.optLong("size");File full=MediaCache.file(this,media,false);
-        boolean wantFull=!video&&MediaCache.hasFull(media)&&(!thumb||(fullPhotos()&&size<=(25L<<20)));
+        boolean stickerFile=!video&&full.isFile()&&MediaCache.isSticker(full);
+        boolean wantFull=stickerFile||!video&&MediaCache.hasFull(media)&&(!thumb||(fullPhotos()&&size<=(25L<<20)));
         // Google sometimes sends a photo with only a preview, or nothing at all, on linked devices (end-to-end
         // encrypted chats do this). The phone sends the full photo when asked, and the message updates by itself.
         boolean ask=!video&&MediaCache.needsPhone(media)&&(fullPhotos()||!thumb)&&!full.isFile();
         if(ask)tileState(img,media,thumb?"Loading full photo…":"Getting photo from your phone…",null);
         if(ask&&PairedService.ready())PairedService.requestFullMedia(media,false,(v,e)->{if(!e.isEmpty())tileState(img,media,thumb?"Only a preview • Tap for details":"Couldn't get this photo • Tap for details",e);});
         if(wantFull&&full.isFile()){Bitmap b=MediaCache.peekCover(full,width,height);if(b!=null){img.setTag("full");img.setImageBitmap(b);sharp(img);tileState(img,media,null,null);return;}}
-        if(thumb){File t=MediaCache.file(this,media,true);Bitmap b=t.isFile()?MediaCache.peekCover(t,width,height):null;
+        if(thumb&&!stickerFile){File t=MediaCache.file(this,media,true);Bitmap b=t.isFile()?MediaCache.peekCover(t,width,height):null;
             if(b!=null){img.setImageBitmap(b);if(MediaCache.tiny(t))soft(img);}
             else if(t.isFile()||PairedService.ready()||MediaCache.hasInline(media))MediaCache.fetch(this,media,true,(file,err)->{if(file==null)return;
                 decoder.execute(()->{Bitmap d=MediaCache.decodeToCover(file,width,height,false);boolean small=MediaCache.tiny(file);
@@ -990,9 +994,18 @@ public class PairedActivity extends Activity {
         if(!full.isFile()&&!PairedService.ready())return;
         if(!full.isFile()&&!MediaCache.hasFull(media))return; // waiting for the phone (above); nothing to download yet
         MediaCache.fetch(this,media,false,(file,err)->{if(file==null){tileState(img,media,thumb?"Only a preview • Tap for details":"Couldn't load • Tap for details",err);return;}
-            decoder.execute(()->{Bitmap d=MediaCache.decodeToCover(file,width,height,video&&!thumb);img.post(()->{if(d!=null){img.setTag("full");img.setImageBitmap(d);sharp(img);tileState(img,media,null,null);}
+            decoder.execute(()->{Bitmap d=MediaCache.decodeToCover(file,width,height,video&&!thumb);img.post(()->{if(d!=null){img.setTag("full");img.setImageBitmap(d);sharp(img);tileState(img,media,null,null);if(!video&&MediaCache.sticker(d))becomeSticker(img,d);}
                 else if(!thumb)tileState(img,media,"Can't show this photo here • Tap for details","The file downloaded but Android couldn't read it as a picture.");});});});
     }
+    private static final int STICKER_DP=150;
+    /** A sticker's size on screen: STICKER_DP on its longest side, keeping its shape. */
+    private int[] stickerSize(long w,long h){int side=dp(STICKER_DP);if(w<=0||h<=0)return new int[]{side,side};
+        return w>=h?new int[]{side,Math.max(dp(40),Math.round(side*h/(float)w))}:new int[]{Math.max(dp(40),Math.round(side*w/(float)h)),side};}
+    private void stickerStyle(FrameLayout box,ImageView img){box.setBackground(null);box.setClipToOutline(false);img.setScaleType(ImageView.ScaleType.FIT_CENTER);box.setContentDescription("Sticker. Tap to view.");}
+    /** A picture that turned out to be see-through once decoded: drop the photo frame and shrink to sticker size. */
+    private void becomeSticker(ImageView img,Bitmap b){if(!(img.getParent() instanceof FrameLayout))return;FrameLayout box=(FrameLayout)img.getParent();
+        if(box.getBackground()==null)return;stickerStyle(box,img);ViewGroup.LayoutParams lp=box.getLayoutParams();if(lp==null)return;
+        int[] sz=stickerSize(b.getWidth(),b.getHeight());lp.width=sz[0];lp.height=sz[1];box.setLayoutParams(lp);}
     /** A tiny preview is blurred while the full photo loads, instead of showing as big blocks. */
     private void soft(ImageView img){float r=dp(18);img.setRenderEffect(android.graphics.RenderEffect.createBlurEffect(r,r,android.graphics.Shader.TileMode.CLAMP));}
     private void sharp(ImageView img){img.setRenderEffect(null);}

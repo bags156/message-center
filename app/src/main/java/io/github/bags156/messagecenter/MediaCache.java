@@ -34,6 +34,17 @@ final class MediaCache {
         @Override protected int sizeOf(String key, Bitmap value) { return value.getAllocationByteCount(); }
     };
 
+    /** Pictures with a see-through background (Genmoji, stickers): shown on their own, like a big emoji. */
+    private static final java.util.Set<String> stickers = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+    static boolean isSticker(File file) { return stickers.contains(file.getName()); }
+    /** See-through at the corners: a cut-out picture rather than a photo. */
+    static boolean sticker(Bitmap b) {
+        if (b == null || !b.hasAlpha() || b.getWidth() < 2 || b.getHeight() < 2) return false;
+        int w = b.getWidth() - 1, h = b.getHeight() - 1, clear = 0;
+        for (int[] p : new int[][]{{0, 0}, {w, 0}, {0, h}, {w, h}}) if ((b.getPixel(p[0], p[1]) >>> 24) < 32) clear++;
+        return clear >= 2;
+    }
+
     static File dir(Context context) {
         File dir = new File(context.getCacheDir(), "media");
         if (!dir.isDirectory()) dir.mkdirs();
@@ -142,7 +153,10 @@ final class MediaCache {
                     r.setDataSource(file.getPath());
                     bitmap = r.getScaledFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, side, side);
                 }
-            } else {
+            } else if (HeifDecoder.preferred(file)) {
+                bitmap = HeifDecoder.decode(file, lenientSide);
+            }
+            if (bitmap == null && !video) {
                 bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(file), (decoder, info, source) -> {
                     int[] size = coverSize(info.getSize().getWidth(), info.getSize().getHeight(), boxWidth, boxHeight);
                     decoder.setTargetSize(size[0], size[1]);
@@ -154,7 +168,9 @@ final class MediaCache {
         }
         // The stricter decoder refuses some slightly damaged or unusual JPEGs that the older one still shows.
         if (bitmap == null && !video) bitmap = decodeLeniently(file, lenientSide);
-        if (bitmap != null) memory.put(key, bitmap);
+        // iPhone pictures Android can't read at all (Genmoji, stickers): decoded with the phone's video decoder.
+        if (bitmap == null && !video && HeifDecoder.heif(file)) bitmap = HeifDecoder.decode(file, lenientSide);
+        if (bitmap != null) { memory.put(key, bitmap); if (!video && sticker(bitmap)) stickers.add(file.getName()); }
         return bitmap;
     }
 
@@ -185,7 +201,10 @@ final class MediaCache {
                     r.setDataSource(file.getPath());
                     bitmap = r.getScaledFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, maxSide, maxSide);
                 }
-            } else {
+            } else if (HeifDecoder.preferred(file)) {
+                bitmap = HeifDecoder.decode(file, maxSide);
+            }
+            if (bitmap == null && !video) {
                 bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(file), (decoder, info, source) -> {
                     int w = info.getSize().getWidth(), h = info.getSize().getHeight(), longest = Math.max(w, h);
                     if (longest > maxSide) { float scale = maxSide / (float) longest; decoder.setTargetSize(Math.max(1, Math.round(w * scale)), Math.max(1, Math.round(h * scale))); }
@@ -197,7 +216,9 @@ final class MediaCache {
         }
         // The stricter decoder refuses some slightly damaged or unusual JPEGs that the older one still shows.
         if (bitmap == null && !video) bitmap = decodeLeniently(file, lenientSide);
-        if (bitmap != null) memory.put(key, bitmap);
+        // iPhone pictures Android can't read at all (Genmoji, stickers): decoded with the phone's video decoder.
+        if (bitmap == null && !video && HeifDecoder.heif(file)) bitmap = HeifDecoder.decode(file, lenientSide);
+        if (bitmap != null) { memory.put(key, bitmap); if (!video && sticker(bitmap)) stickers.add(file.getName()); }
         return bitmap;
     }
 
