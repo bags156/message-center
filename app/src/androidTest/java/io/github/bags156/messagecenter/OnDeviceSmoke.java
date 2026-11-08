@@ -109,7 +109,11 @@ public final class OnDeviceSmoke extends Instrumentation {
         runOnMainSync(()->{try{java.lang.reflect.Method m=PairedActivity.class.getDeclaredMethod("messagesLoaded",boolean.class);m.setAccessible(true);m.invoke(reader,false);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
         runOnMainSync(()->y[0]=sv.getScrollY());check(Math.abs(y[0]-reading)<=slack,"A refresh from Google moved the chat: "+reading+" → "+y[0]);
         try(PairedStore store=new PairedStore(getTargetContext())){textMessage(store,"scrolly",80);}
-        runOnMainSync(()->{try{java.lang.reflect.Method m=PairedActivity.class.getDeclaredMethod("renderMessages",boolean.class);m.setAccessible(true);m.invoke(reader,false);m.invoke(reader,false);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
+        boolean[] sliding=new boolean[1];
+        runOnMainSync(()->{try{java.lang.reflect.Method m=PairedActivity.class.getDeclaredMethod("renderMessages",boolean.class);m.setAccessible(true);m.invoke(reader,false);m.invoke(reader,false);
+            java.lang.reflect.Field running=PairedActivity.class.getDeclaredField("motionRunning");running.setAccessible(true);sliding[0]=((java.util.Map<?,?>)running.get(reader)).containsKey("m:scrolly80");}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
+        // A message arriving in an open chat slides in when Android's animations are on (and only then).
+        check(sliding[0]==android.animation.ValueAnimator.areAnimatorsEnabled(),"New message motion "+(sliding[0]?"ran with animations off":"didn't start"));
         runOnMainSync(()->y[0]=sv.getScrollY());check(Math.abs(y[0]-reading)<=slack,"A new message (two quick redraws) moved the chat: "+reading+" → "+y[0]);
         onMain(reader,"details");runOnMainSync(reader::onBackPressed);waitForIdleSync();
         android.widget.ScrollView back=chatScroll(reader);check(back!=null&&back!=sv,"Back from Details didn't reopen the chat");

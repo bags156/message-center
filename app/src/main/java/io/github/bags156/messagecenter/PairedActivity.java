@@ -623,6 +623,24 @@ public class PairedActivity extends Activity {
      * Redraws the chat. It stays where you are unless {@code bottom} asks for the newest
      * message (opening a chat, sending) or you were already at the bottom; nothing else moves it.
      */
+    // ---- Motion: new messages slide in, your sent message lifts into place, new reactions pop ----
+    private static final int SLIDE=0,LIFT=1,POP=2;
+    private String motionChat="";private final java.util.Set<String> motionSeen=new java.util.HashSet<>(),motionOutbox=new java.util.HashSet<>();
+    private final Map<String,Integer> motionReactions=new HashMap<>();private final Map<String,long[]> motionRunning=new HashMap<>();
+    private int motionOutboxBefore;private boolean motionReady;
+    /**
+     * Starts (start=true) or continues an entrance animation for the view drawn for key. Chats
+     * redraw often (a read receipt right after a message arrives, say), so a redraw mid-animation
+     * picks up where the last view left off instead of jumping to the end.
+     */
+    private void motion(View v,String key,int kind,boolean start){long now=android.os.SystemClock.uptimeMillis();long[] run=motionRunning.get(key);
+        if(start&&run==null){run=new long[]{now,kind};motionRunning.put(key,run);}
+        if(run==null)return;long duration=kind==LIFT?320:kind==POP?300:240;float p=Math.min(1f,(now-run[0])/(float)duration);
+        if(p>=1f){motionRunning.remove(key);return;}long left=Math.max(16,Math.round((1f-p)*duration));
+        android.view.animation.Interpolator ease=kind==SLIDE?new android.view.animation.DecelerateInterpolator(1.6f):new android.view.animation.OvershootInterpolator(kind==POP?2.2f:1.1f);
+        v.setAlpha(p);
+        if(kind==POP){float sc=0.3f+0.7f*p;v.setScaleX(sc);v.setScaleY(sc);v.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(left).setInterpolator(ease).start();}
+        else{v.setTranslationY((1f-p)*dp(kind==LIFT?40:14));v.animate().alpha(1f).translationY(0f).setDuration(left).setInterpolator(ease).start();}}
     private void renderMessages(boolean bottom){if(items==null||!screen.equals("chat"))return;
         ScrollView sv=scroll;View content=sv.getChildAt(0);int y,before;boolean atBottom;Spot spot;
         // If the last redraw hasn't been laid out yet, its new views have no positions; keep aiming where it was aiming.
@@ -646,6 +664,10 @@ public class PairedActivity extends Activity {
             replyTo[i]=ReplyReferences.isReply(m);
             reacted[i]=!reactorsOf(m).isEmpty();}
         int lastOut=-1;for(int i=n-1;i>=0;i--)if(out[i]&&line[i]==null){lastOut=i;break;}
+        // Opening a chat or loading older messages draws without motion; so does a catch-up that brings many at once.
+        boolean fresh=!chatId.equals(motionChat)||anchorOlder;if(!chatId.equals(motionChat)){motionChat=chatId;motionSeen.clear();motionOutbox.clear();motionReactions.clear();motionRunning.clear();motionOutboxBefore=0;}
+        int arriving=0;for(JSONObject m:messages)if(!motionSeen.contains(m.optString("messageID")))arriving++;
+        motionReady=!fresh&&android.animation.ValueAnimator.areAnimatorsEnabled();boolean animate=motionReady&&arriving<=4;
         // Read receipts on: when (or whether) the receipt went out, under the message it's for.
         JSONObject receipt=chatSettings.receipts(chatId)?new ReadReceiptQueue(this).get(chatId):null;
         // Link previews open the page, which tells its owner you looked; only do that for people you know or have written to.
@@ -665,8 +687,12 @@ public class PairedActivity extends Activity {
                 unreadCount=count;unreadDivider=newMessagesLine(count);items.addView(unreadDivider);}
             if(group&&!out[i]&&!joinPrev&&!replyTo[i]){TextView sender=text(senderName(m,c),12,muted,false);sender.setPadding(dp(14),0,0,dp(4));items.addView(sender);}
             View b=timed(swipeToReply(bubble(m,c,theme,out[i],joinPrev,joinNext),m),at[i],out[i]);if(selecting)b=selectable(b,m);items.addView(b);messageViews.put(m.optString("messageID"),b);
+            // A sent message already lifted in as its "Sending…" row, so it doesn't animate again when Google confirms it.
+            String mid=m.optString("messageID");boolean isNew=motionSeen.add(mid);motion(b,"m:"+mid,SLIDE,animate&&isNew&&(!out[i]||motionOutboxBefore==0));
             List<String[]> reactors=reactorsOf(m);
-            if(!reactors.isEmpty()){LinearLayout.LayoutParams rl=new LinearLayout.LayoutParams(-1,-2);rl.topMargin=-dp(7);items.addView(reactionPill(m,c,reactors,out[i]),rl);}
+            if(!reactors.isEmpty()){LinearLayout.LayoutParams rl=new LinearLayout.LayoutParams(-1,-2);rl.topMargin=-dp(7);View pill=reactionPill(m,c,reactors,out[i]);items.addView(pill,rl);
+                Integer had=motionReactions.put(mid,reactors.size());motion(((ViewGroup)pill).getChildAt(0),"r:"+mid,POP,motionReady&&!isNew&&(had==null||reactors.size()>had));}
+            else motionReactions.remove(mid);
             if(!out[i]){String code=ChatText.oneTimeCode(PairedProtocol.text(m));if(!code.isEmpty())items.addView(codeChip(code,false,theme));}
             JSONObject rem=Reminders.forMessage(this,m.optString("messageID"));
             if(rem!=null){TextView rt=text("⏰ Reminder "+separatorStamp(rem.optLong("at")),11,muted,false);rt.setGravity(out[i]?Gravity.END:Gravity.START);rt.setPadding(dp(16),dp(2),dp(16),0);rt.setOnClickListener(v->remindMenu(m));items.addView(rt,new LinearLayout.LayoutParams(-1,-2));}
@@ -674,7 +700,7 @@ public class PairedActivity extends Activity {
             if(!out[i]&&receipt!=null&&receipt.optString("messageID").equals(m.optString("messageID"))){View read=readLine(receipt);if(read!=null)items.addView(read,new LinearLayout.LayoutParams(-1,-2));}
             if(i==lastOut||(out[i]&&PairedProtocol.failed(m)))items.addView(statusRow(m,theme));
         }
-        renderOutbox(theme);renderScheduled(theme);if(inline!=null&&!inlineSeen)stopInline();
+        renderOutbox(theme);renderScheduled(theme);if(inline!=null&&!inlineSeen)stopInline();motionOutboxBefore=outbox.forChat(chatId).size();
         // Count messages that arrived while scrolled up, for the ↓ button.
         long newest=0;int arrived=0;for(int i=0;i<n;i++){newest=Math.max(newest,at[i]);if(newestSeenTime>0&&at[i]>newestSeenTime&&!out[i]&&ev[i].isEmpty())arrived++;}
         if(atBottom)newWhileAway=0;else newWhileAway+=arrived;newestSeenTime=Math.max(newestSeenTime,newest);if(atBottom)pinnedBottom=true;updateJumpButton();
@@ -969,6 +995,7 @@ public class PairedActivity extends Activity {
     private void send(){if(busy||composer==null)return;repliedSinceInbox=true;unreadSince=-1;String body=composer.getText().toString(),id=chatId,reply=replyId;JSONObject c=store.chat(id);
         boolean files=false;for(Outgoing o:outgoing)if(!o.sending)files=true;
         if(body.trim().isEmpty()&&!files)return;if(c==null){error("Refresh this conversation before sending.");return;}
+        if(sendButton!=null)sendButton.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM);
         if(files){sendAttachments(c,body.trim(),reply);return;}
         if(undoSendOn()){JSONObject held=outbox.add(id,body,reply,UNDO_SEND_MS);drafts.remove(id);composer.setText("");cancelReply();renderMessages(true);
             String hid=held.optString("id");ui.postDelayed(()->releaseHeld(hid),UNDO_SEND_MS);return;}
@@ -1028,6 +1055,7 @@ public class PairedActivity extends Activity {
     private void react(JSONObject m,String emoji,String action){JSONObject chat=store.chat(chatId);if(chat==null){error("Refresh this conversation first.");return;}
         String id=m.optString("messageID"),mine=myReaction(m,chat);
         if(action.equals("remove")?mine.isEmpty():sameEmoji(emoji,mine))return;
+        getWindow().getDecorView().performHapticFeedback(action.equals("remove")?android.view.HapticFeedbackConstants.CONTEXT_CLICK:android.view.HapticFeedbackConstants.CONFIRM);
         String sent=action.equals("remove")?"":emoji;sentReactions.put(id,sent);sentReactionAt.put(id,android.os.SystemClock.uptimeMillis());
         PairedService.execute(cl->{cl.react(chat.toString(),id,emoji,mine.isEmpty()||action.equals("remove")?action:"switch");return "";},(v,e)->{
             if(!e.isEmpty()){if(sent.equals(sentReactions.get(id))){sentReactions.remove(id);sentReactionAt.remove(id);}error(e);}else loadMessages(false);});}
@@ -1037,7 +1065,7 @@ public class PairedActivity extends Activity {
     private void tapped(JSONObject m,View v){String id=m.optString("messageID");long now=android.os.SystemClock.uptimeMillis();
         if(id.equals(lastTapId)&&now-lastTapAt<=android.view.ViewConfiguration.getDoubleTapTimeout()+100){lastTapId="";quickLike(m,v);return;}
         lastTapId=id;lastTapAt=now;}
-    private void quickLike(JSONObject m,View v){v.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM);
+    private void quickLike(JSONObject m,View v){
         v.animate().scaleX(0.92f).scaleY(0.92f).setDuration(90).withEndAction(()->v.animate().scaleX(1f).scaleY(1f).setDuration(160).start()).start();
         JSONObject c=store.chat(chatId);if(c==null)return;String mine=myReaction(m,c);if(sameEmoji(mine,"👍"))return;
         react(m,"👍",mine.isEmpty()?"add":"switch");}
@@ -2008,6 +2036,7 @@ public class PairedActivity extends Activity {
         for(JSONObject o:outbox.forChat(chatId)){String state=o.optString("state");gap(items,8);
             LinearLayout line=row();line.setGravity(Gravity.END);TextView b=text(o.optString("text"),17,theme.onBubble(dark),false);b.setPadding(dp(16),dp(11),dp(16),dp(11));
             b.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));b.setBackground(shape(theme.bubble(dark),22));b.setAlpha(0.7f);line.addView(b);items.addView(line);
+            String oid=o.optString("id");motion(line,"o:"+oid,LIFT,motionOutbox.add(oid)&&motionReady);
             String label=switch(state){case Outbox.HOLD->"Sending… • Tap to undo";case Outbox.SENDING->"Sending…";case Outbox.UNSURE->"Not sure this sent • Tap for options";case Outbox.FAILED->"Not sent • Tap to retry";default->"Waiting for connection • will send automatically";};
             TextView s=text(label,12,state.equals(Outbox.FAILED)||state.equals(Outbox.UNSURE)?danger:muted,state.equals(Outbox.FAILED));s.setGravity(Gravity.END);s.setPadding(0,dp(4),dp(6),0);items.addView(s,new LinearLayout.LayoutParams(-1,-2));
             View.OnClickListener act=v->outboxOptions(o);b.setOnClickListener(act);s.setOnClickListener(act);}}
