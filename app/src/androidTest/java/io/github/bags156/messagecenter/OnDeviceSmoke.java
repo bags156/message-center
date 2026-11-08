@@ -35,6 +35,21 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(shown.contains("Daniel")!=mode.equals(NotificationPrivacy.NONE),"Name "+(mode.equals(NotificationPrivacy.NONE)?"shown":"missing")+" with '"+mode+"': "+shown);
             nm.cancel("reminder:"+rid,2);Thread.sleep(300);}
         NotificationPrivacy.set(ctx,NotificationPrivacy.ALL);}
+    /** Pinned chats open only from the round photo, with no highlight box; a tap on its corner (outside the circle) does nothing. */
+    private void checkPinnedTap(PairedActivity a)throws Exception{
+        new ChatSettings(getTargetContext()).setPinned("smoke",true);onMain(a,"inbox");
+        java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>(),faces=new java.util.ArrayList<>();
+        runOnMainSync(()->a.getWindow().getDecorView().findViewsWithText(found,"pinned",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION));
+        for(android.view.View v:found){CharSequence d=v.getContentDescription();if(d!=null&&d.toString().startsWith("Smoke group")&&d.toString().endsWith(", pinned"))faces.add(v);}
+        check(faces.size()==1,"Pinned photo not found ("+faces.size()+")");android.view.View face=faces.get(0);
+        check(((android.view.View)face.getParent()).getBackground()==null,"Pinned chat still draws a highlight box");
+        java.lang.reflect.Field screen=PairedActivity.class.getDeclaredField("screen");screen.setAccessible(true);
+        tap(face,2,2);check("inbox".equals(screen.get(a)),"A tap outside the round photo opened the chat");
+        tap(face,face.getWidth()/2f,face.getHeight()/2f);check("chat".equals(screen.get(a)),"A tap on the photo didn't open the chat");
+        onMain(a,"inbox");new ChatSettings(getTargetContext()).setPinned("smoke",false);onMain(a,"inbox");}
+    private void tap(android.view.View v,float x,float y){runOnMainSync(()->{long t=android.os.SystemClock.uptimeMillis();
+        android.view.MotionEvent down=android.view.MotionEvent.obtain(t,t,android.view.MotionEvent.ACTION_DOWN,x,y,0),up=android.view.MotionEvent.obtain(t,t+50,android.view.MotionEvent.ACTION_UP,x,y,0);
+        v.dispatchTouchEvent(down);v.dispatchTouchEvent(up);down.recycle();up.recycle();});waitForIdleSync();}
     /** Scrolled up reading: a refresh from Google, new messages, redraws and a trip to Details must leave you where you are. */
     private void checkChatKeepsItsPlace()throws Exception{
         try(PairedStore store=new PairedStore(getTargetContext())){
@@ -240,6 +255,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(bubble.hasWindowFocus()==false,"Attach panel did not open");bubble.finish();waitForIdleSync();
         checkChatKeepsItsPlace();
         check(!PairedService.canReconnect(getTargetContext()),"Reconnect offered with no saved session to reconnect with");
+        checkPinnedTap((PairedActivity)activity);
         try(PairedStore store=new PairedStore(getTargetContext())){store.clear();}
         Outbox box=new Outbox(getTargetContext());for(JSONObject o:box.all())box.remove(o.optString("id"));
         getTargetContext().getSharedPreferences("transcripts",0).edit().clear().commit();

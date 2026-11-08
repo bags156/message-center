@@ -53,6 +53,7 @@ import android.text.TextWatcher;
 import android.text.format.DateFormat;
 import android.view.Gravity;
 import android.view.Menu;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
@@ -395,7 +396,7 @@ public class PairedActivity extends Activity {
         View rule=new View(this);rule.setBackgroundColor((muted&0x00ffffff)|0x26000000);LinearLayout.LayoutParams rl=new LinearLayout.LayoutParams(-1,1);rl.setMargins(dp(8),dp(10),dp(8),0);grid.addView(rule,rl);
         return grid;}
     private View pinnedCell(JSONObject c){String id=c.optString("conversationID");boolean unread=chatSettings.unread(c),quiet=chatSettings.muted(id)||chatSettings.snoozed(id);
-        LinearLayout cell=vertical();cell.setGravity(Gravity.CENTER_HORIZONTAL);cell.setPadding(dp(4),dp(10),dp(4),dp(8));cell.setBackground(ripple());
+        LinearLayout cell=vertical();cell.setGravity(Gravity.CENTER_HORIZONTAL);cell.setPadding(dp(4),dp(10),dp(4),dp(8));
         FrameLayout face=new FrameLayout(this);face.addView(avatar(c,74),new FrameLayout.LayoutParams(dp(74),dp(74)));
         if(unread){View dot=new View(this);GradientDrawable d=oval(ChatTheme.of("default").accent(dark));d.setStroke(dp(3),bg);dot.setBackground(d);
             FrameLayout.LayoutParams dl=new FrameLayout.LayoutParams(dp(20),dp(20),Gravity.TOP|Gravity.END);face.addView(dot,dl);}
@@ -404,8 +405,22 @@ public class PairedActivity extends Activity {
         String title=PairedProtocol.title(c);boolean group=PairedProtocol.other(c)==null;String shown=group?title:PairedProtocol.firstName(PairedProtocol.other(c));if(shown.isEmpty())shown=title;
         TextView name=text(shown,13,unread?ink:muted,unread);name.setTextSize(13*textScale);name.setSingleLine(true);name.setEllipsize(TextUtils.TruncateAt.END);name.setGravity(Gravity.CENTER);name.setPadding(0,dp(6),0,0);
         cell.addView(name,new LinearLayout.LayoutParams(-1,-2));
-        cell.setContentDescription(title+(unread?", unread":"")+", pinned");cell.setOnClickListener(v->thread(id));cell.setOnLongClickListener(v->{chatOptions(c);return true;});
+        // Only the round photo opens the chat, and pressing it shrinks and dims the photo itself (no highlight box).
+        face.setContentDescription(title+(unread?", unread":"")+", pinned");face.setOnClickListener(v->thread(id));face.setOnLongClickListener(v->{chatOptions(c);return true;});
+        face.setOnTouchListener(roundPress(dp(37)));
         return cell;}
+    /**
+     * Touch handling for a round photo of the given radius: touches outside the circle do nothing,
+     * and a press shrinks and dims the photo slightly instead of drawing a highlight.
+     */
+    private View.OnTouchListener roundPress(int radius){return (v,e)->{
+        switch(e.getActionMasked()){
+            case MotionEvent.ACTION_DOWN->{float dx=e.getX()-v.getWidth()/2f,dy=e.getY()-v.getHeight()/2f;
+                if(dx*dx+dy*dy>(float)radius*radius)return true;
+                v.animate().scaleX(0.92f).scaleY(0.92f).alpha(0.82f).setDuration(90).start();}
+            case MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL->v.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(140).start();
+            default->{}}
+        return false;};}
     private JSONObject latestStored(String id){List<JSONObject> l=store.messages(id,5);for(int i=l.size()-1;i>=0;i--)if(!PairedProtocol.body(l.get(i)).isEmpty())return l.get(i);return null;}
     /** Inbox preview text for a synced message; mine[0] says whether to prefix "You: ". */
     private String previewOf(JSONObject m,JSONObject c,boolean[] mine){String body=PairedProtocol.body(m);boolean out=PairedProtocol.outgoing(m,c);
