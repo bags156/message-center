@@ -99,7 +99,9 @@ public class PairedActivity extends Activity {
     private FrameLayout frame;private LinearLayout root,items,replyPanel,typingRow;private TextView statusView,replyLabel,replyQuote,typingLabel;private ObjectAnimator typingPulse;
     private ScrollView scroll;private EditText composer;private WebView login;private LinearLayout searchRow;private TextView receiptStatusView;
     private String screen="inbox",chatId="",query="",replyId="";
-    private final Map<String,String> drafts=new HashMap<>();
+    private Drafts drafts;
+    // Another window (the bubble, or the full app) changed this chat's draft: show it here too.
+    private final android.content.SharedPreferences.OnSharedPreferenceChangeListener draftChanged=(prefs,key)->{if(key!=null&&key.equals(chatId)&&!hasWindowFocus())refreshDraft();};
     private final Map<String,Bitmap> photos=new HashMap<>();
     private final Set<String> photosRequested=new HashSet<>();
     private boolean registered,pairSubmitted,busy,resumed,anchorOlder;private String shownEmoji="";
@@ -123,8 +125,8 @@ public class PairedActivity extends Activity {
         if(screen.equals("inbox"))renderInbox();else if(screen.equals("chat")){renderMessages(false);markReadIfAllowed();updateTyping();}
     }};
     @Override public void onCreate(Bundle state) {
-        super.onCreate(state);HevcSandbox.init(this);store=new PairedStore(this);chatSettings=new ChatSettings(this);outbox=new Outbox(this);starred=new Starred(this);Nicknames.load(this);
-        if(state!=null){String shot=state.getString("capture");if(shot!=null)pendingCapture=new File(shot);chatId=state.getString("chat","");replyId=state.getString("reply","");drafts.put(chatId,state.getString("draft",""));}
+        super.onCreate(state);HevcSandbox.init(this);drafts=new Drafts(this);drafts.prefs().registerOnSharedPreferenceChangeListener(draftChanged);store=new PairedStore(this);chatSettings=new ChatSettings(this);outbox=new Outbox(this);starred=new Starred(this);Nicknames.load(this);
+        if(state!=null){String shot=state.getString("capture");if(shot!=null)pendingCapture=new File(shot);chatId=state.getString("chat","");replyId=state.getString("reply","");if(drafts.getOrDefault(chatId,"").isEmpty())drafts.put(chatId,state.getString("draft",""));}
         String target=getIntent().getStringExtra("chat");if(target!=null&&!target.isEmpty())chatId=target;
         if(bubble()&&chatId.isEmpty()){finish();return;}
         if(!chatId.isEmpty()){thread(chatId);showFromIntent(getIntent());}else inbox();
@@ -134,7 +136,7 @@ public class PairedActivity extends Activity {
     }
     /** A tapped notification (or bubble) delivers its chat here when this screen is already open. */
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(!bubble()&&receiveShare(intent))return;if(MessagesWidget.NEW_CHAT.equals(intent.getAction())){if(login!=null)destroyLogin();inbox();newMessage();return;}String id=intent.getStringExtra("chat");if(id!=null&&!id.isEmpty()){if(login!=null)destroyLogin();thread(id);showFromIntent(intent);}}
-    @Override protected void onResume(){super.onResume();resumed=true;if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
+    @Override protected void onResume(){super.onResume();resumed=true;refreshDraft();if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
         if(PairedService.ready()&&screen.equals("pair")){CookieManager.getInstance().removeAllCookies(null);inbox();askNotifications();}
         else if(!bubble()&&!PairedService.emoji().isEmpty()&&login==null)pairing();
         else {updateStatus();PairedService.syncNow();
@@ -143,7 +145,10 @@ public class PairedActivity extends Activity {
             else if(screen.equals("inbox")){if(batteryCard!=null&&!showBatteryCard()){root.removeView(batteryCard);batteryCard=null;}renderInbox();refreshInbox(false);
                 if(!bubble()&&PairedService.ready()&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED)askContactPhotos();}}}
     @Override protected void onPause(){resumed=false;remember();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&player.isPlaying()){player.pause();updatePlayLabel();}if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
-    @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);if(focused&&store!=null){markReadIfAllowed();updateReceiptStatus();}}
+    @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);if(focused)refreshDraft();if(focused&&store!=null){markReadIfAllowed();updateReceiptStatus();}}
+    /** Picks up a draft typed in the other window (bubble or full app) so you carry on where you left off. */
+    private void refreshDraft(){if(composer==null||drafts==null||chatId.isEmpty()||!screen.equals("chat"))return;String stored=drafts.getOrDefault(chatId,"");
+        if(stored.equals(composer.getText().toString()))return;composer.setText(stored);composer.setSelection(stored.length());}
     @Override protected void onSaveInstanceState(Bundle out){remember();if(pendingCapture!=null)out.putString("capture",pendingCapture.getPath());out.putString("chat",chatId);out.putString("reply",replyId);out.putString("draft",drafts.getOrDefault(chatId,""));super.onSaveInstanceState(out);}
     @Override public void onBackPressed(){if(selecting){stopSelecting();return;}if(screen.equals("media")){details();return;}if(screen.equals("details")){thread(chatId);return;}if(bubble()){super.onBackPressed();return;}if(login!=null){destroyLogin();inbox();}else if(screen.equals("inbox")&&(folder!=1||unknownOnly||promoOnly)){folder=1;unknownOnly=false;promoOnly=false;inbox();}else if(!screen.equals("inbox")){remember();inbox();}else super.onBackPressed();}
 
@@ -483,7 +488,8 @@ public class PairedActivity extends Activity {
         ImageView more=icon(R.drawable.ic_more,ink,"More options",null);more.setBackground(ripple());more.setOnClickListener(this::chatMenu);bar.addView(more);
         root.addView(bar,new LinearLayout.LayoutParams(-1,dp(64)));connection();
         scroll=new ScrollView(this);scroll.setVerticalScrollBarEnabled(false);items=vertical();items.setPadding(dp(12),dp(8),dp(12),dp(8));scroll.addView(items);
-        chatFrame=new FrameLayout(this);addChatBackground(chatFrame,id);chatFrame.addView(scroll,new FrameLayout.LayoutParams(-1,-1));root.addView(chatFrame,new LinearLayout.LayoutParams(-1,0,1));
+        chatFrame=new FrameLayout(this);addChatBackground(chatFrame,id);
+        TimeRevealLayout reveal=new TimeRevealLayout(this,dp(TIME_REVEAL_DP),this::revealTimes);reveal.addView(scroll,new FrameLayout.LayoutParams(-1,-1));chatFrame.addView(reveal,new FrameLayout.LayoutParams(-1,-1));root.addView(chatFrame,new LinearLayout.LayoutParams(-1,0,1));
         jumpButton=text("↓",15,ink,true);jumpButton.setPadding(dp(18),dp(10),dp(18),dp(10));jumpButton.setBackground(shape(card,22));jumpButton.setElevation(dp(4));jumpButton.setVisibility(View.GONE);
         jumpButton.setOnClickListener(v->jumpToLatest());FrameLayout.LayoutParams jl=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.END);jl.setMargins(0,0,dp(16),dp(12));chatFrame.addView(jumpButton,jl);
         newWhileAway=0;newestSeenTime=0;
@@ -511,8 +517,8 @@ public class PairedActivity extends Activity {
         compose.addView(icon(R.drawable.ic_add,ink,"Attach photos, videos, or files",this::attach));
         composer=new EditText(this);composer.setHint(PairedProtocol.rcs(c)?"RCS message":"Text message");composer.setTextColor(ink);composer.setHintTextColor(muted);composer.setTextSize(17*textScale);
         composer.setBackground(shape(surface,28));composer.setPadding(dp(22),dp(14),dp(22),dp(14));composer.setMaxLines(5);
-        composer.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);composer.setText(drafts.getOrDefault(id,""));
-        composer.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){maybeSendTyping(s);updateComposeButton();updateQuickRow();}public void afterTextChanged(Editable e){}});
+        composer.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);composer.setText(drafts.getOrDefault(id,""));composer.setSelection(composer.length());
+        composer.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){remember();maybeSendTyping(s);updateComposeButton();updateQuickRow();}public void afterTextChanged(Editable e){}});
         composer.setOnFocusChangeListener((v,focused)->updateQuickRow());
         composer.setOnReceiveContentListener(new String[]{"image/*","video/*"},keyboardContent);
         compose.addView(composer,new LinearLayout.LayoutParams(0,-2,1));
@@ -535,7 +541,7 @@ public class PairedActivity extends Activity {
             case 9->searchChat();case 10->toggleMute(chatId);case 11->archive(c,!archived);case 12->block(c);case 13->deleteChat(c);case 14->snoozeMenu(chatId);default->{}}return true;});menu.show();}
     private void renderMessages(boolean bottom){if(items==null||!screen.equals("chat"))return;
         int y=scroll.getScrollY();View content=scroll.getChildAt(0);int before=content.getHeight();
-        boolean atBottom=bottom||before-scroll.getHeight()-y<dp(80);items.removeAllViews();
+        boolean atBottom=bottom||before-scroll.getHeight()-y<dp(80);items.removeAllViews();timeRows.clear();
         JSONObject c=store.chat(chatId);ChatTheme theme=chatSettings.theme(chatId);boolean group=c!=null&&PairedProtocol.other(c)==null;
         List<JSONObject> messages=new ArrayList<>();for(JSONObject m:store.messages(chatId,limit))if(!PairedProtocol.body(m).isEmpty()||!PairedProtocol.event(m,c).isEmpty())messages.add(m);
         if(messages.size()>=limit-5)items.addView(button("Show more saved messages",false,()->{limit+=300;renderMessages(false);}));
@@ -562,7 +568,7 @@ public class PairedActivity extends Activity {
             boolean joinNext=i+1<n&&line[i+1]==null&&!replyTo[i+1]&&!reacted[i]&&!InboxOrder.separator(at[i],at[i+1],zone)&&InboxOrder.grouped(out[i],who[i],at[i],out[i+1],who[i+1],at[i+1]);
             if(!sep&&i>0)gap(items,joinPrev?3:12);
             if(group&&!out[i]&&!joinPrev&&!replyTo[i]){TextView sender=text(senderName(m,c),12,muted,false);sender.setPadding(dp(14),0,0,dp(4));items.addView(sender);}
-            View b=swipeToReply(bubble(m,c,theme,out[i],joinPrev,joinNext),m);if(selecting)b=selectable(b,m);items.addView(b);messageViews.put(m.optString("messageID"),b);
+            View b=timed(swipeToReply(bubble(m,c,theme,out[i],joinPrev,joinNext),m),at[i],out[i]);if(selecting)b=selectable(b,m);items.addView(b);messageViews.put(m.optString("messageID"),b);
             List<String[]> reactors=PairedProtocol.reactors(m);
             if(!reactors.isEmpty()){LinearLayout.LayoutParams rl=new LinearLayout.LayoutParams(-1,-2);rl.topMargin=-dp(7);items.addView(reactionPill(m,c,reactors,out[i]),rl);}
             if(!out[i]){String code=ChatText.oneTimeCode(PairedProtocol.text(m));if(!code.isEmpty())items.addView(codeChip(code,false,theme));}
@@ -1193,6 +1199,16 @@ public class PairedActivity extends Activity {
     private Starred starred;private TextView jumpButton;private int newWhileAway;private long newestSeenTime;
     private String searchedFor="";private List<JSONObject> searchHits=new ArrayList<>();private int searchGeneration;
 
+    private static final int TIME_REVEAL_DP=72;
+    /** Each message row with its time waiting off the right edge; {row to slide (sent messages) or null, time label}. */
+    private final List<View[]> timeRows=new ArrayList<>();
+    private View timed(View row,long at,boolean out){FrameLayout f=new FrameLayout(this);f.addView(row,new FrameLayout.LayoutParams(-1,-2));
+        TextView t=text(android.text.format.DateFormat.getTimeFormat(this).format(new Date(at)),12,muted,false);t.setGravity(Gravity.END|Gravity.CENTER_VERTICAL);t.setPadding(0,0,dp(4),0);
+        t.setAlpha(0f);t.setTranslationX(dp(TIME_REVEAL_DP));t.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        f.addView(t,new FrameLayout.LayoutParams(dp(TIME_REVEAL_DP-4),-1,Gravity.END));timeRows.add(new View[]{out?row:null,t});return f;}
+    /** Dragging the chat left: sent messages slide over and every message's time slides in on the right. */
+    private void revealTimes(float amount){if(selecting&&amount>0)return;float full=dp(TIME_REVEAL_DP),shown=Math.min(amount,full);
+        for(View[] r:timeRows){if(r[0]!=null)r[0].setTranslationX(-amount);r[1].setAlpha(shown/full);r[1].setTranslationX(full-shown);}}
     /** A hint shown behind a swiped row: colored strip with an icon or label, at the start or end. */
     private View swipeHint(String label,int color,boolean atStart){FrameLayout f=new FrameLayout(this);f.setBackground(shape(color,22));
         TextView t=text(label,14,Color.WHITE,true);t.setPadding(dp(22),0,dp(22),0);f.addView(t,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER_VERTICAL|(atStart?Gravity.START:Gravity.END)));return f;}
@@ -1954,5 +1970,5 @@ public class PairedActivity extends Activity {
     private void pairing(){base("pair");header("Pair this phone",null);connection();String emoji=PairedService.emoji();shownEmoji=emoji;TextView symbol=text(emoji.isEmpty()?"…":emoji,72,ink,false);symbol.setGravity(Gravity.CENTER);root.addView(symbol);gap(root,16);
         note(root,"Open Google Messages → Device pairing and approve the matching emoji. Return here afterward.\n\nIf Google reports no device, check that Device pairing uses the same Google account you just signed into.");root.addView(button("Open Google Messages",true,this::openGoogle));gap(root,8);root.addView(button("Back to inbox",false,this::inbox));}
     private void openGoogle(){Intent intent=getPackageManager().getLaunchIntentForPackage("com.google.android.apps.messaging");if(intent!=null)startActivity(intent);else toast("Google Messages is not installed.");}
-    @Override protected void onDestroy(){destroyLogin();cancelRecording();stopAudio();decoder.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy(){if(drafts!=null)drafts.prefs().unregisterOnSharedPreferenceChangeListener(draftChanged);destroyLogin();cancelRecording();stopAudio();decoder.shutdownNow();super.onDestroy();}
 }

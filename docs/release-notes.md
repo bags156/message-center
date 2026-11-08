@@ -1,8 +1,9 @@
-Message Center 1.0.4.
+Message Center 1.0.5.
 
-**Copy photos and videos**
-- Long-press a photo or video and choose **Copy photo** (or **Copy video**), then paste it into another chat or app.
-- Copying selected messages now includes their photos and videos, not just the text.
-- iPhone Genmoji and other HEIC pictures are copied as PNG (keeping the see-through background), so any app can paste them.
+**Drafts follow you between the bubble and the app**
+- Start typing in a chat bubble, open the full app, and your unsent message is there with the cursor at the end, ready to keep going. It works the other way too, and drafts now survive closing the app.
 
-Install over 1.0.3; the package and signing key are unchanged.
+**See when each message was sent**
+- Drag a conversation to the left and every message's time slides in on the right; let go and it slides back (like iMessage). Swiping right on a message still replies.
+
+Install over 1.0.4; the package and signing key are unchanged.
