@@ -115,15 +115,18 @@ jobs:
           adb shell am start -n io.github.bags156.messagecenter/.PairedActivity
           adb shell screencap -p /sdcard/message-center.png
           adb pull /sdcard/message-center.png
+          # Settings screenshots for reviewing the UI (best effort; printed small in the log too).
+          set +e
           adb shell am start -S -n io.github.bags156.messagecenter/.PairedActivity --es open settings
-          sleep 4
-          adb shell screencap -p /sdcard/settings-1.png && adb pull /sdcard/settings-1.png
-          adb shell input swipe 540 1900 540 500 400 && sleep 2
-          adb shell screencap -p /sdcard/settings-2.png && adb pull /sdcard/settings-2.png
-          adb shell input swipe 540 1900 540 500 400 && sleep 2
-          adb shell screencap -p /sdcard/settings-3.png && adb pull /sdcard/settings-3.png
-          # Small copies in the log, for reviewing the UI where artifacts can't be downloaded.
-          for f in settings-*.png; do convert "$f" -resize 45% -quality 70 "${f%.png}.jpg" && echo "SHOT_BEGIN ${f%.png}" && base64 -w 120 "${f%.png}.jpg" | sed 's/^/SHOT /' && echo "SHOT_END"; done
+          sleep 5
+          for i in 1 2 3; do
+            adb exec-out screencap -p > "settings-$i.png"
+            python3 -c "import sys,zlib; d=open(sys.argv[1],'rb').read(); print(len(d))" "settings-$i.png"
+            if command -v convert >/dev/null; then convert "settings-$i.png" -resize 45% -quality 70 "settings-$i.jpg"; else cp "settings-$i.png" "settings-$i.jpg"; fi
+            echo "SHOT_BEGIN settings-$i"; base64 -w 120 "settings-$i.jpg" | sed 's/^/SHOT /'; echo "SHOT_END"
+            adb shell input swipe 540 1900 540 700 500; sleep 2
+          done
+          set -e
       - name: Collect Android diagnostics
         if: always()
         run: '"$ANDROID_HOME/platform-tools/adb" logcat -d -s AndroidRuntime > android-runtime.txt || true'
