@@ -739,6 +739,15 @@ public class PairedActivity extends Activity {
         Window w=d.getWindow();if(w!=null){w.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));w.setLayout(-1,-2);w.setGravity(Gravity.BOTTOM);}
         return d;
     }
+    /** Shows a message's text so part of it can be selected with the usual handles and copied or shared. */
+    private void selectText(String body){LinearLayout content=vertical();
+        TextView hint=text("Press and hold a word, drag the handles, then tap Copy.",13,muted,false);content.addView(hint);gap(content,10);
+        TextView t=text(body,17,ink,false);t.setTextIsSelectable(true);t.setLineSpacing(0,1.15f);t.setPadding(dp(14),dp(12),dp(14),dp(12));t.setBackground(shape(surface,16));
+        ScrollView scroll=new ScrollView(this);scroll.addView(t);int max=Math.round(getResources().getDisplayMetrics().heightPixels*0.55f);
+        content.addView(scroll,new LinearLayout.LayoutParams(-1,-2));scroll.post(()->{if(scroll.getHeight()>max){ViewGroup.LayoutParams lp=scroll.getLayoutParams();lp.height=max;scroll.setLayoutParams(lp);}});
+        gap(content,12);Dialog[] d=new Dialog[1];
+        sheetAction(content,"Copy all",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Message",body));});
+        d[0]=sheet(content);}
     /** Everyone who reacted, with photo or initial, filterable by emoji. */
     private void reactionSheet(JSONObject m,JSONObject c){
         List<String[]> all=PairedProtocol.reactors(m);if(all.isEmpty())return;
@@ -831,6 +840,7 @@ public class PairedActivity extends Activity {
         sheetAction(content,starred.has(m.optString("messageID"))?"Unstar":"Star",()->{d[0].dismiss();starred.toggle(m);renderMessages(false);});
         String typed=PairedProtocol.text(m),plain=ChatText.replyFallbackBody(typed)!=null?ChatText.replyFallbackBody(typed):typed;
         if(!plain.isEmpty())sheetAction(content,"Copy text",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Message",plain));});
+        if(!plain.isEmpty())sheetAction(content,"Select text…",()->{d[0].dismiss();selectText(plain);});
         for(JSONObject media:PairedProtocol.media(m)){String transcript=Transcriber.saved(this,PairedProtocol.string(media,"mediaID"));
             if(transcript!=null)sheetAction(content,"Copy transcript",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Transcript",transcript));});
             String kind=PairedProtocol.mediaKind(media),what=kind.equals("image")?"photo":kind.equals("video")?"video":kind.equals("audio")?"audio":"file";
