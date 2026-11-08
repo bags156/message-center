@@ -11,4 +11,8 @@ Message Center 1.0.6.
 - Reminders used Android's "inexact" alarms, which can arrive up to an hour and a half late on a 2-hour reminder. They now use exact alarms, as do message reminders and scheduled messages.
 - Settings now shows the next reminder (which chat and when) and the last one sent, and has **Send a test reminder**.
 
+**Smaller fixes**
+- Dragging a chat left to see times now slides the whole conversation together, not just your own messages.
+- Opening or answering a chat in the app now clears the red dot on that chat's bubble (the bubble stays, and its notification leaves the shade).
+
 Install over 1.0.5; the package and signing key are unchanged.

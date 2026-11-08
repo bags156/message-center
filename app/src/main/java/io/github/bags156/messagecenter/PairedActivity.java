@@ -487,7 +487,7 @@ public class PairedActivity extends Activity {
         else if(!number.isEmpty())bar.addView(icon(R.drawable.ic_call,ink,"Call",()->{try{startActivity(new Intent(Intent.ACTION_DIAL,Uri.parse("tel:"+number)));}catch(Exception e){toast("No phone app is available.");}}));
         ImageView more=icon(R.drawable.ic_more,ink,"More options",null);more.setBackground(ripple());more.setOnClickListener(this::chatMenu);bar.addView(more);
         root.addView(bar,new LinearLayout.LayoutParams(-1,dp(64)));connection();
-        scroll=new ScrollView(this);scroll.setVerticalScrollBarEnabled(false);items=vertical();items.setPadding(dp(12),dp(8),dp(12),dp(8));scroll.addView(items);
+        scroll=new ScrollView(this);scroll.setVerticalScrollBarEnabled(false);items=vertical();items.setPadding(dp(12),dp(8),dp(12),dp(8));items.setClipChildren(false);scroll.addView(items);
         chatFrame=new FrameLayout(this);addChatBackground(chatFrame,id);
         TimeRevealLayout reveal=new TimeRevealLayout(this,dp(TIME_REVEAL_DP),this::revealTimes);reveal.addView(scroll,new FrameLayout.LayoutParams(-1,-1));chatFrame.addView(reveal,new FrameLayout.LayoutParams(-1,-1));root.addView(chatFrame,new LinearLayout.LayoutParams(-1,0,1));
         jumpButton=text("↓",15,ink,true);jumpButton.setPadding(dp(18),dp(10),dp(18),dp(10));jumpButton.setBackground(shape(card,22));jumpButton.setElevation(dp(4));jumpButton.setVisibility(View.GONE);
@@ -1203,15 +1203,15 @@ public class PairedActivity extends Activity {
     private String searchedFor="";private List<JSONObject> searchHits=new ArrayList<>();private int searchGeneration;
 
     private static final int TIME_REVEAL_DP=72;
-    /** Each message row with its time waiting off the right edge; {row to slide (sent messages) or null, time label}. */
-    private final List<View[]> timeRows=new ArrayList<>();
-    private View timed(View row,long at,boolean out){FrameLayout f=new FrameLayout(this);f.addView(row,new FrameLayout.LayoutParams(-1,-2));
+    /** Each message's time, waiting just past the right edge of its row. */
+    private final List<View> timeRows=new ArrayList<>();
+    private View timed(View row,long at,boolean out){FrameLayout f=new FrameLayout(this);f.setClipChildren(false);f.addView(row,new FrameLayout.LayoutParams(-1,-2));
         TextView t=text(android.text.format.DateFormat.getTimeFormat(this).format(new Date(at)),12,muted,false);t.setGravity(Gravity.END|Gravity.CENTER_VERTICAL);t.setPadding(0,0,dp(4),0);
         t.setAlpha(0f);t.setTranslationX(dp(TIME_REVEAL_DP));t.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        f.addView(t,new FrameLayout.LayoutParams(dp(TIME_REVEAL_DP-4),-1,Gravity.END));timeRows.add(new View[]{out?row:null,t});return f;}
-    /** Dragging the chat left: sent messages slide over and every message's time slides in on the right. */
-    private void revealTimes(float amount){if(selecting&&amount>0)return;float full=dp(TIME_REVEAL_DP),shown=Math.min(amount,full);
-        for(View[] r:timeRows){if(r[0]!=null)r[0].setTranslationX(-amount);r[1].setAlpha(shown/full);r[1].setTranslationX(full-shown);}}
+        f.addView(t,new FrameLayout.LayoutParams(dp(TIME_REVEAL_DP-4),-1,Gravity.END));timeRows.add(t);return f;}
+    /** Dragging the chat left: the whole conversation slides over together and each message's time comes in on the right. */
+    private void revealTimes(float amount){if(selecting&&amount>0)return;if(items==null)return;float full=dp(TIME_REVEAL_DP),shown=Math.min(amount,full);
+        items.setTranslationX(-amount);for(View t:timeRows)t.setAlpha(shown/full);}
     /** A hint shown behind a swiped row: colored strip with an icon or label, at the start or end. */
     private View swipeHint(String label,int color,boolean atStart){FrameLayout f=new FrameLayout(this);f.setBackground(shape(color,22));
         TextView t=text(label,14,Color.WHITE,true);t.setPadding(dp(22),0,dp(22),0);f.addView(t,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER_VERTICAL|(atStart?Gravity.START:Gravity.END)));return f;}

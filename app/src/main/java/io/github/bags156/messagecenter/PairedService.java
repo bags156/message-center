@@ -338,9 +338,18 @@ public final class PairedService extends Service {
     static void clearNotification(Context context,String id) {
         PairedService s=current;if(s!=null)synchronized(s.notified){s.notified.remove(id);}
         NotificationManager nm=context.getSystemService(NotificationManager.class);Nudges.cancel(context,id);
-        // Cancelling a bubbled chat's notification would also close its bubble.
-        for(StatusBarNotification n:nm.getActiveNotifications())if(("chat:"+id).equals(n.getTag())&&(n.getNotification().flags&Notification.FLAG_BUBBLE)!=0)return;
+        // Cancelling a bubbled chat's notification would also close its bubble; quiet it instead (no dot, out of the shade).
+        for(StatusBarNotification n:nm.getActiveNotifications())if(("chat:"+id).equals(n.getTag())&&(n.getNotification().flags&Notification.FLAG_BUBBLE)!=0){quietBubble(context,nm,n);return;}
         nm.cancel("chat:"+id,1);
+    }
+    /** Re-posts a bubble's notification as "seen": the bubble stays, its red dot goes, and it leaves the notification shade. */
+    private static void quietBubble(Context context,NotificationManager nm,StatusBarNotification sbn){
+        try{Notification old=sbn.getNotification();Notification.BubbleMetadata meta=old.getBubbleMetadata();if(meta==null||meta.isNotificationSuppressed())return;
+            Notification.BubbleMetadata.Builder b=meta.getShortcutId()!=null?new Notification.BubbleMetadata.Builder(meta.getShortcutId()):new Notification.BubbleMetadata.Builder(meta.getIntent(),meta.getIcon());
+            if(meta.getDesiredHeight()>0)b.setDesiredHeight(meta.getDesiredHeight());if(meta.getDeleteIntent()!=null)b.setDeleteIntent(meta.getDeleteIntent());
+            b.setAutoExpandBubble(false).setSuppressNotification(true);
+            nm.notify(sbn.getTag(),sbn.getId(),Notification.Builder.recoverBuilder(context,old).setBubbleMetadata(b.build()).setOnlyAlertOnce(true).setSilent(true).build());
+        }catch(Exception ignored){}
     }
     /**
      * Floats this conversation as a bubble. Returns "" on success, or what to tell the
