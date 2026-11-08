@@ -274,8 +274,8 @@ public final class OnDeviceSmoke extends Instrumentation {
         java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();
         bubble.getWindow().getDecorView().findViewsWithText(found,"Attach photos, videos, or files",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);
         check(!found.isEmpty()&&found.get(0).isShown(),"Attach button is missing from the message box");found.clear();
-        bubble.getWindow().getDecorView().findViewsWithText(found,"Record voice message",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);
-        check(!found.isEmpty(),"Voice message button is missing from the empty message box");found.clear();
+        bubble.getWindow().getDecorView().findViewsWithText(found,"Press and hold to record a voice message",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);
+        check(!found.isEmpty(),"Mic button (tap to dictate, hold to record) is missing from the empty message box");found.clear();
         // Verification codes get a copy chip; starred and scheduled messages are marked.
         bubble.getWindow().getDecorView().findViewsWithText(found,"Copy code 482913",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);check(!found.isEmpty(),"Copy code chip is missing");found.clear();
         bubble.getWindow().getDecorView().findViewsWithText(found,"Starred",android.view.View.FIND_VIEWS_WITH_TEXT);check(!found.isEmpty(),"Starred marker is missing");found.clear();
