@@ -38,15 +38,21 @@ public final class OnDeviceSmoke extends Instrumentation {
     /** Pinned chats open only from the round photo, with no highlight box; a tap on its corner (outside the circle) does nothing. */
     private void checkPinnedTap(PairedActivity a)throws Exception{
         new ChatSettings(getTargetContext()).setPinned("smoke",true);onMain(a,"inbox");
-        java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>(),faces=new java.util.ArrayList<>();
-        runOnMainSync(()->a.getWindow().getDecorView().findViewsWithText(found,"pinned",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION));
-        for(android.view.View v:found){CharSequence d=v.getContentDescription();if(d!=null&&d.toString().startsWith("Smoke group")&&d.toString().endsWith(", pinned"))faces.add(v);}
-        check(faces.size()==1,"Pinned photo not found ("+faces.size()+")");android.view.View face=faces.get(0);
+        java.util.ArrayList<android.view.View> faces=new java.util.ArrayList<>();java.util.ArrayList<String> seen=new java.util.ArrayList<>();
+        java.lang.reflect.Field itemsField=PairedActivity.class.getDeclaredField("items");itemsField.setAccessible(true);
+        android.view.ViewGroup items=(android.view.ViewGroup)itemsField.get(a);
+        runOnMainSync(()->collectDescriptions(items,faces,seen));
+        String state;try(PairedStore store=new PairedStore(getTargetContext())){JSONObject smoke=store.chat("smoke");
+            state="items="+(items==null?"none":items.getChildCount())+", smoke chat "+(smoke==null?"missing":"pinned="+new ChatSettings(getTargetContext()).pinned(smoke))+", seen="+seen;}
+        check(faces.size()==1,"Pinned photo not found ("+faces.size()+"; "+state+")");android.view.View face=faces.get(0);
         check(((android.view.View)face.getParent()).getBackground()==null,"Pinned chat still draws a highlight box");
         java.lang.reflect.Field screen=PairedActivity.class.getDeclaredField("screen");screen.setAccessible(true);
         tap(face,2,2);check("inbox".equals(screen.get(a)),"A tap outside the round photo opened the chat");
         tap(face,face.getWidth()/2f,face.getHeight()/2f);check("chat".equals(screen.get(a)),"A tap on the photo didn't open the chat");
         onMain(a,"inbox");new ChatSettings(getTargetContext()).setPinned("smoke",false);onMain(a,"inbox");}
+    private static void collectDescriptions(android.view.View v,java.util.List<android.view.View> faces,java.util.List<String> seen){if(v==null)return;
+        CharSequence d=v.getContentDescription();if(d!=null&&d.toString().contains("pinned")){seen.add(d.toString());if(d.toString().startsWith("Smoke group")&&d.toString().endsWith(", pinned"))faces.add(v);}
+        if(v instanceof android.view.ViewGroup){android.view.ViewGroup g=(android.view.ViewGroup)v;for(int i=0;i<g.getChildCount();i++)collectDescriptions(g.getChildAt(i),faces,seen);}}
     private void tap(android.view.View v,float x,float y){runOnMainSync(()->{long t=android.os.SystemClock.uptimeMillis();
         android.view.MotionEvent down=android.view.MotionEvent.obtain(t,t,android.view.MotionEvent.ACTION_DOWN,x,y,0),up=android.view.MotionEvent.obtain(t,t+50,android.view.MotionEvent.ACTION_UP,x,y,0);
         v.dispatchTouchEvent(down);v.dispatchTouchEvent(up);down.recycle();up.recycle();});waitForIdleSync();}
