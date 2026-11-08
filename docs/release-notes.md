@@ -1,7 +1,8 @@
-Message Center 1.0.3.
+Message Center 1.0.4.
 
-**Copy part of a message**
-- Long-press a message and choose **Select text…** to pick just the words you want with the usual handles, then Copy or Share. **Copy all** copies the whole message.
-- Copying the whole message is unchanged: long-press → **Copy text**, or **Select messages** to copy several at once.
+**Copy photos and videos**
+- Long-press a photo or video and choose **Copy photo** (or **Copy video**), then paste it into another chat or app.
+- Copying selected messages now includes their photos and videos, not just the text.
+- iPhone Genmoji and other HEIC pictures are copied as PNG (keeping the see-through background), so any app can paste them.
 
-Install over 1.0.2; the package and signing key are unchanged.
+Install over 1.0.3; the package and signing key are unchanged.

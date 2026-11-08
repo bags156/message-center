@@ -844,6 +844,7 @@ public class PairedActivity extends Activity {
         for(JSONObject media:PairedProtocol.media(m)){String transcript=Transcriber.saved(this,PairedProtocol.string(media,"mediaID"));
             if(transcript!=null)sheetAction(content,"Copy transcript",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Transcript",transcript));});
             String kind=PairedProtocol.mediaKind(media),what=kind.equals("image")?"photo":kind.equals("video")?"video":kind.equals("audio")?"audio":"file";
+            if(kind.equals("image")||kind.equals("video"))sheetAction(content,"Copy "+what,()->{d[0].dismiss();copyToClipboard("",java.util.Collections.singletonList(media));});
             sheetAction(content,"Save "+what+" to phone",()->{d[0].dismiss();withFile(media,"Downloading…",file->saveToPhone(file,media));});
             sheetAction(content,"Share "+what,()->{d[0].dismiss();withFile(media,"Downloading…",file->share(file,media));});}
         if(!reactors.isEmpty())sheetAction(content,"See who reacted",()->{d[0].dismiss();reactionSheet(m,c);});
@@ -1467,9 +1468,44 @@ public class PairedActivity extends Activity {
         Runnable[] actions={()->copySelected(list),()->forward(list),()->{for(JSONObject m:list)if(starred.has(m.optString("messageID"))==unstar)starred.toggle(m);toast(unstar?"Unstarred":"Starred");stopSelecting();},()->deleteSelected(list)};
         for(int i=0;i<labels.length;i++){Runnable a=actions[i];TextView b=text(labels[i],14,labels[i].equals("Delete")?danger:ink,true);b.setPadding(dp(10),dp(10),dp(10),dp(10));b.setBackground(ripple());b.setOnClickListener(v->a.run());bar.addView(b);}
         FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(-1,-2,Gravity.TOP);lp.setMargins(dp(8),dp(4),dp(8),0);chatFrame.addView(bar,lp);selectionBar=bar;}
-    private void copySelected(List<JSONObject> list){JSONObject c=store.chat(chatId);StringBuilder b=new StringBuilder();
-        for(JSONObject m:list){String body=displayBody(m);if(body.isEmpty())continue;if(b.length()>0)b.append('\n');if(list.size()>1)b.append(PairedProtocol.outgoing(m,c)?"You":senderName(m,c)).append(": ");b.append(body);}
-        getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Messages",b.toString()));toast(list.size()==1?"Copied":"Copied "+list.size()+" messages");stopSelecting();}
+    private void copySelected(List<JSONObject> list){JSONObject c=store.chat(chatId);StringBuilder b=new StringBuilder();List<JSONObject> media=new ArrayList<>();
+        for(JSONObject m:list){media.addAll(PairedProtocol.media(m));String body=copyBody(m);if(body.isEmpty())continue;if(b.length()>0)b.append('\n');if(list.size()>1)b.append(PairedProtocol.outgoing(m,c)?"You":senderName(m,c)).append(": ");b.append(body);}
+        stopSelecting();copyToClipboard(b.toString(),media);}
+    /** What a message says, without "Photo"-style labels for attachments (those are copied as the files themselves). */
+    private static String copyBody(JSONObject m){String typed=PairedProtocol.text(m),quoted=ChatText.replyFallbackBody(typed);String t=quoted!=null?quoted:typed;
+        JSONObject place=PairedProtocol.location(m);if(place!=null&&!place.optString("text").isEmpty())t=t.isEmpty()?place.optString("text"):t+"\n"+place.optString("text");
+        return t.isEmpty()&&PairedProtocol.media(m).isEmpty()?displayBody(m):t;}
+    /**
+     * Puts text and attachments on the clipboard together: text first (for apps that only paste
+     * text), then each photo or video as a file other apps can paste. Downloads any that aren't
+     * here yet; iPhone HEIC pictures (Genmoji) are copied as PNG, which every app can paste.
+     */
+    private void copyToClipboard(String text,List<JSONObject> media){
+        if(media.isEmpty()){if(text.isEmpty())return;getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Message",text));return;}
+        boolean[] cancelled={false};AlertDialog[] wait={null};
+        boolean missing=false;for(JSONObject a:media)if(!MediaCache.file(this,a,false).isFile())missing=true;
+        if(missing&&!PairedService.ready()){toast("Connect to Google Messages to download the attachment first.");return;}
+        if(missing){ProgressBar spinner=new ProgressBar(this);spinner.setPadding(0,dp(16),0,dp(16));
+            wait[0]=new AlertDialog.Builder(this).setMessage(media.size()==1?"Getting the attachment…":"Getting "+media.size()+" attachments…").setView(spinner).setNegativeButton("Cancel",(d,w)->cancelled[0]=true).show();}
+        File[] files=new File[media.size()];int[] left={media.size()};
+        Runnable finish=()->{if(wait[0]!=null)wait[0].dismiss();if(cancelled[0])return;
+            decoder.execute(()->{List<Uri> uris=new ArrayList<>();for(int i=0;i<files.length;i++)if(files[i]!=null){Uri u=clipUri(files[i],media.get(i));if(u!=null)uris.add(u);}
+                ui.post(()->{if(uris.isEmpty()&&text.isEmpty()){toast("The attachment couldn't be downloaded.");return;}
+                    android.content.ContentResolver cr=getContentResolver();ClipData clip=text.isEmpty()?null:ClipData.newPlainText("Message",text);
+                    for(Uri u:uris){if(clip==null)clip=ClipData.newUri(cr,"Message attachment",u);else clip.addItem(cr,new ClipData.Item(u));}
+                    getSystemService(ClipboardManager.class).setPrimaryClip(clip);
+                    if(uris.size()<media.size())toast((media.size()-uris.size())+" attachment"+(media.size()-uris.size()==1?"":"s")+" couldn't be copied.");});});};
+        for(int i=0;i<media.size();i++){int at=i;MediaCache.fetch(this,media.get(i),false,(file,err)->{files[at]=file;if(--left[0]==0)finish.run();});}
+    }
+    /** A link to an attachment for the clipboard; HEIC pictures become a PNG copy (keeping transparency). */
+    private Uri clipUri(File file,JSONObject media){
+        if(PairedProtocol.mediaKind(media).equals("image")&&HeifDecoder.heif(file)){
+            String base=displayName(media).replaceAll("\\.[^.]*$","");File png=new File(MediaCache.dir(this),"clip-"+file.getName().replaceAll("\\.[^.]*$","")+".png");
+            if(!png.isFile()){Bitmap b=HeifDecoder.decode(file,4096);if(b==null)b=MediaCache.decode(file,2560,false);
+                if(b!=null)try(java.io.FileOutputStream out=new java.io.FileOutputStream(png)){b.compress(Bitmap.CompressFormat.PNG,100,out);}catch(Exception e){png.delete();}}
+            if(png.isFile())return MediaProvider.uri(png,base+".png");
+        }
+        return shareUri(file,media);}
     private void deleteSelected(List<JSONObject> list){int n=list.size();
         new AlertDialog.Builder(this).setMessage("Delete "+(n==1?"this message":n+" messages")+"? They're removed from Google Messages on your phone, not from the other person's phone.")
             .setNegativeButton("Cancel",null).setPositiveButton("Delete",(d,w)->{stopSelecting();deleteNext(list,0,0);}).show();}
