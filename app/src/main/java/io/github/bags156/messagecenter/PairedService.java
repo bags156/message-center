@@ -154,7 +154,7 @@ public final class PairedService extends Service {
                     if(!PairedProtocol.outgoing(message) && typing.remove(message.optString("conversationID"))!=null)changed("TYPING");
                     // Answered on the phone: this chat's notification here is no longer needed.
                     if(PairedProtocol.outgoing(message)&&!envelope.optBoolean("old",true))dismiss(message.optString("conversationID"));
-                    if(PairedProtocol.notifyLive(envelope.optBoolean("old",true),existed,message)){autoCopy(message);notifyMessage(message);}
+                    if(PairedProtocol.notifyLive(envelope.optBoolean("old",true),existed,message)){autoCopy(message);notifyMessage(message);maybeAutoReply(message);}
                     changed(kind);
                 }
                 case "TYPING" -> {
@@ -376,10 +376,30 @@ public final class PairedService extends Service {
             for(String k:new String[]{"fullName","firstName"}){String v=p.optString(k).trim();if(!v.isEmpty()){out.add(v);out.add(v.split("\\s+")[0]);}}}
         return out;
     }
-    /** Muted or snoozed chats stay quiet, unless the message @-mentions you. */
+    /** Muted or snoozed chats stay quiet, unless the message @-mentions you or has one of your alert keywords. */
     private boolean quiet(String id,JSONObject m) {
         ChatSettings s=new ChatSettings(this);if(!s.muted(id)&&!s.snoozed(id))return false;
-        return !ChatText.mentions(PairedProtocol.text(m),mentionNames(this,store.chat(id)));
+        String text=PairedProtocol.text(m);
+        if(!SmartText.keyword(text,SmartText.splitList(getSharedPreferences("paired",MODE_PRIVATE).getString("alert_keywords",""))).isEmpty())return false;
+        return !ChatText.mentions(text,mentionNames(this,store.chat(id)));
+    }
+    // ---- Busy auto-reply ----
+    static long autoReplyUntil(Context c){return c.getSharedPreferences("paired",MODE_PRIVATE).getLong("autoreply_until",0);}
+    static void setAutoReply(Context c,long until){c.getSharedPreferences("paired",MODE_PRIVATE).edit().putLong("autoreply_until",until).apply();}
+    static String autoReplyText(Context c){return c.getSharedPreferences("paired",MODE_PRIVATE).getString("autoreply_text","Auto-reply: I'm busy right now and will text you back soon.");}
+    /**
+     * While auto-reply is on: one reply per person per hour, only in one-to-one chats with saved
+     * contacts (never groups, short codes, or strangers), and only for messages arriving now.
+     */
+    private void maybeAutoReply(JSONObject m){
+        if(autoReplyUntil(this)<=System.currentTimeMillis())return;
+        String id=m.optString("conversationID");JSONObject chat=store.chat(id);JSONObject other=PairedProtocol.other(chat);
+        if(other==null||!PairedProtocol.known(other)||SmartText.shortCodeSender(PairedProtocol.number(other)))return;
+        if(System.currentTimeMillis()-PairedProtocol.time(m)>10*60_000L)return;
+        android.content.SharedPreferences p=getSharedPreferences("autoreply",MODE_PRIVATE);long last=p.getLong(id,0);
+        if(System.currentTimeMillis()-last<3_600_000L)return;
+        p.edit().putLong(id,System.currentTimeMillis()).apply();
+        String reply=autoReplyText(this);main.post(()->sendOrQueue(this,id,reply,"",(v,e)->{}));
     }
     /**
      * Posts (or refreshes) a chat's notification. A new message is added to it; with

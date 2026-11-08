@@ -1,8 +1,23 @@
-Unread reminders for pinned chats.
+Message Center 1.0.
 
-- When someone in a **pinned** chat messages you and the chat is still unread (including chats you marked unread), you get a reminder after 2 hours. It repeats every 2 hours, up to 3 times, until you read or reply.
-- The reminder has **Mark read** and **Not until next message**, which stops reminders for that chat until they message you again.
-- No reminders between 10 PM and 8 AM (they wait until 8 AM), none for muted or snoozed chats, and none for messages more than a day old.
-- Settings → Unread reminders for pinned chats: every hour, 2 hours, 4 hours, or off.
+**Inbox cleanup**
+- **Promotions:** texts from short codes and business senders (like 28302) move into a Promotions entry at the top of the list instead of mixing with people. A fresh verification code stays in the inbox for an hour. This only changes Message Center's list; nothing is archived in Google Messages. Turn it off in Settings → Promotions.
+- **Unsubscribe:** promotion chats have an Unsubscribe button at the top that sends STOP for you, after asking.
+- **Delete old verification codes:** Settings → Delete old verification codes… removes code messages older than a day or a week from Google Messages on your phone.
 
-Install over 0.9.2; the package and signing key are unchanged.
+**Smart taps** (like addresses)
+- **Tracking numbers** for UPS, USPS, Amazon, and FedEx open the carrier's tracking page.
+- **Dates with a time** ("Friday at 6", "tomorrow 7:30pm", "Nov 12 at 3", "6pm tonight") open your calendar to add the event.
+- **Flight numbers** ("AA 1234" in a message about a flight) show the flight's status.
+
+**Faster replies**
+- **Quick replies:** tap the message box and saved phrases appear above it; tap one to use it, hold to remove, "+ Add" for your own. Edit or turn off in Settings → Quick replies.
+- **@ names in groups:** type @ and pick a member.
+- **Send my location:** ⊕ → Location adds a map link to where you are (asks for location permission the first time).
+
+**Staying on top**
+- **Keyword alerts:** Settings → Keyword alerts. Messages containing those words notify you even in muted or snoozed chats.
+- **Busy auto-reply:** Settings → Busy auto-reply, for an hour, 3 hours, until morning, or until you turn it off. It answers once an hour per person, only saved contacts in one-to-one chats. A banner in the chat list reminds you it's on.
+- **Search filters:** in search, tap Photos, Links, Last 7 days, Last 30 days, or From… (or type from:Name, has:photo, has:link, last:7d).
+
+Install over 0.9.3; the package and signing key are unchanged.

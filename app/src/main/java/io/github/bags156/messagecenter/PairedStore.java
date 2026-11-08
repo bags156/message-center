@@ -59,6 +59,13 @@ final class PairedStore extends SQLiteOpenHelper {
         return out;
     }
     /** Every synced message with an attachment in this chat, newest first. */
+    /** The newest messages across all chats (optionally only since a time), for filtered search and cleanup. */
+    synchronized List<JSONObject> recent(int limit,long since) {
+        List<JSONObject> out=new ArrayList<>();
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM items WHERE time>=? ORDER BY time DESC LIMIT ?",new String[]{String.valueOf(since),String.valueOf(limit)})){
+            while(c.moveToNext())out.add(json(c.getString(0)));}
+        return out;
+    }
     synchronized List<JSONObject> mediaMessages(String chat,int max) {
         List<JSONObject> out=new ArrayList<>();
         try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM items WHERE chat=? AND data LIKE '%mediaContent%' ORDER BY time DESC LIMIT ?",new String[]{chat,String.valueOf(max)})) {

@@ -145,7 +145,7 @@ public class PairedActivity extends Activity {
     @Override protected void onPause(){resumed=false;remember();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&player.isPlaying()){player.pause();updatePlayLabel();}if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
     @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);if(focused&&store!=null){markReadIfAllowed();updateReceiptStatus();}}
     @Override protected void onSaveInstanceState(Bundle out){remember();if(pendingCapture!=null)out.putString("capture",pendingCapture.getPath());out.putString("chat",chatId);out.putString("reply",replyId);out.putString("draft",drafts.getOrDefault(chatId,""));super.onSaveInstanceState(out);}
-    @Override public void onBackPressed(){if(selecting){stopSelecting();return;}if(screen.equals("media")){details();return;}if(screen.equals("details")){thread(chatId);return;}if(bubble()){super.onBackPressed();return;}if(login!=null){destroyLogin();inbox();}else if(screen.equals("inbox")&&(folder!=1||unknownOnly)){folder=1;unknownOnly=false;inbox();}else if(!screen.equals("inbox")){remember();inbox();}else super.onBackPressed();}
+    @Override public void onBackPressed(){if(selecting){stopSelecting();return;}if(screen.equals("media")){details();return;}if(screen.equals("details")){thread(chatId);return;}if(bubble()){super.onBackPressed();return;}if(login!=null){destroyLogin();inbox();}else if(screen.equals("inbox")&&(folder!=1||unknownOnly||promoOnly)){folder=1;unknownOnly=false;promoOnly=false;inbox();}else if(!screen.equals("inbox")){remember();inbox();}else super.onBackPressed();}
 
     // ---- Shared building blocks ----
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
@@ -155,7 +155,7 @@ public class PairedActivity extends Activity {
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);if(!name.equals("login"))setRecentsScreenshotEnabled(true);
         if(recorder!=null)cancelRecording();recordBar=null;composeRow=null;sendButton=null;recordClock=null;screen=name;batteryCard=null;jumpButton=null;statusView=null;composer=null;items=null;scroll=null;searchRow=null;attachStrip=null;attachScroll=null;replyPanel=null;typingRow=null;messageViews.clear();ui.removeCallbacks(typingTick);if(typingPulse!=null){typingPulse.cancel();typingPulse=null;}
         dark=(getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;
-        textScale=getSharedPreferences("paired",MODE_PRIVATE).getFloat("text_scale",1f);selecting=false;chosen.clear();selectionBar=null;chatFrame=null;
+        textScale=getSharedPreferences("paired",MODE_PRIVATE).getFloat("text_scale",1f);quickRow=null;quickScroll=null;searchChips=null;selecting=false;chosen.clear();selectionBar=null;chatFrame=null;
         bg=dark?0xff111318:0xfff8f9fc;card=dark?0xff1d2026:Color.WHITE;surface=dark?0xff23252b:0xffe9edf4;ink=dark?0xffe3e2e9:0xff1a1b20;muted=dark?0xffabaeb8:0xff5d5f67;
         fab=dark?0xff3b4766:0xffd3e3fd;onFab=dark?0xffd8e2ff:0xff0b1f3a;danger=dark?0xfff2b8b5:0xffb3261e;
         getWindow().setStatusBarColor(bg);getWindow().setNavigationBarColor(bg);
@@ -264,9 +264,9 @@ public class PairedActivity extends Activity {
 
     // ---- Inbox ----
     private void inbox(){if(bubble()){if(!chatId.isEmpty())thread(chatId);else finish();return;}remember();chatId="";replyId="";base("inbox");
-        if(folder!=1)unknownOnly=false;
-        LinearLayout bar=row();TextView title=text(folder==2?"Archived":folder==3?"Blocked & spam":unknownOnly?"Unknown senders":"Messages",26,ink,false);title.setPadding(dp(folder!=1||unknownOnly?8:4),0,0,0);
-        if(folder!=1||unknownOnly)bar.addView(icon(R.drawable.ic_back,ink,"Back",()->{folder=1;unknownOnly=false;inbox();}));
+        if(folder!=1){unknownOnly=false;promoOnly=false;}
+        LinearLayout bar=row();TextView title=text(folder==2?"Archived":folder==3?"Blocked & spam":unknownOnly?"Unknown senders":promoOnly?"Promotions":"Messages",26,ink,false);title.setPadding(dp(folder!=1||unknownOnly||promoOnly?8:4),0,0,0);
+        if(folder!=1||unknownOnly||promoOnly)bar.addView(icon(R.drawable.ic_back,ink,"Back",()->{folder=1;unknownOnly=false;promoOnly=false;inbox();}));
         bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
         if(new SessionVault(this).exists()){bar.addView(icon(R.drawable.ic_search,ink,"Search",this::toggleSearch));bar.addView(icon(R.drawable.ic_more,ink,"More options",null));
             View more=bar.getChildAt(bar.getChildCount()-1);more.setBackground(ripple());more.setOnClickListener(this::inboxMenu);}
@@ -280,6 +280,14 @@ public class PairedActivity extends Activity {
         else if(folder==1&&showBatteryCard())root.addView(batteryCard=batteryBanner());
         searchRow=row();EditText search=input("Search conversations");search.setSingleLine(true);search.setText(query);searchRow.addView(search,new LinearLayout.LayoutParams(-1,-2));
         searchRow.setVisibility(query.isEmpty()?View.GONE:View.VISIBLE);root.addView(searchRow);
+        // Search filters: tap to add or remove; they work with or without words.
+        searchChips=row();HorizontalScrollView chipScroll=new HorizontalScrollView(this);chipScroll.setHorizontalScrollBarEnabled(false);chipScroll.addView(searchChips);chipScroll.setPadding(0,dp(6),0,dp(2));
+        searchRow.setOrientation(LinearLayout.VERTICAL);searchRow.addView(chipScroll);
+        String[][] filters={{"Photos","has:photo"},{"Links","has:link"},{"Last 7 days","last:7d"},{"Last 30 days","last:30d"},{"From…","from:"}};
+        for(String[] f:filters){TextView chip=text(f[0],14,ink,false);chip.setPadding(dp(14),dp(8),dp(14),dp(8));chip.setBackground(shape(surface,18));
+            LinearLayout.LayoutParams cl=new LinearLayout.LayoutParams(-2,-2);cl.setMarginEnd(dp(8));searchChips.addView(chip,cl);
+            chip.setOnClickListener(v->{if(f[1].equals("from:")){pickFromFilter(search);return;}String t=search.getText().toString();
+                String next=t.contains(f[1])?t.replace(f[1],"").replaceAll("\\s+"," ").trim():(t.replaceAll("last:\\d+d","").trim()+" "+f[1]).trim();search.setText(next);search.setSelection(next.length());});}
         search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){query=s.toString();renderInbox();}public void afterTextChanged(Editable e){}});
         scroll=new ScrollView(this);scroll.setVerticalScrollBarEnabled(false);items=vertical();items.setPadding(0,dp(4),0,dp(96));scroll.addView(items);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         scroll.setOnScrollChangeListener((v,x,y,ox,oy)->{View child=scroll.getChildAt(0);if(child!=null&&y+scroll.getHeight()>=child.getHeight()-dp(200))loadOlderChats();});
@@ -293,19 +301,26 @@ public class PairedActivity extends Activity {
         EditText field=(EditText)searchRow.getChildAt(0);if(show){field.requestFocus();getSystemService(InputMethodManager.class).showSoftInput(field,0);}else{field.setText("");hideKeyboard(field);}}
     private void inboxMenu(View anchor){PopupMenu menu=new PopupMenu(this,anchor);Menu m=menu.getMenu();
         m.add(0,1,0,folder==1?"Archived":"Inbox");if(folder==1)m.add(0,7,0,"Mark all as read");if(folder==1){m.add(0,4,1,"Blocked & spam");if(!unknownOnly)m.add(0,6,1,"Unknown senders");}m.add(0,5,2,"Starred messages");m.add(0,2,3,"Refresh");m.add(0,3,4,"Settings");
-        menu.setOnMenuItemClickListener(item->{switch(item.getItemId()){case 1->{folder=folder==1?2:1;unknownOnly=false;inbox();}case 4->{folder=3;inbox();}case 5->starredScreen();case 6->{unknownOnly=true;inbox();}case 7->markAllRead();case 2->refreshInbox(true);case 3->settings();default->{}}return true;});menu.show();}
+        menu.setOnMenuItemClickListener(item->{switch(item.getItemId()){case 1->{folder=folder==1?2:1;unknownOnly=false;promoOnly=false;inbox();}case 4->{folder=3;inbox();}case 5->starredScreen();case 6->{unknownOnly=true;inbox();}case 7->markAllRead();case 2->refreshInbox(true);case 3->settings();default->{}}return true;});menu.show();}
     private void refreshInbox(boolean force){if(!PairedService.ready()||busy)return;long now=System.currentTimeMillis();if(!force&&now-lastInboxRefresh<30_000)return;lastInboxRefresh=now;loadChats(false);}
     private void loadOlderChats(){if(busy||!PairedService.ready())return;if(store.page("folder:"+folder,false).isEmpty())return;loadChats(true);}
     private void renderInbox(){if(items==null||!screen.equals("inbox"))return;items.removeAllViews();
-        List<JSONObject> chats=InboxOrder.sort(store.chats(query,folder),chatSettings::pinned);
+        SmartText.Search filtered=SmartText.parseSearch(query);boolean filtering=SmartText.hasFilters(filtered);
+        List<JSONObject> chats=filtering?new ArrayList<>():InboxOrder.sort(store.chats(query,folder),chatSettings::pinned);
         chats.removeIf(c->pendingDeletes.contains(c.optString("conversationID")));
         if(unknownOnly){List<JSONObject> unknown=new ArrayList<>();for(JSONObject c:chats)if(unknownSender(c))unknown.add(c);chats=unknown;}
-        if(chats.isEmpty()){TextView empty=text(PairedService.ready()?(query.isEmpty()?"No conversations here yet.":"No chats with that name."):"Your conversations will appear once the connection is ready.",15,muted,false);
+        // Promotions (texts from short codes like 28302) get their own list, unless you turned that off.
+        List<JSONObject> promos=new ArrayList<>();
+        if(promoOnly){List<JSONObject> only=new ArrayList<>();for(JSONObject c:chats)if(promotion(c))only.add(c);chats=only;}
+        else if(folder==1&&!unknownOnly&&query.trim().isEmpty()&&promotionsSeparate()){for(JSONObject c:chats)if(promotion(c))promos.add(c);chats.removeAll(promos);}
+        if(chats.isEmpty()&&promos.isEmpty()&&!filtering){TextView empty=text(PairedService.ready()?(query.isEmpty()?(promoOnly?"No promotions.":"No conversations here yet."):"No chats with that name."):"Your conversations will appear once the connection is ready.",15,muted,false);
             empty.setGravity(Gravity.CENTER);empty.setPadding(dp(24),dp(48),dp(24),dp(24));items.addView(empty);}
+        if(autoReplyActive())items.addView(autoReplyBanner());
         // Pinned chats sit in a grid at the top (three across), like iPhone Messages; the rest are rows.
         boolean grid=folder==1&&!unknownOnly&&query.trim().isEmpty();List<JSONObject> pins=new ArrayList<>();
         if(grid)for(JSONObject c:chats)if(chatSettings.pinned(c))pins.add(c);
         if(!pins.isEmpty())items.addView(pinnedGrid(pins));
+        if(!promos.isEmpty())items.addView(promotionsRow(promos));
         for(JSONObject c:chats)if(pins.isEmpty()||!chatSettings.pinned(c))items.addView(swipeableChat(c));
         renderMessageHits();
         String note=store.page("folder:"+folder,true);if(!chats.isEmpty()&&store.page("folder:"+folder,false).isEmpty()&&!note.isEmpty()){TextView end=text(note,12,muted,false);end.setGravity(Gravity.CENTER);end.setPadding(dp(16),dp(16),dp(16),dp(8));items.addView(end);}
@@ -462,7 +477,9 @@ public class PairedActivity extends Activity {
         who.addView(name,new LinearLayout.LayoutParams(0,-2,1));who.setContentDescription("Conversation details");who.setOnClickListener(v->details());
         bar.addView(who,new LinearLayout.LayoutParams(0,-1,1));
         String number=PairedProtocol.number(PairedProtocol.other(c));
-        if(!number.isEmpty())bar.addView(icon(R.drawable.ic_call,ink,"Call",()->{try{startActivity(new Intent(Intent.ACTION_DIAL,Uri.parse("tel:"+number)));}catch(Exception e){toast("No phone app is available.");}}));
+        if(SmartText.shortCodeSender(number)){TextView stop=text("Unsubscribe",14,ink,true);stop.setPadding(dp(12),dp(8),dp(12),dp(8));stop.setBackground(shape(surface,16));stop.setOnClickListener(v->unsubscribe(id,c));
+            LinearLayout.LayoutParams ul=new LinearLayout.LayoutParams(-2,-2);ul.gravity=Gravity.CENTER_VERTICAL;ul.setMarginEnd(dp(4));bar.addView(stop,ul);}
+        else if(!number.isEmpty())bar.addView(icon(R.drawable.ic_call,ink,"Call",()->{try{startActivity(new Intent(Intent.ACTION_DIAL,Uri.parse("tel:"+number)));}catch(Exception e){toast("No phone app is available.");}}));
         ImageView more=icon(R.drawable.ic_more,ink,"More options",null);more.setBackground(ripple());more.setOnClickListener(this::chatMenu);bar.addView(more);
         root.addView(bar,new LinearLayout.LayoutParams(-1,dp(64)));connection();
         scroll=new ScrollView(this);scroll.setVerticalScrollBarEnabled(false);items=vertical();items.setPadding(dp(12),dp(8),dp(12),dp(8));scroll.addView(items);
@@ -489,12 +506,14 @@ public class PairedActivity extends Activity {
         recordBar=row();recordBar.setPadding(dp(16),dp(8),dp(8),dp(4));recordBar.setVisibility(View.GONE);recordClock=text("● Recording",16,danger,true);recordBar.addView(recordClock,new LinearLayout.LayoutParams(0,-2,1));
         TextView cancelRec=text("Cancel",16,muted,true);cancelRec.setPadding(dp(12),dp(10),dp(12),dp(10));cancelRec.setOnClickListener(v->cancelRecording());recordBar.addView(cancelRec);
         TextView sendRec=text("Send",16,theme.onAccent(dark),true);sendRec.setPadding(dp(18),dp(10),dp(18),dp(10));sendRec.setBackground(shape(theme.accent(dark),20));sendRec.setOnClickListener(v->finishRecording(true));recordBar.addView(sendRec);root.addView(recordBar);
+        quickRow=row();quickScroll=new HorizontalScrollView(this);quickScroll.setHorizontalScrollBarEnabled(false);quickScroll.setPadding(dp(12),dp(2),dp(12),dp(4));quickScroll.addView(quickRow);quickScroll.setVisibility(View.GONE);root.addView(quickScroll);
         LinearLayout compose=row();compose.setPadding(dp(4),dp(4),dp(8),0);composeRow=compose;
         compose.addView(icon(R.drawable.ic_add,ink,"Attach photos, videos, or files",this::attach));
         composer=new EditText(this);composer.setHint(PairedProtocol.rcs(c)?"RCS message":"Text message");composer.setTextColor(ink);composer.setHintTextColor(muted);composer.setTextSize(17*textScale);
         composer.setBackground(shape(surface,28));composer.setPadding(dp(22),dp(14),dp(22),dp(14));composer.setMaxLines(5);
         composer.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);composer.setText(drafts.getOrDefault(id,""));
-        composer.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){maybeSendTyping(s);updateComposeButton();}public void afterTextChanged(Editable e){}});
+        composer.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){maybeSendTyping(s);updateComposeButton();updateQuickRow();}public void afterTextChanged(Editable e){}});
+        composer.setOnFocusChangeListener((v,focused)->updateQuickRow());
         composer.setOnReceiveContentListener(new String[]{"image/*","video/*"},keyboardContent);
         compose.addView(composer,new LinearLayout.LayoutParams(0,-2,1));
         sendButton=new ImageView(this);sendButton.setImageResource(R.drawable.ic_send);sendButton.setImageTintList(ColorStateList.valueOf(theme.onAccent(dark)));sendButton.setBackground(oval(theme.accent(dark)));
@@ -586,6 +605,12 @@ public class PairedActivity extends Activity {
             for(int[] r:places){if(sp.getSpans(r[0],r[1],URLSpan.class).length>0)continue;String where=sp.subSequence(r[0],r[1]).toString();
                 sp.setSpan(new ClickableSpan(){@Override public void onClick(View w){openPlace(where);}@Override public void updateDrawState(TextPaint ds){ds.setColor(linkColor);ds.setUnderlineText(true);}},r[0],r[1],Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);}
             text.setText(sp);text.setHighlightColor((linkColor&0x00ffffff)|0x26000000);text.setMovementMethod(LinkMovementMethod.getInstance());text.setOnLongClickListener(v->{messageSheet(m);return true;});}
+        // Tracking numbers, flights, and "Friday at 6" are tappable too.
+        List<SmartText.Hit> smart=SmartText.all(text.getText().toString(),PairedProtocol.time(m)>0?PairedProtocol.time(m):System.currentTimeMillis(),java.util.TimeZone.getDefault());
+        if(!smart.isEmpty()){Spannable sp=text.getText() instanceof Spannable?(Spannable)text.getText():new SpannableString(text.getText());int linkColor=outgoing?theme.onBubble(dark):ink;boolean added=false;
+            for(SmartText.Hit h:smart){if(sp.getSpans(h.start,h.end,URLSpan.class).length>0||sp.getSpans(h.start,h.end,ClickableSpan.class).length>0)continue;added=true;
+                sp.setSpan(new ClickableSpan(){@Override public void onClick(View w){smartTap(h,m,c);}@Override public void updateDrawState(TextPaint ds){ds.setColor(linkColor);ds.setUnderlineText(true);}},h.start,h.end,Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);}
+            if(added){text.setText(sp);text.setHighlightColor((linkColor&0x00ffffff)|0x26000000);text.setMovementMethod(LinkMovementMethod.getInstance());text.setOnLongClickListener(v->{messageSheet(m);return true;});}}
         b.setOnLongClickListener(v->{messageSheet(m);return true;});b.setOnClickListener(v->tapped(m,b));if(text.getMovementMethod()!=null)text.setOnClickListener(v->tapped(m,b));
         line.addView(b,new LinearLayout.LayoutParams(-2,-2));wrap.addView(line,new LinearLayout.LayoutParams(-1,-2));
         String url=linkPreviewsOn()&&(outgoing||chatTrusted)?ChatText.firstUrl(fallback!=null?fallback:body):"";if(!url.isEmpty()){gap(wrap,4);wrap.addView(linkCard(url,outgoing),new LinearLayout.LayoutParams(-1,-2));}
@@ -1067,6 +1092,7 @@ public class PairedActivity extends Activity {
         attachTile(tiles,R.drawable.ic_gallery,"Photos & videos",()->{d[0].dismiss();pickMedia();});
         attachTile(tiles,R.drawable.ic_camera,"Camera",()->{d[0].dismiss();takePhoto();});
         attachTile(tiles,R.drawable.ic_file,"Files",()->{d[0].dismiss();pickFiles();});
+        attachTile(tiles,R.drawable.ic_place,"Location",()->{d[0].dismiss();shareLocation();});
         content.addView(tiles,new LinearLayout.LayoutParams(-1,-2));d[0]=sheet(content);}
     private void attachTile(LinearLayout parent,int icon,String label,Runnable action){ChatTheme theme=chatSettings.theme(chatId);
         LinearLayout tile=vertical();tile.setGravity(Gravity.CENTER_HORIZONTAL);tile.setPadding(dp(4),dp(10),dp(4),dp(10));tile.setBackground(ripple());
@@ -1214,9 +1240,27 @@ public class PairedActivity extends Activity {
             r.setOnClickListener(v->openMedia(media));items.addView(r);}}}
 
     /** Inbox search also finds messages (not just chat names), searched in the background as you type. */
-    private void renderMessageHits(){if(items==null)return;if(query.trim().length()<2){searchedFor="";searchHits.clear();return;}String q=query;
-        if(!q.equals(searchedFor)){int g=++searchGeneration;decoder.execute(()->{List<JSONObject> hits=store.searchAll(q,40);ui.post(()->{if(g!=searchGeneration)return;searchedFor=q;searchHits=hits;if(screen.equals("inbox")&&query.equals(q))renderInbox();});});return;}
-        if(searchHits.isEmpty())return;items.addView(sectionLabel("Messages"));for(JSONObject m:searchHits)items.addView(messageResult(m,true));}
+    private void renderMessageHits(){if(items==null)return;SmartText.Search f=SmartText.parseSearch(query);boolean filters=SmartText.hasFilters(f);
+        if(f.text.trim().length()<2&&!filters){searchedFor="";searchHits.clear();return;}String q=query;
+        if(!q.equals(searchedFor)){int g=++searchGeneration;decoder.execute(()->{List<JSONObject> hits=searchMessages(f,60);ui.post(()->{if(g!=searchGeneration)return;searchedFor=q;searchHits=hits;if(screen.equals("inbox")&&query.equals(q))renderInbox();});});return;}
+        if(searchHits.isEmpty()){if(filters){TextView none=text("No messages match.",15,muted,false);none.setGravity(Gravity.CENTER);none.setPadding(dp(24),dp(32),dp(24),dp(24));items.addView(none);}return;}
+        items.addView(sectionLabel("Messages"));for(JSONObject m:searchHits)items.addView(messageResult(m,true));}
+    /** Words plus filters: from:name, has:photo, has:link, last:7d. */
+    private List<JSONObject> searchMessages(SmartText.Search f,int max){long since=f.days>0?System.currentTimeMillis()-f.days*86_400_000L:0;
+        List<JSONObject> candidates=f.text.trim().length()>=2?store.searchAll(f.text,2000):store.recent(4000,since);List<JSONObject> out=new ArrayList<>();
+        Map<String,JSONObject> chats=new HashMap<>();String from=f.from.toLowerCase(Locale.ROOT);
+        for(JSONObject m:candidates){if(out.size()>=max)break;if(since>0&&PairedProtocol.time(m)<since)continue;
+            if(f.photo){boolean pic=false;for(JSONObject a:PairedProtocol.media(m)){String k=PairedProtocol.mediaKind(a);if(k.equals("image")||k.equals("video"))pic=true;}if(!pic)continue;}
+            if(f.link&&ChatText.firstUrl(PairedProtocol.text(m)).isEmpty())continue;
+            if(!from.isEmpty()){String cid=m.optString("conversationID");JSONObject c=chats.computeIfAbsent(cid,store::chat);
+                String who=PairedProtocol.outgoing(m,c)?"you":senderName(m,c).toLowerCase(Locale.ROOT);String chatName=c==null?"":PairedProtocol.title(c).toLowerCase(Locale.ROOT);
+                if(!who.contains(from)&&!chatName.contains(from))continue;}
+            out.add(m);}
+        return out;}
+    private void pickFromFilter(EditText search){List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
+        for(JSONObject c:InboxOrder.sort(store.chats("",1),chatSettings::pinned)){if(labels.size()>=25)break;String name=PairedProtocol.title(c);String token="from:\""+name+"\"";
+            labels.add(name);actions.add(()->{String t=search.getText().toString().replaceAll("from:(\"[^\"]*\"|\\S+)","").trim();String next=(t+" "+token).trim();search.setText(next);search.setSelection(next.length());});}
+        menuSheet("Messages from",labels,actions);}
 
     // Scheduled send
     /** Long-press send: pick when to send. Text only; it goes out through the outbox at that time. */
@@ -1244,6 +1288,101 @@ public class PairedActivity extends Activity {
         TextView s=text("🕒 Scheduled for "+separatorStamp(o.optLong("at"))+" • tap for options",12,muted,false);s.setGravity(Gravity.END);s.setPadding(0,dp(4),dp(6),0);items.addView(s,new LinearLayout.LayoutParams(-1,-2));
         View.OnClickListener act=v->menuSheet("Scheduled message",java.util.Arrays.asList("Send now","Delete"),java.util.Arrays.<Runnable>asList(()->{Scheduled.sendNow(this,id);renderMessages(false);},()->{Scheduled.remove(this,id);renderMessages(false);}));
         b.setOnClickListener(act);s.setOnClickListener(act);}}
+    // ---- 1.0: promotions, unsubscribe, old codes, smart taps, quick replies, @ names, location, keywords, auto-reply, search ----
+    private boolean promoOnly;private LinearLayout searchChips,quickRow;private HorizontalScrollView quickScroll;
+    private boolean promotionsSeparate(){return getSharedPreferences("paired",MODE_PRIVATE).getBoolean("promotions_separate",true);}
+    /** A one-to-one chat with a short code or business name that isn't a saved contact (a fresh verification code stays in the inbox). */
+    private boolean promotion(JSONObject c){if(chatSettings.pinned(c))return false;JSONObject other=PairedProtocol.other(c);if(other==null||PairedProtocol.known(other))return false;
+        if(!SmartText.shortCodeSender(PairedProtocol.number(other)))return false;
+        JSONObject last=latestStored(c.optString("conversationID"));return last==null||ChatText.oneTimeCode(PairedProtocol.text(last)).isEmpty()||System.currentTimeMillis()-PairedProtocol.time(last)>3_600_000L;}
+    private View promotionsRow(List<JSONObject> promos){int unread=0;for(JSONObject c:promos)if(chatSettings.unread(c))unread++;
+        LinearLayout entry=row();entry.setPadding(dp(4),dp(9),dp(4),dp(9));entry.setGravity(Gravity.CENTER_VERTICAL);entry.setBackground(ripple());
+        TextView icon=text("🏷",20,ink,false);icon.setGravity(Gravity.CENTER);icon.setBackground(oval(surface));entry.addView(icon,new LinearLayout.LayoutParams(dp(46),dp(46)));
+        LinearLayout middle=vertical();middle.setPadding(dp(14),0,dp(8),0);TextView t=text("Promotions",16,ink,unread>0);t.setTextSize(16.5f*textScale);middle.addView(t);
+        JSONObject latest=promos.get(0);TextView sub=text(PairedProtocol.title(latest)+" and "+(promos.size()-1)+" more",14,muted,false);if(promos.size()==1)sub.setText(PairedProtocol.title(latest));sub.setTextSize(14*textScale);sub.setSingleLine(true);sub.setEllipsize(TextUtils.TruncateAt.END);middle.addView(sub);
+        entry.addView(middle,new LinearLayout.LayoutParams(0,-2,1));
+        if(unread>0){TextView n=text(String.valueOf(unread),12,onFab,true);n.setGravity(Gravity.CENTER);n.setPadding(dp(8),dp(2),dp(8),dp(2));n.setBackground(shape(fab,10));entry.addView(n);}
+        entry.setContentDescription("Promotions, "+promos.size()+" chats"+(unread>0?", "+unread+" unread":""));entry.setOnClickListener(v->{promoOnly=true;inbox();});return entry;}
+    private void unsubscribe(String id,JSONObject c){String who=c==null?"this sender":PairedProtocol.title(c);
+        new AlertDialog.Builder(this).setTitle("Unsubscribe from "+who+"?").setMessage("This sends STOP, which businesses must honor for marketing texts. Standard message rates may apply.")
+            .setNegativeButton("Cancel",null).setPositiveButton("Send STOP",(d,w)->PairedService.sendOrQueue(this,id,"STOP","",(v,e)->{if(!e.isEmpty())error(e);else toast("Sent STOP to "+who);if(screen.equals("chat"))loadMessages(false);})).show();}
+    /** Settings: remove verification-code messages older than a day or a week from Google Messages on your phone. */
+    private void clearOldCodes(){List<String> labels=java.util.Arrays.asList("Older than 1 day","Older than 1 week");long[] ages={86_400_000L,7*86_400_000L};List<Runnable> actions=new ArrayList<>();
+        for(long age:ages)actions.add(()->decoder.execute(()->{long cutoff=System.currentTimeMillis()-age;List<JSONObject> codes=new ArrayList<>();
+            for(JSONObject m:store.recent(20000,0)){if(PairedProtocol.time(m)>=cutoff||PairedProtocol.outgoing(m))continue;if(!ChatText.oneTimeCode(PairedProtocol.text(m)).isEmpty())codes.add(m);}
+            ui.post(()->{if(codes.isEmpty()){toast("No old verification codes found.");return;}if(!PairedService.ready()){toast("Connect first, then try again.");return;}
+                new AlertDialog.Builder(this).setMessage("Delete "+codes.size()+" old verification code "+(codes.size()==1?"message":"messages")+" from Google Messages on your phone?")
+                    .setNegativeButton("Cancel",null).setPositiveButton("Delete",(d,w)->{toast("Deleting "+codes.size()+"…");deleteNext(codes,0,0);}).show();});}));
+        menuSheet("Delete old verification codes",labels,actions);}
+    private void smartTap(SmartText.Hit h,JSONObject m,JSONObject c){
+        if(h.kind.equals("date")){String who=c==null?"":PairedProtocol.title(c);
+            Intent add=new Intent(Intent.ACTION_INSERT).setData(android.provider.CalendarContract.Events.CONTENT_URI)
+                .putExtra(android.provider.CalendarContract.EXTRA_EVENT_BEGIN_TIME,h.time).putExtra(android.provider.CalendarContract.EXTRA_EVENT_END_TIME,h.time+3_600_000L)
+                .putExtra(android.provider.CalendarContract.Events.TITLE,who.isEmpty()?"Plans":"With "+who).putExtra(android.provider.CalendarContract.Events.DESCRIPTION,PairedProtocol.text(m));
+            try{startActivity(add);}catch(Exception e){toast("No calendar app is installed.");}return;}
+        String url=h.kind.equals("flight")?SmartText.flightUrl(h):SmartText.trackingUrl(h);
+        try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));}catch(Exception e){toast("No browser is installed.");}}
+    // Quick replies and @ names: one row of chips above the message box.
+    private static final String DEFAULT_QUICK="On my way\nRunning a few minutes late\nCall you in 10\nCan't talk now, text me\nSounds good!\nThank you!";
+    private List<String> quickReplies(){List<String> out=new ArrayList<>();for(String line:getSharedPreferences("paired",MODE_PRIVATE).getString("quick_replies",DEFAULT_QUICK).split("\n"))if(!line.trim().isEmpty())out.add(line.trim());return out;}
+    private void updateQuickRow(){if(quickRow==null||composer==null)return;String t=composer.getText().toString();int cursor=Math.max(0,composer.getSelectionStart());
+        JSONObject c=store.chat(chatId);
+        // Typing @ in a group suggests members.
+        java.util.regex.Matcher at=java.util.regex.Pattern.compile("(?:^|\\s)@([\\p{L}'-]*)$").matcher(t.substring(0,Math.min(cursor,t.length())));
+        if(c!=null&&PairedProtocol.other(c)==null&&at.find()){String part=at.group(1).toLowerCase(Locale.ROOT);quickRow.removeAllViews();int start=at.start(1)-1;
+            for(JSONObject p:PairedProtocol.members(c)){String full=PairedProtocol.name(p),first=ChatText.firstName(full);if(first.isEmpty()||!first.toLowerCase(Locale.ROOT).startsWith(part))continue;
+                quickRow.addView(quickChip("@"+first,()->{String now=composer.getText().toString();int end=Math.min(cursor,now.length());String next=now.substring(0,start)+"@"+first+" "+now.substring(end);composer.setText(next);composer.setSelection(Math.min(next.length(),start+first.length()+2));},null));}
+            quickScroll.setVisibility(quickRow.getChildCount()>0?View.VISIBLE:View.GONE);return;}
+        boolean show=composer.hasFocus()&&t.trim().isEmpty()&&quickRepliesOn();quickScroll.setVisibility(show?View.VISIBLE:View.GONE);if(!show)return;
+        quickRow.removeAllViews();for(String q:quickReplies())quickRow.addView(quickChip(q,()->{composer.setText(q);composer.setSelection(q.length());},()->removeQuickReply(q)));
+        quickRow.addView(quickChip("+ Add",this::addQuickReply,null));}
+    private boolean quickRepliesOn(){return getSharedPreferences("paired",MODE_PRIVATE).getBoolean("quick_replies_on",true);}
+    private View quickChip(String label,Runnable tap,Runnable longPress){TextView chip=text(label,14,ink,false);chip.setPadding(dp(14),dp(8),dp(14),dp(8));chip.setBackground(shape(surface,18));chip.setSingleLine(true);
+        chip.setOnClickListener(v->tap.run());if(longPress!=null)chip.setOnLongClickListener(v->{longPress.run();return true;});
+        LinearLayout.LayoutParams l=new LinearLayout.LayoutParams(-2,-2);l.setMarginEnd(dp(8));chip.setLayoutParams(l);return chip;}
+    private void addQuickReply(){EditText e=input("A phrase you send often");e.setSingleLine(true);
+        new AlertDialog.Builder(this).setTitle("Add quick reply").setView(e).setNegativeButton("Cancel",null).setPositiveButton("Add",(d,w)->{String v=e.getText().toString().trim().replace("\n"," ");if(v.isEmpty())return;
+            List<String> list=new ArrayList<>(quickReplies());list.add(v);saveQuickReplies(list);updateQuickRow();}).show();}
+    private void removeQuickReply(String q){new AlertDialog.Builder(this).setMessage("Remove \u201c"+q+"\u201d from quick replies?").setNegativeButton("Cancel",null)
+        .setPositiveButton("Remove",(d,w)->{List<String> list=new ArrayList<>(quickReplies());list.remove(q);saveQuickReplies(list);updateQuickRow();}).show();}
+    private void saveQuickReplies(List<String> list){getSharedPreferences("paired",MODE_PRIVATE).edit().putString("quick_replies",String.join("\n",list)).apply();}
+    private void editQuickReplies(){EditText e=input("One per line");e.setSingleLine(false);e.setMinLines(4);e.setText(String.join("\n",quickReplies()));
+        new AlertDialog.Builder(this).setTitle("Quick replies").setMessage("Shown above the message box when it's empty. Tap one to use it; hold one to remove it.").setView(e)
+            .setNeutralButton(quickRepliesOn()?"Turn off":"Turn on",(d,w)->{getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("quick_replies_on",!quickRepliesOn()).apply();settings();})
+            .setNegativeButton("Cancel",null).setPositiveButton("Save",(d,w)->{List<String> list=new ArrayList<>();for(String line:e.getText().toString().split("\n"))if(!line.trim().isEmpty())list.add(line.trim());saveQuickReplies(list);settings();}).show();}
+    // Send my location
+    private static final int LOCATION_PERMISSION=95;
+    private void shareLocation(){if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED&&checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)!=PackageManager.PERMISSION_GRANTED){
+            requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION,Manifest.permission.ACCESS_COARSE_LOCATION},LOCATION_PERMISSION);return;}
+        android.location.LocationManager lm=getSystemService(android.location.LocationManager.class);
+        if(!lm.isLocationEnabled()){toast("Turn on Location in your phone's settings first.");return;}
+        String provider=lm.hasProvider(android.location.LocationManager.FUSED_PROVIDER)&&lm.isProviderEnabled(android.location.LocationManager.FUSED_PROVIDER)?android.location.LocationManager.FUSED_PROVIDER
+            :lm.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)?android.location.LocationManager.GPS_PROVIDER:android.location.LocationManager.NETWORK_PROVIDER;
+        toast("Finding your location…");String chat=chatId;
+        try{lm.getCurrentLocation(provider,null,getMainExecutor(),loc->{android.location.Location use=loc;
+            if(use==null)for(String p:lm.getProviders(true)){try{android.location.Location last=lm.getLastKnownLocation(p);if(last!=null&&(use==null||last.getTime()>use.getTime()))use=last;}catch(SecurityException ignored){}}
+            if(use==null){toast("Couldn't find your location. Try again outside or with Wi-Fi on.");return;}
+            String ll=String.format(Locale.US,"%.5f,%.5f",use.getLatitude(),use.getLongitude());String link="My location: https://maps.google.com/?q="+ll;
+            if(!screen.equals("chat")||!chatId.equals(chat)||composer==null)return;String now=composer.getText().toString().trim();composer.setText(now.isEmpty()?link:now+"\n"+link);composer.setSelection(composer.getText().length());});}
+        catch(SecurityException e){toast("Location permission is needed to share where you are.");}}
+    // Keyword alerts
+    private void editKeywords(){EditText e=input("Words or phrases, separated by commas");e.setText(getSharedPreferences("paired",MODE_PRIVATE).getString("alert_keywords",""));
+        new AlertDialog.Builder(this).setTitle("Keyword alerts").setMessage("When a message contains one of these, you're notified even if that chat is muted or snoozed.").setView(e)
+            .setNegativeButton("Cancel",null).setPositiveButton("Save",(d,w)->{getSharedPreferences("paired",MODE_PRIVATE).edit().putString("alert_keywords",e.getText().toString().trim()).apply();settings();}).show();}
+    // Busy auto-reply
+    private boolean autoReplyActive(){return PairedService.autoReplyUntil(this)>System.currentTimeMillis();}
+    private View autoReplyBanner(){LinearLayout card=row();card.setPadding(dp(16),dp(10),dp(8),dp(10));card.setBackground(shape(fab,16));long until=PairedService.autoReplyUntil(this);
+        TextView t=text("Auto-reply is on"+(until==Long.MAX_VALUE?"":" until "+(android.text.format.DateUtils.isToday(until)?"":new SimpleDateFormat("EEE ",Locale.getDefault()).format(new Date(until)))+timeOnly(until)),14,onFab,true);card.addView(t,new LinearLayout.LayoutParams(0,-2,1));
+        TextView off=text("Turn off",14,onFab,false);off.setPadding(dp(10),dp(4),dp(8),dp(4));off.setOnClickListener(v->{PairedService.setAutoReply(this,0);renderInbox();});card.addView(off);
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.setMargins(dp(4),dp(4),dp(4),dp(8));card.setLayoutParams(lp);return card;}
+    private void autoReplyMenu(){java.util.Calendar morning=java.util.Calendar.getInstance();morning.add(java.util.Calendar.DAY_OF_YEAR,1);morning.set(java.util.Calendar.HOUR_OF_DAY,8);morning.set(java.util.Calendar.MINUTE,0);morning.set(java.util.Calendar.SECOND,0);
+        long now=System.currentTimeMillis();List<String> labels=new ArrayList<>(java.util.Arrays.asList("On for 1 hour","On for 3 hours","On until tomorrow, "+timeOnly(morning.getTimeInMillis()),"On until I turn it off","Edit the reply…"));
+        long[] untils={now+3_600_000L,now+3*3_600_000L,morning.getTimeInMillis(),Long.MAX_VALUE};List<Runnable> actions=new ArrayList<>();
+        for(long u:untils)actions.add(()->{PairedService.setAutoReply(this,u);toast("Auto-reply on");settings();});
+        actions.add(()->{EditText e=input("Reply text");e.setText(PairedService.autoReplyText(this));new AlertDialog.Builder(this).setTitle("Auto-reply").setView(e).setNegativeButton("Cancel",null)
+            .setPositiveButton("Save",(d,w)->{String v=e.getText().toString().trim();if(!v.isEmpty())getSharedPreferences("paired",MODE_PRIVATE).edit().putString("autoreply_text",v).apply();settings();}).show();});
+        if(autoReplyActive()){labels.add("Turn off");actions.add(()->{PairedService.setAutoReply(this,0);settings();});}
+        menuSheet("Busy auto-reply",labels,actions);}
     // ---- 0.9: forward, select, mark all read, theme, text size, backup ----
     private float textScale=1f;private boolean forwardingNow,selecting;private final LinkedHashMap<String,JSONObject> chosen=new LinkedHashMap<>();
     private LinearLayout selectionBar;private FrameLayout chatFrame;private static final int RESTORE_BACKUP=93;
@@ -1268,7 +1407,7 @@ public class PairedActivity extends Activity {
         for(Outgoing o:incoming)o.file.delete();incoming.clear();incoming.addAll(files);incomingText=body.isEmpty()?null:body;forwardingNow=true;
         if(missing>0)toast(missing==1?"One attachment isn't downloaded yet and was left out.":missing+" attachments aren't downloaded yet and were left out.");
         if(selecting)stopSelecting();if(bubble()){startActivity(new Intent(this,PairedActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));return;}
-        folder=1;unknownOnly=false;inbox();}
+        folder=1;unknownOnly=false;promoOnly=false;inbox();}
     private Outgoing copyFile(File source,String name,String mime) throws Exception{if(name==null||name.isEmpty())name="attachment";if(mime==null||mime.isEmpty())mime="application/octet-stream";
         File dir=new File(getCacheDir(),"outgoing");if(!dir.isDirectory())dir.mkdirs();File target=new File(dir,java.util.UUID.randomUUID()+"-"+name.replaceAll("[^A-Za-z0-9._-]","_"));
         java.nio.file.Files.copy(source.toPath(),target.toPath());return new Outgoing(target,name,mime);}
@@ -1589,6 +1728,7 @@ public class PairedActivity extends Activity {
         if(recordBar!=null){recordBar.setVisibility(View.GONE);composeRow.setVisibility(View.VISIBLE);}}
     @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] results){super.onRequestPermissionsResult(request,permissions,results);
         if(request==77){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)startRecording();else toast("Message Center needs the microphone to record voice messages.");}
+        if(request==LOCATION_PERMISSION){boolean any=false;for(int r:results)if(r==PackageManager.PERMISSION_GRANTED)any=true;if(any)shareLocation();else toast("Location permission is needed to share where you are.");return;}
         if(request==79&&results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED){phoneChecked.clear();photos.clear();if(screen.equals("inbox"))renderInbox();else if(screen.equals("settings"))settings();}
         if(request==78){JSONObject pending=pendingTranscription;pendingTranscription=null;if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED&&pending!=null)transcribe(pending);else if(pending!=null)toast("Transcription needs microphone access.");}}
     /** Plays an audio attachment in place; tap again to pause. */
@@ -1656,6 +1796,15 @@ public class PairedActivity extends Activity {
         String themeMode=getSharedPreferences("paired",MODE_PRIVATE).getString("theme","system");
         content.addView(button("Theme: "+(themeMode.equals("light")?"Light":themeMode.equals("dark")?"Dark":"Match phone")+" (tap to change)",false,()->{String next=themeMode.equals("system")?"light":themeMode.equals("light")?"dark":"system";appTheme(next);}));gap(content,8);
         content.addView(button("Text size: "+scaleLabel(textScale)+" (tap to change)",false,()->{float next=textScale<1f?1f:textScale<1.15f?1.15f:textScale<1.3f?1.3f:0.9f;getSharedPreferences("paired",MODE_PRIVATE).edit().putFloat("text_scale",next).apply();settings();}));gap(content,8);
+        long arUntil=PairedService.autoReplyUntil(this);
+        content.addView(button(arUntil>System.currentTimeMillis()?"Busy auto-reply: on"+(arUntil==Long.MAX_VALUE?"":" until "+timeOnly(arUntil)):"Busy auto-reply: off",false,this::autoReplyMenu));
+        note(content,"Replies once an hour per person, only to saved contacts in one-to-one chats: \u201c"+PairedService.autoReplyText(this)+"\u201d");
+        String keywords=getSharedPreferences("paired",MODE_PRIVATE).getString("alert_keywords","");
+        content.addView(button(keywords.isEmpty()?"Keyword alerts: add words":"Keyword alerts: "+keywords,false,this::editKeywords));gap(content,8);
+        content.addView(button("Quick replies"+(quickRepliesOn()?" ("+quickReplies().size()+")":": off"),false,this::editQuickReplies));gap(content,8);
+        boolean promosOn=promotionsSeparate();
+        content.addView(button(promosOn?"Promotions: kept out of the inbox":"Promotions: shown in the inbox",false,()->{getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("promotions_separate",!promosOn).apply();settings();}));gap(content,8);
+        content.addView(button("Delete old verification codes…",false,this::clearOldCodes));gap(content,8);
         int nudge=Nudges.minutes(this);
         content.addView(button(nudge<=0?"Unread reminders for pinned chats: off":"Unread reminders for pinned chats: every "+(nudge<60?nudge+" minutes":nudge==60?"hour":(nudge/60)+" hours"),false,()->{
             List<String> labels=java.util.Arrays.asList("Every hour","Every 2 hours","Every 4 hours","Off");int[] values={60,120,240,0};List<Runnable> actions=new ArrayList<>();
