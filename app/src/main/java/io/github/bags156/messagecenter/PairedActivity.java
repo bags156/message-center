@@ -1041,6 +1041,9 @@ public class PairedActivity extends Activity {
     /** Photos open in the viewer; videos, audio and files open in another app. */
     private void openMedia(JSONObject media){
         if(PairedProtocol.mediaKind(media).equals("image")){viewer(media);return;}
+        if(PairedProtocol.mediaKind(media).equals("video")){withFile(media,"Downloading the video…",file->{Intent play=VideoPlayerActivity.open(this,file,MediaCache.mime(media),displayName(media));
+            // From a bubble, play full screen rather than inside the small bubble window.
+            if(bubble())play.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);startActivity(play);});return;}
         withFile(media,"Downloading…",file->openExternally(file,media));
     }
     private interface FileAction{void run(File file);}
@@ -1901,6 +1904,9 @@ public class PairedActivity extends Activity {
             for(int v:values)actions.add(()->{decoder.execute(()->Nudges.setMinutes(this,v));ui.postDelayed(this::settings,150);});
             menuSheet("Remind me about unread pinned chats",labels,actions);}));
         note(content,"When someone in a pinned chat messages you and it's still unread (or marked unread), you get a reminder, up to 3 times. Not between 10 PM and 8 AM, and not for muted or snoozed chats. \"Not until next message\" on the reminder stops it for that chat.");
+        if(nudge>0){TextView status=text("Checking…",13,muted,false);status.setPadding(dp(4),0,dp(4),dp(8));content.addView(status);
+            decoder.execute(()->{Nudges.reschedule(this);String line=Nudges.summary(this);ui.post(()->status.setText(line));});
+            content.addView(button("Send a test reminder",false,()->{Nudges.test(this);toast("Sent. Check your notifications.");}));gap(content,8);}
         content.addView(button("Maps app for addresses: "+mapsAppLabel(),false,()->chooseMapsApp(null)));gap(content,8);
         content.addView(button("Back up app data",false,this::backupNow));gap(content,8);
         content.addView(button("Restore from a backup",false,()->{try{startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*").putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/json","text/plain","application/octet-stream"}),RESTORE_BACKUP);}catch(Exception e){toast("No file picker is available.");}}));gap(content,8);
@@ -1909,6 +1915,8 @@ public class PairedActivity extends Activity {
         boolean undoOn=undoSendOn();content.addView(button(undoOn?"Undo send: on (5 seconds to take a message back)":"Undo send: off",false,()->{getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("undo_send",!undoOn).apply();settings();}));gap(content,8);
         boolean copyOn=PairedService.autoCopyCodes(this);
         content.addView(button(copyOn?"Auto-copy verification codes: on":"Auto-copy verification codes: off",false,()->{getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("auto_copy_codes",!copyOn).apply();settings();}));gap(content,8);
+        content.addView(button("Hide the \"Message Center is running\" notification",false,()->{try{startActivity(PairedService.channelSettings(this,PairedService.RUNNING));}catch(Exception e){openAppSettings();}}));
+        note(content,"Android requires that notification while Message Center stays connected. Turn it off on the next screen and messages keep arriving. If the connection drops and doesn't come back within a few minutes, a separate notification tells you.");
         content.addView(button("Bubble settings",false,()->startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()))));gap(content,8);
         content.addView(button("Reconnect",true,()->{PairedService.disconnect(this,false);new android.os.Handler().postDelayed(()->{PairedService.start(this);settings();},300);}));gap(content,8);
         content.addView(button("Sign in / pair again",false,this::signIn));gap(content,8);

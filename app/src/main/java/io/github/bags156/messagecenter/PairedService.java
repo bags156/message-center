@@ -40,8 +40,12 @@ import io.github.bags156.gm.bridge.Client;
 /** Own network connection and notifications; no NotificationListener dependency. */
 public final class PairedService extends Service {
     static final String CHANGED="io.github.bags156.messagecenter.PAIRED_CHANGED";
-    private static final String CONNECTION="paired-connection",MESSAGES="paired-messages";
-    private static final int FOREGROUND_ID=100;
+    private static final String OLD_CONNECTION="paired-connection",MESSAGES="paired-messages";
+    /** The quiet "running" notification Android requires, and the alert shown only when the connection is lost. */
+    static final String RUNNING="paired-running",PROBLEMS="paired-problems";
+    private static final int FOREGROUND_ID=100,PROBLEM_ID=101;
+    /** How long a dropped connection may try to recover by itself before you are told (network switches are brief). */
+    private static final long PROBLEM_GRACE_MS=3*60_000L;
     private static volatile PairedService current;
     private static volatile String pendingCookies;
     private final ExecutorService network=Executors.newSingleThreadExecutor(),events=Executors.newSingleThreadExecutor();
@@ -96,7 +100,11 @@ public final class PairedService extends Service {
     @Override public void onCreate() {
         super.onCreate();current=this;HevcSandbox.init(this);Nicknames.load(this);store=new PairedStore(this);vault=new SessionVault(this);outbox=new Outbox(this);receipts=new ReadReceiptQueue(this);outbox.recover();watchWakeAndNetwork();
         NotificationManager manager=getSystemService(NotificationManager.class);
-        manager.createNotificationChannel(new NotificationChannel(CONNECTION,"Background connection",NotificationManager.IMPORTANCE_LOW));
+        try{manager.deleteNotificationChannel(OLD_CONNECTION);}catch(Exception ignored){}
+        NotificationChannel running=new NotificationChannel(RUNNING,"Running in background",NotificationManager.IMPORTANCE_MIN);
+        running.setDescription("Android requires this while Message Center stays connected. You can turn it off; messages keep arriving.");running.setShowBadge(false);manager.createNotificationChannel(running);
+        NotificationChannel problems=new NotificationChannel(PROBLEMS,"Connection problems",NotificationManager.IMPORTANCE_DEFAULT);
+        problems.setDescription("Only when Message Center loses its connection to Google Messages and can't get it back.");problems.setSound(null,null);manager.createNotificationChannel(problems);
         NotificationChannel messages=new NotificationChannel(MESSAGES,"Incoming messages",NotificationManager.IMPORTANCE_HIGH);
         messages.setDescription("Messages received through your paired Google Messages connection");manager.createNotificationChannel(messages);
         Notification foreground=connectionNotification();
@@ -356,9 +364,36 @@ public final class PairedService extends Service {
         if(!id.isEmpty())intent.setData(chatUri(id)).putExtra("chat",id);
         return PendingIntent.getActivity(this,id.isEmpty()?0:1,intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
     }
+    /** The notification Android requires while connected: the same quiet text always, with Hide to turn it off. */
     private Notification connectionNotification() {
-        return new Notification.Builder(this,CONNECTION).setSmallIcon(R.drawable.ic_notification).setContentTitle("Message Center connection")
-            .setContentText(status).setContentIntent(openIntent("")).setOngoing(true).setOnlyAlertOnce(true).setShowWhen(false).build();
+        PendingIntent hide=PendingIntent.getActivity(this,0x41de,channelSettings(this,RUNNING),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
+        return new Notification.Builder(this,RUNNING).setSmallIcon(R.drawable.ic_notification).setContentTitle("Message Center is running")
+            .setContentText("Keeps your messages coming. Tap Hide to turn off this notification.").setContentIntent(openIntent("")).setOngoing(true).setOnlyAlertOnce(true).setShowWhen(false)
+            .setCategory(Notification.CATEGORY_SERVICE).addAction(new Notification.Action.Builder(null,"Hide",hide).build()).build();
+    }
+    /** Android's settings page for one of this app's notification channels. */
+    static Intent channelSettings(Context context,String channel){return new Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,context.getPackageName()).putExtra(Settings.EXTRA_CHANNEL_ID,channel).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);}
+    private long problemSince;
+    private final Runnable problemCheck=()->showProblem(false);
+    /** Connected: clear any alert. Not connected: alert at once if you need to act, otherwise only if it lasts. */
+    private void checkProblem(){
+        String now=status==null?"":status;
+        if(ready&&!inactive){problemSince=0;main.removeCallbacks(problemCheck);getSystemService(NotificationManager.class).cancel(PROBLEM_ID);return;}
+        // Signing in and pairing are things you're doing right now; nothing to warn about.
+        if(now.startsWith("Sign in")||now.startsWith("Approve")||now.startsWith("Starting device pairing")||now.startsWith("Paired.")){main.removeCallbacks(problemCheck);problemSince=0;return;}
+        boolean act=inactive||now.startsWith("Google session expired")||now.startsWith("Connection ended")||now.startsWith("Could not open")||now.startsWith("Session could not");
+        if(act){showProblem(true);return;}
+        if(problemSince==0){problemSince=System.currentTimeMillis();main.removeCallbacks(problemCheck);main.postDelayed(problemCheck,PROBLEM_GRACE_MS);}
+        else if(isProblemShowing())showProblem(true); // keep its text current
+    }
+    private boolean isProblemShowing(){for(StatusBarNotification n:getSystemService(NotificationManager.class).getActiveNotifications())if(n.getId()==PROBLEM_ID)return true;return false;}
+    private void showProblem(boolean now){
+        if(ready&&!inactive)return;
+        if(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return;
+        String text=status==null||status.isEmpty()?"Trying to reconnect…":status;
+        getSystemService(NotificationManager.class).notify(PROBLEM_ID,new Notification.Builder(this,PROBLEMS).setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(inactive?"Message Center is paused":"Message Center is disconnected").setContentText(text).setStyle(new Notification.BigTextStyle().bigText(text))
+            .setContentIntent(openIntent("")).setOnlyAlertOnce(true).setCategory(Notification.CATEGORY_STATUS).build());
     }
     /** Message IDs whose code was copied automatically, so each code is copied once. */
     private final java.util.Set<String> autoCopied=java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());private volatile String copiedCode="";
@@ -573,14 +608,14 @@ public final class PairedService extends Service {
         JSONObject p=PairedProtocol.participant(chat,participantID);
         return Avatars.initial(PairedProtocol.initial(name),PairedProtocol.color(p==null?"":p.optString("avatarHexColor"),Avatars.fallbackColor(name)),128);
     }
-    private void update(String value) {status=value;if(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED)getSystemService(NotificationManager.class).notify(FOREGROUND_ID,connectionNotification());changed("STATUS");}
+    private void update(String value) {status=value;main.post(this::checkProblem);changed("STATUS");}
     private final Runnable widgetRefresh=()->{try{MessagesWidget.update(this);}catch(Exception ignored){}new Thread(()->Nudges.reschedule(this),"nudges").start();};
     private void changed(String kind) {sendBroadcast(new Intent(CHANGED).setPackage(getPackageName()).putExtra("kind",kind));
         // The home screen widget follows chat changes, at most every two seconds.
         if(kind.equals("CONVERSATION")||kind.equals("MESSAGE")){main.removeCallbacks(widgetRefresh);main.postDelayed(widgetRefresh,2000);}}
     @Override public IBinder onBind(Intent intent) {return null;}
     @Override public void onDestroy() {
-        generation.incrementAndGet();ready=false;main.removeCallbacks(syncTick);main.removeCallbacks(receiptRetry);if(current==this)current=null;
+        generation.incrementAndGet();ready=false;main.removeCallbacks(syncTick);main.removeCallbacks(problemCheck);main.removeCallbacks(receiptRetry);if(current==this)current=null;
         try{if(screenReceiver!=null)unregisterReceiver(screenReceiver);}catch(Exception ignored){}
         try{if(networkCallback!=null)getSystemService(android.net.ConnectivityManager.class).unregisterNetworkCallback(networkCallback);}catch(Exception ignored){}
         Client old=client;client=null;network.shutdownNow();events.shutdownNow();media.shutdownNow();phoneRequests.shutdownNow();readRequests.shutdownNow();

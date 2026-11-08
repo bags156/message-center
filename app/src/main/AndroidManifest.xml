@@ -10,7 +10,8 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Only while you record a voice message. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- Exact timing for message reminders, scheduled sends, and unread reminders (granted automatically; Android 13+). -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
@@ -60,6 +61,8 @@
             android:documentLaunchMode="always" android:windowSoftInputMode="adjustResize" android:label="Message Center" />
         <!-- Lets another app open or share one downloaded attachment, only when this app grants that file. -->
         <provider android:name=".MediaProvider" android:authorities="io.github.bags156.messagecenter.media" android:exported="false" android:grantUriPermissions="true" />
+        <activity android:name=".VideoPlayerActivity" android:exported="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden" />
         <service android:name=".PairedService" android:exported="false" android:foregroundServiceType="remoteMessaging" />
         <!-- Decodes pictures the phone's own decoders refuse (iPhone Genmoji) in a sandbox with no access to the app's data. -->
         <service android:name=".HevcDecoderService" android:exported="false" android:process=":picture_decoder" android:isolatedProcess="true" />

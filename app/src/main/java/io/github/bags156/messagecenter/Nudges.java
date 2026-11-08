@@ -56,6 +56,7 @@ public final class Nudges extends BroadcastReceiver {
         Nicknames.load(app);
         PairedStore shared = PairedService.sharedStore(), own = shared == null ? new PairedStore(app) : null, store = shared != null ? shared : own;
         SharedPreferences.Editor edit = s.edit();
+        String nextTitle = "", problem = "";
         try {
             for (JSONObject chat : store.chats("", 1)) {
                 String id = chat.optString("conversationID");
@@ -80,22 +81,56 @@ public final class Nudges extends BroadcastReceiver {
                     due = NudgeTiming.next(received, now, sent + 1, delay, zone);
                     if (due < 0) continue;
                 }
-                next = Math.min(next, due);
+                if (due < next) { next = due; nextTitle = PairedProtocol.title(chat); }
             }
-        } catch (Exception ignored) {
-        } finally { edit.apply(); if (own != null) own.close(); }
+        } catch (Exception e) {
+            problem = String.valueOf(e);
+        } finally {
+            // What's coming up, so Settings can show that reminders are working.
+            edit.putLong("next_at", next == Long.MAX_VALUE ? 0 : next).putString("next_title", nextTitle).putLong("checked_at", now).putString("problem", problem);
+            edit.apply(); if (own != null) own.close();
+        }
         if (next == Long.MAX_VALUE) alarms.cancel(check);
+        // Exact: an ordinary alarm may arrive up to 75% of the wait late (1.5 hours late on a 2-hour reminder).
+        else if (alarms.canScheduleExactAlarms()) alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next, check);
         else alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next, check);
     }
 
-    private static void post(Context context, NotificationManager nm, JSONObject chat, JSONObject message) {
+    /** One line for Settings: the next reminder, the last one, or why none is waiting. */
+    static String summary(Context context) {
+        if (minutes(context) <= 0) return "";
+        SharedPreferences s = state(context);
+        java.text.DateFormat time = android.text.format.DateFormat.getTimeFormat(context);
+        long next = s.getLong("next_at", 0), last = s.getLong("last_at", 0), today = System.currentTimeMillis();
+        String when = next <= 0 ? "" : (android.text.format.DateUtils.isToday(next) ? "" : "tomorrow ") + time.format(new java.util.Date(next));
+        StringBuilder b = new StringBuilder(next > 0 ? "Next reminder: " + s.getString("next_title", "a pinned chat") + " at " + when : "No reminder waiting. Only pinned chats with unread messages get them.");
+        if (last > 0 && today - last < 7 * 86_400_000L) b.append("\nLast sent: ").append(s.getString("last_title", "")).append(", ").append(android.text.format.DateUtils.getRelativeTimeSpanString(last, today, 60_000L));
+        if (!s.getString("problem", "").isEmpty()) b.append("\nLast check failed: ").append(s.getString("problem", ""));
+        return b.toString();
+    }
+
+    /** A sample reminder, to check that they show up and how they look. */
+    static void test(Context context) {
+        try {
+            post(context, context.getSystemService(NotificationManager.class), new JSONObject(), new JSONObject(), false);
+        } catch (Exception ignored) {}
+    }
+
+    private static void post(Context context, NotificationManager nm, JSONObject chat, JSONObject message) { post(context, nm, chat, message, true); }
+    private static void post(Context context, NotificationManager nm, JSONObject chat, JSONObject message, boolean real) {
         if (context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return;
         if (nm.getNotificationChannel(CHANNEL) == null) {
             NotificationChannel ch = new NotificationChannel(CHANNEL, "Unread reminders", NotificationManager.IMPORTANCE_DEFAULT);
             ch.setDescription("Reminders about unread messages in pinned chats"); nm.createNotificationChannel(ch);
         }
         String id = chat.optString("conversationID"), mid = message.optString("messageID"), title = PairedProtocol.title(chat);
-        String body = PairedProtocol.body(message);
+        String body = real ? PairedProtocol.body(message) : "This is what an unread reminder looks like. Real ones offer Mark read and Not until next message.";
+        if (!real) {
+            PendingIntent app = PendingIntent.getActivity(context, 0x7e57, new Intent(context, PairedActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            nm.notify("nudge:test", NOTIFICATION_ID, new Notification.Builder(context, CHANNEL).setSmallIcon(R.drawable.ic_notification).setContentTitle("Still unread: Test reminder")
+                .setContentText(body).setStyle(new Notification.BigTextStyle().bigText(body)).setCategory(Notification.CATEGORY_REMINDER).setContentIntent(app).setAutoCancel(true).build());
+            return;
+        }
         Intent open = new Intent(context, PairedActivity.class).setAction(PairedActivity.OPEN_CHAT).setData(Uri.parse("messagecenter://nudge/" + id))
             .putExtra("chat", id).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         int code = id.hashCode();
@@ -110,6 +145,7 @@ public final class Nudges extends BroadcastReceiver {
             .addAction(new Notification.Action.Builder(null, "Mark read", read).build())
             .addAction(new Notification.Action.Builder(null, "Not until next message", later).build()).build();
         nm.notify("nudge:" + id, NOTIFICATION_ID, n);
+        state(context).edit().putLong("last_at", System.currentTimeMillis()).putString("last_title", title).apply();
     }
 
     @Override public void onReceive(Context context, Intent intent) {

@@ -1,9 +1,14 @@
-Message Center 1.0.5.
+Message Center 1.0.6.
 
-**Drafts follow you between the bubble and the app**
-- Start typing in a chat bubble, open the full app, and your unsent message is there with the cursor at the end, ready to keep going. It works the other way too, and drafts now survive closing the app.
+**Videos play inside the app**
+- Tapping a video opens Message Center's own player: play/pause, a scrub bar with times, Save and Share. Turn the phone sideways for a bigger picture; it keeps playing. If a video uses a format Android can't play, you can still open it in another app.
 
-**See when each message was sent**
-- Drag a conversation to the left and every message's time slides in on the right; let go and it slides back (like iMessage). Swiping right on a message still replies.
+**Quieter connection notification**
+- The always-there notification is now a quiet "Message Center is running" that never changes. Android requires it while connected, but its **Hide** button (or Settings → Hide the "Message Center is running" notification) takes you straight to the switch that turns it off; messages keep arriving.
+- A separate notification appears only when the connection drops and doesn't come back within 3 minutes (or right away if you need to do something, like sign in again). It disappears once you're reconnected.
 
-Install over 1.0.4; the package and signing key are unchanged.
+**Unread reminders arrive on time**
+- Reminders used Android's "inexact" alarms, which can arrive up to an hour and a half late on a 2-hour reminder. They now use exact alarms, as do message reminders and scheduled messages.
+- Settings now shows the next reminder (which chat and when) and the last one sent, and has **Send a test reminder**.
+
+Install over 1.0.5; the package and signing key are unchanged.
