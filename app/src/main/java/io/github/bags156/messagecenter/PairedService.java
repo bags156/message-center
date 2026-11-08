@@ -14,6 +14,7 @@ import android.net.Uri;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ShortcutInfo;
 import android.content.pm.ShortcutManager;
@@ -330,6 +331,11 @@ public final class PairedService extends Service {
     private static final Map<String,Long> fullAskedAt=new ConcurrentHashMap<>();
     private static final Map<String,Long> fullFailedAt=new ConcurrentHashMap<>();private static final Map<String,String> fullFailure=new ConcurrentHashMap<>();
     static final long ASK_AGAIN_MS=180_000;
+    /** Asks the phone answered without ever sending the attachment, saved so it survives restarts. After this many it's taken as not on the phone. */
+    static final int MISSING_AFTER=3;
+    private static SharedPreferences askedPrefs(Context c){return c.getSharedPreferences("phone_media",MODE_PRIVATE);}
+    /** The phone was asked for this attachment MISSING_AFTER times and never sent it: it most likely doesn't have it any more. */
+    static boolean missingOnPhone(Context c,JSONObject media){return askedPrefs(c).getInt(media.optString("_message")+":"+media.optString("_part"),0)>=MISSING_AFTER;}
     /** When the phone was last asked for this attachment, or 0. */
     static long askedAt(JSONObject media){Long t=fullAskedAt.get(media.optString("_message")+":"+media.optString("_part"));return t==null?0:t;}
     static void requestFullMedia(JSONObject media,boolean again,Result done) {
@@ -344,13 +350,15 @@ public final class PairedService extends Service {
         PairedService s=current;if(s==null||!s.ready||s.client==null){done.done("","Connect to Google Messages first.");return;}
         fullAskedAt.put(key,now);
         s.phoneRequests.execute(()->{String err="";try{s.client.requestFullMedia(message,part);}catch(Exception e){err=e.getMessage()==null?"Your phone didn't respond.":e.getMessage();}
-            String fe=err;if(!fe.isEmpty()){fullAskedAt.remove(key);fullFailedAt.put(key,System.currentTimeMillis());fullFailure.put(key,fe);}else fullFailedAt.remove(key);
+            String fe=err;if(!fe.isEmpty()){fullAskedAt.remove(key);fullFailedAt.put(key,System.currentTimeMillis());fullFailure.put(key,fe);}
+            else{fullFailedAt.remove(key);SharedPreferences asks=askedPrefs(s);asks.edit().putInt(key,asks.getInt(key,0)+1).apply();}
             Diagnostics.note(fe.isEmpty()?"Asked phone for attachment "+shortId(key)+(asked!=null?" (again)":""):"Phone refused attachment "+shortId(key)+": "+fe);
             s.main.post(()->done.done("",fe));});
     }
     /** Notes in the problem report when an attachment the phone was asked for shows up (IDs only, never content). */
-    private static void fullArrived(JSONObject message){
+    private void fullArrived(JSONObject message){
         for(JSONObject media:PairedProtocol.media(message)){if(!MediaCache.hasFull(media))continue;String key=media.optString("_message")+":"+media.optString("_part");
+            if(askedPrefs(this).contains(key))askedPrefs(this).edit().remove(key).apply();
             Long asked=fullAskedAt.remove(key);if(asked!=null)Diagnostics.note("Phone sent attachment "+shortId(key)+" after "+Math.max(0,(System.currentTimeMillis()-asked)/1000)+"s");}
     }
     private static String shortId(String key){String digits=key.replaceAll("[^A-Za-z0-9:]","");return digits.length()>14?"…"+digits.substring(digits.length()-14):digits;}
@@ -514,7 +522,7 @@ public final class PairedService extends Service {
     }
     // ---- Busy auto-reply ----
     static long autoReplyUntil(Context c){return c.getSharedPreferences("paired",MODE_PRIVATE).getLong("autoreply_until",0);}
-    static void setAutoReply(Context c,long until){c.getSharedPreferences("paired",MODE_PRIVATE).edit().putLong("autoreply_until",until).apply();}
+    static void setAutoReply(Context c,long until){c.getSharedPreferences("paired",MODE_PRIVATE).edit().putLong("autoreply_until",until).apply();BusyTile.changed(c);}
     static String autoReplyText(Context c){return c.getSharedPreferences("paired",MODE_PRIVATE).getString("autoreply_text","Auto-reply: I'm busy right now and will text you back soon.");}
     /**
      * While auto-reply is on: one reply per person per hour, only in one-to-one chats with saved

@@ -156,7 +156,7 @@ public class PairedActivity extends Activity {
             if(screen.equals("chat")){renderMessages(false);if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();if(!bubble())PairedService.clearNotification(this,chatId);}
             else if(screen.equals("inbox")){if(batteryCard!=null&&!showBatteryCard()){root.removeView(batteryCard);batteryCard=null;}renderInbox();refreshInbox(false);
                 if(!bubble()&&PairedService.ready()&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED)askContactPhotos();}}}
-    @Override protected void onPause(){resumed=false;remember();if(inline!=null)inline.pause();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&player.isPlaying()){player.pause();updatePlayLabel();}if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
+    @Override protected void onPause(){resumed=false;if(dictation!=null)stopDictation();remember();if(inline!=null)inline.pause();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&player.isPlaying()){player.pause();updatePlayLabel();}if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
     @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);if(focused)refreshDraft();if(focused&&store!=null){markReadIfAllowed();updateReceiptStatus();}}
     /** Picks up a draft typed in the other window (bubble or full app) so you carry on where you left off. */
     private void refreshDraft(){if(composer==null||drafts==null||chatId.isEmpty()||!screen.equals("chat"))return;String stored=drafts.getOrDefault(chatId,"");
@@ -175,7 +175,7 @@ public class PairedActivity extends Activity {
         receiptStatusView=null;
         // Screenshots are always allowed (an older version could leave them blocked after signing in).
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);if(!name.equals("login"))setRecentsScreenshotEnabled(true);
-        if(recorder!=null)cancelRecording();recordBar=null;composeRow=null;sendButton=null;recordClock=null;screen=name;batteryCard=null;jumpButton=null;statusView=null;statusRow=null;reconnectButton=null;composer=null;items=null;scroll=null;searchRow=null;attachStrip=null;attachScroll=null;replyPanel=null;typingRow=null;messageViews.clear();ui.removeCallbacks(typingTick);if(typingPulse!=null){typingPulse.cancel();typingPulse=null;}
+        if(recorder!=null)cancelRecording();if(dictation!=null)stopDictation();recordBar=null;composeRow=null;sendButton=null;recordClock=null;screen=name;batteryCard=null;jumpButton=null;statusView=null;statusRow=null;reconnectButton=null;composer=null;items=null;scroll=null;searchRow=null;attachStrip=null;attachScroll=null;replyPanel=null;typingRow=null;messageViews.clear();ui.removeCallbacks(typingTick);if(typingPulse!=null){typingPulse.cancel();typingPulse=null;}
         dark=(getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;
         textScale=getSharedPreferences("paired",MODE_PRIVATE).getFloat("text_scale",1f);quickRow=null;quickScroll=null;searchChips=null;selecting=false;chosen.clear();selectionBar=null;chatFrame=null;
         bg=dark?0xff111318:0xfff8f9fc;card=dark?0xff1d2026:Color.WHITE;surface=dark?0xff23252b:0xffe9edf4;ink=dark?0xffe3e2e9:0xff1a1b20;muted=dark?0xffabaeb8:0xff5d5f67;
@@ -371,6 +371,8 @@ public class PairedActivity extends Activity {
         String snippet=ChatText.withoutMediaEmoji(PairedProtocol.string(c.optJSONObject("latestMessage"),"displayContent"));boolean[] mine={PairedProtocol.latestFromMe(c)};
         // Google leaves the preview empty for some events (drafts, some reactions); fall back to the newest synced message.
         if(snippet.isEmpty()){JSONObject last=latestStored(id);if(last!=null)snippet=previewOf(last,c,mine);}
+        // Google's preview of an iPhone reaction is its raw text ("❤️ to “…”"); show it as "Michael reacted ❤️ to “…”".
+        else if(ChatText.tapback(snippet)!=null){String line=ChatText.reactionLine(mine[0]?"You":latestSenderFirst(c),snippet);if(line!=null){snippet=line;mine[0]=false;}}
         boolean placeholder=snippet.isEmpty()&&draft.isEmpty();if(placeholder){snippet="Open to load messages";mine[0]=false;}
         if(!draft.isEmpty())snippet="You: "+draft;else if(mine[0]&&!snippet.isEmpty())snippet="You: "+snippet;
         TextView preview=text(snippet,14,unread?ink:muted,unread);preview.setTextSize(14*textScale);preview.setMaxLines(2);preview.setEllipsize(TextUtils.TruncateAt.END);
@@ -427,6 +429,9 @@ public class PairedActivity extends Activity {
         String line=ChatText.reactionLine(out?"You":senderFirst(m,c),body);if(line!=null){mine[0]=false;return line;}
         mine[0]=out;String reply=ChatText.replyFallbackBody(body);return reply!=null?reply:body;}
     private String senderName(JSONObject m,JSONObject c){return PairedProtocol.person(c,m.optString("participantID"),m.optJSONObject("senderParticipant"));}
+    /** First name of whoever sent a chat's latest message, from Google's chat preview. */
+    private static String latestSenderFirst(JSONObject c){JSONObject other=PairedProtocol.other(c);if(other!=null){String f=PairedProtocol.firstName(other);if(!f.isEmpty())return f;}
+        String n=PairedProtocol.string(c.optJSONObject("latestMessage"),"displayName").trim();return n.isEmpty()?"Someone":n.split("\\s+")[0];}
     private String senderFirst(JSONObject m,JSONObject c){return PairedProtocol.personFirst(c,m.optString("participantID"),m.optJSONObject("senderParticipant"));}
     /** Message text without an iPhone "Replied to a message:" prefix. */
     private static String displayBody(JSONObject m){String body=PairedProtocol.body(m),reply=ChatText.replyFallbackBody(body);return reply!=null?reply:body;}
@@ -567,7 +572,7 @@ public class PairedActivity extends Activity {
         quickRow=row();quickScroll=new HorizontalScrollView(this);quickScroll.setHorizontalScrollBarEnabled(false);quickScroll.setPadding(dp(12),dp(2),dp(12),dp(4));quickScroll.addView(quickRow);quickScroll.setVisibility(View.GONE);root.addView(quickScroll);
         LinearLayout compose=row();compose.setPadding(dp(4),dp(4),dp(8),0);composeRow=compose;
         compose.addView(icon(R.drawable.ic_add,ink,"Attach photos, videos, or files",this::attach));
-        composer=new EditText(this);composer.setHint(PairedProtocol.rcs(c)?"RCS message":"Text message");composer.setTextColor(ink);composer.setHintTextColor(muted);composer.setTextSize(17*textScale);
+        composerHint=PairedProtocol.rcs(c)?"RCS message":"Text message";composer=new EditText(this);composer.setHint(composerHint);composer.setTextColor(ink);composer.setHintTextColor(muted);composer.setTextSize(17*textScale);
         composer.setBackground(shape(surface,28));composer.setPadding(dp(22),dp(14),dp(22),dp(14));composer.setMaxLines(5);
         composer.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);composer.setText(drafts.getOrDefault(id,""));composer.setSelection(composer.length());
         composer.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){remember();maybeSendTyping(s);updateComposeButton();updateQuickRow();}public void afterTextChanged(Editable e){}});
@@ -575,7 +580,7 @@ public class PairedActivity extends Activity {
         composer.setOnReceiveContentListener(new String[]{"image/*","video/*"},keyboardContent);
         compose.addView(composer,new LinearLayout.LayoutParams(0,-2,1));
         sendButton=new ImageView(this);sendButton.setImageResource(R.drawable.ic_send);sendButton.setImageTintList(ColorStateList.valueOf(theme.onAccent(dark)));sendButton.setBackground(oval(theme.accent(dark)));
-        sendButton.setPadding(dp(14),dp(14),dp(14),dp(14));sendButton.setContentDescription("Send");sendButton.setOnClickListener(v->sendOrRecord());sendButton.setOnLongClickListener(v->{scheduleMessage();return true;});
+        sendButton.setPadding(dp(14),dp(14),dp(14),dp(14));sendButton.setContentDescription("Send");sendButton.setOnClickListener(v->sendOrRecord());sendButton.setOnLongClickListener(v->{if(micShowing())startRecording();else if(dictation==null)scheduleMessage();return true;});
         LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(dp(52),dp(52));sl.setMarginStart(dp(8));compose.addView(sendButton,sl);root.addView(compose);renderAttachments();updateComposeButton();applyIncoming();
         chatSettings.setMarkedUnread(id,false);if(!bubble())PairedService.clearNotification(this,id);if(back!=null){restoreSpot=back;renderMessages(false);}else renderMessages(true);if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();
         if(c!=null)requestPhotos(java.util.Collections.singletonList(c));
@@ -1131,8 +1136,11 @@ public class PairedActivity extends Activity {
         // Google sometimes sends a photo with only a preview, or nothing at all, on linked devices (end-to-end
         // encrypted chats do this). The phone sends the full photo when asked, and the message updates by itself.
         boolean ask=!video&&MediaCache.needsPhone(media)&&(fullPhotos()||!thumb)&&!full.isFile();
-        if(ask)tileState(img,media,!PairedService.ready()?"Waiting for the connection…":thumb?"Loading full photo…":"Getting photo from your phone…",null);
-        if(ask&&PairedService.ready())PairedService.requestFullMedia(media,false,(v,e)->{if(!e.isEmpty())tileState(img,media,thumb?"Only a preview • Tap for details":"Couldn't get this photo • Tap for details",e);else waitForPhone(img,media,thumb);});
+        // Asked several times and never sent: say so, and stop asking on its own (Retry and the gallery still ask).
+        boolean missing=ask&&PairedService.missingOnPhone(this,media);
+        if(missing)tileState(img,media,"Not on your phone • Tap for details",NOT_ON_PHONE);
+        else if(ask)tileState(img,media,!PairedService.ready()?"Waiting for the connection…":thumb?"Loading full photo…":"Getting photo from your phone…",null);
+        if(ask&&!missing&&PairedService.ready())PairedService.requestFullMedia(media,false,(v,e)->{if(!e.isEmpty())tileState(img,media,thumb?"Only a preview • Tap for details":"Couldn't get this photo • Tap for details",e);else waitForPhone(img,media,thumb);});
         if(wantFull&&full.isFile()){Bitmap b=MediaCache.peekCover(full,width,height);if(b!=null){img.setTag("full");img.setImageBitmap(b);sharp(img);tileState(img,media,null,null);return;}}
         if(thumb&&!stickerFile){File t=MediaCache.file(this,media,true);Bitmap b=t.isFile()?MediaCache.peekCover(t,width,height):null;
             if(b!=null){img.setImageBitmap(b);if(MediaCache.tiny(t))soft(img);}
@@ -1147,6 +1155,7 @@ public class PairedActivity extends Activity {
             decoder.execute(()->{Bitmap d=MediaCache.decodeToCover(file,width,height,video);img.post(()->{if("animated".equals(img.getTag()))return;if(d!=null){img.setTag("full");img.setImageBitmap(d);sharp(img);tileState(img,media,null,null);if(!video&&MediaCache.sticker(d))becomeSticker(img,d);}
                 else if(!thumb)tileState(img,media,"Can't show this photo here • Tap for details","The file downloaded but Android couldn't read it as a picture.");});});});
     }
+    private static final String NOT_ON_PHONE="Your phone was asked for this photo "+PairedService.MISSING_AFTER+" times and never sent it, so it most likely doesn't have it any more. Older picture messages often don't come across to a new phone. If it doesn't open in Google Messages on your phone either, ask the sender to send it again.";
     /** How long a photo may take to arrive after the phone is asked, before the tile says it hasn't come. */
     private static final long PHONE_PATIENCE_MS=45_000;
     /**
@@ -1157,6 +1166,7 @@ public class PairedActivity extends Activity {
     private void waitForPhone(ImageView img,JSONObject media,boolean thumb){long asked=PairedService.askedAt(media);if(asked==0)return;
         img.postDelayed(()->{if(!img.isAttachedToWindow()||"full".equals(img.getTag()))return;
             JSONObject now=store.message(media.optString("_message"));if(now!=null)for(JSONObject a:PairedProtocol.media(now))if(a.optString("_part").equals(media.optString("_part"))&&MediaCache.hasFull(a))return;
+            if(PairedService.missingOnPhone(this,media)){tileState(img,media,"Not on your phone • Tap for details",NOT_ON_PHONE);return;}
             tileState(img,media,thumb?"Only a preview • Tap to ask again":"Not sent yet • Tap to ask again",
                 "Your phone was asked for this photo but hasn't sent it. It may be asleep or offline, or it may not have the photo any more. Check that it opens in Google Messages on your phone.");},
             Math.max(0,asked+PHONE_PATIENCE_MS-System.currentTimeMillis()));}
@@ -1214,7 +1224,7 @@ public class PairedActivity extends Activity {
     /** Photos and videos sent together: a grid of up to four in one rounded block, "+N" on the last when there are more. */
     private View albumView(JSONObject m,List<JSONObject> parts,boolean outgoing){
         if(parts.size()>4&&PairedService.ready())for(JSONObject hidden:parts.subList(4,parts.size()))
-            if(PairedProtocol.mediaKind(hidden).equals("image")&&MediaCache.needsPhone(hidden)&&(fullPhotos()||!MediaCache.hasThumbnail(hidden))&&!MediaCache.file(this,hidden,false).isFile())PairedService.requestFullMedia(hidden,false,(v,e)->{});
+            if(PairedProtocol.mediaKind(hidden).equals("image")&&MediaCache.needsPhone(hidden)&&!PairedService.missingOnPhone(this,hidden)&&(fullPhotos()||!MediaCache.hasThumbnail(hidden))&&!MediaCache.file(this,hidden,false).isFile())PairedService.requestFullMedia(hidden,false,(v,e)->{});
         int width=Math.round(getResources().getDisplayMetrics().widthPixels*0.66f),gap=dp(3),half=(width-gap)/2,n=parts.size();
         LinearLayout line=row();line.setGravity(outgoing?Gravity.END:Gravity.START);LinearLayout grid=vertical();
         grid.setOutlineProvider(new ViewOutlineProvider(){@Override public void getOutline(View v,Outline o){o.setRoundRect(0,0,v.getWidth(),v.getHeight(),dp(20));}});grid.setClipToOutline(true);
@@ -1372,7 +1382,7 @@ public class PairedActivity extends Activity {
         if(!MediaCache.hasFull(media)&&!file.isFile()){viewerNote(v,"Getting the full photo from your phone…");
             PairedService.requestFullMedia(media,true,(x,e)->{if(!e.isEmpty()&&v.gen==g){viewerNote(v,e);v.spinner.setVisibility(View.GONE);}});
             awaitFull(media,45_000,updated->{if(v.gen!=g)return;
-                if(updated==null){v.spinner.setVisibility(View.GONE);viewerNote(v,"Your phone hasn't sent the full photo yet. Showing the preview.");if(thumb.isFile())v.full=thumb;return;}
+                if(updated==null){v.spinner.setVisibility(View.GONE);viewerNote(v,PairedService.missingOnPhone(this,media)?"Your phone doesn't seem to have this photo any more.":thumb.isFile()?"Your phone hasn't sent the full photo yet. Showing the preview.":"Your phone hasn't sent this photo yet.");if(thumb.isFile())v.full=thumb;return;}
                 v.note.setVisibility(View.GONE);viewerFull(v,updated,g);});
             return;}
         viewerFull(v,media,g);}
@@ -1697,6 +1707,13 @@ public class PairedActivity extends Activity {
         new AlertDialog.Builder(this).setTitle("Keyword alerts").setMessage("When a message contains one of these, you're notified even if that chat is muted or snoozed.").setView(e)
             .setNegativeButton("Cancel",null).setPositiveButton("Save",(d,w)->{getSharedPreferences("paired",MODE_PRIVATE).edit().putString("alert_keywords",e.getText().toString().trim()).apply();settings();}).show();}
     // Busy auto-reply
+    /** Offers to put the Busy tile in Quick Settings (Android asks to confirm). */
+    private void addBusyTile(){android.app.StatusBarManager bar=getSystemService(android.app.StatusBarManager.class);
+        if(bar==null){toast("Pull down Quick Settings, tap the pencil to edit, and drag in the Busy tile.");return;}
+        bar.requestAddTileService(new android.content.ComponentName(this,BusyTile.class),"Busy",android.graphics.drawable.Icon.createWithResource(this,R.drawable.ic_chat),getMainExecutor(),result->{
+            if(result==android.app.StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED)toast("The Busy tile is already in Quick Settings.");
+            else if(result==android.app.StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED)toast("Busy tile added. Pull down Quick Settings to use it.");
+            else if(result!=android.app.StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_NOT_ADDED)toast("Pull down Quick Settings, tap the pencil to edit, and drag in the Busy tile.");});}
     private boolean autoReplyActive(){return PairedService.autoReplyUntil(this)>System.currentTimeMillis();}
     private View autoReplyBanner(){LinearLayout card=row();card.setPadding(dp(16),dp(10),dp(8),dp(10));card.setBackground(shape(fab,16));long until=PairedService.autoReplyUntil(this);
         TextView t=text("Auto-reply is on"+(until==Long.MAX_VALUE?"":" until "+(android.text.format.DateUtils.isToday(until)?"":new SimpleDateFormat("EEE ",Locale.getDefault()).format(new Date(until)))+timeOnly(until)),14,onFab,true);card.addView(t,new LinearLayout.LayoutParams(0,-2,1));
@@ -2067,9 +2084,47 @@ public class PairedActivity extends Activity {
         renderMessages(false);String mid=m.optString("messageID");scroll.postDelayed(()->jumpTo(mid),150);}
 
     // Voice messages
-    private void updateComposeButton(){if(sendButton==null||composer==null)return;boolean empty=composer.getText().toString().trim().isEmpty();boolean files=false;for(Outgoing o:outgoing)if(!o.sending)files=true;
-        boolean mic=empty&&!files;sendButton.setImageResource(mic?R.drawable.ic_mic:R.drawable.ic_send);sendButton.setContentDescription(mic?"Record voice message":"Send");}
-    private void sendOrRecord(){boolean files=false;for(Outgoing o:outgoing)if(!o.sending)files=true;if(composer!=null&&composer.getText().toString().trim().isEmpty()&&!files)startRecording();else send();}
+    private void updateComposeButton(){if(sendButton==null||composer==null)return;
+        if(dictation!=null){sendButton.setImageResource(R.drawable.ic_stop);sendButton.setContentDescription("Stop dictating");return;}
+        boolean mic=micShowing();sendButton.setImageResource(mic?R.drawable.ic_mic:R.drawable.ic_send);sendButton.setContentDescription(mic?"Dictate a message. Press and hold to record a voice message.":"Send");}
+    /** The button shows the mic when there's nothing to send yet. */
+    private boolean micShowing(){if(composer==null)return false;boolean files=false;for(Outgoing o:outgoing)if(!o.sending)files=true;return composer.getText().toString().trim().isEmpty()&&!files;}
+    /** Tap: dictate (mic), stop dictating, or send. Press and hold the mic to record a voice message instead. */
+    private void sendOrRecord(){if(dictation!=null){stopDictation();return;}if(micShowing())startDictation();else send();}
+
+    // ---- Dictation: tap the mic, talk, and the words go into the message box ----
+    private android.speech.SpeechRecognizer dictation;private int dictateStart,dictateEnd;private String composerHint="";
+    private void startDictation(){if(dictation!=null||composer==null)return;
+        if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},79);return;}
+        if(!android.speech.SpeechRecognizer.isRecognitionAvailable(this)){error("Speech to text isn't available on this phone. Install or update the Google app, then try again. Press and hold the mic to record a voice message instead.");return;}
+        android.speech.SpeechRecognizer r;try{r=android.speech.SpeechRecognizer.createSpeechRecognizer(this);}catch(Exception e){error("Speech to text couldn't start.");return;}
+        dictation=r;composer.requestFocus();int at=Math.max(0,composer.getSelectionEnd());if(at>composer.length())at=composer.length();dictateStart=dictateEnd=at;
+        r.setRecognitionListener(new android.speech.RecognitionListener(){
+            @Override public void onReadyForSpeech(Bundle b){if(dictation==r&&composer!=null)composer.setHint("Listening…");}
+            @Override public void onBeginningOfSpeech(){}
+            @Override public void onRmsChanged(float v){}
+            @Override public void onBufferReceived(byte[] b){}
+            @Override public void onEndOfSpeech(){}
+            @Override public void onPartialResults(Bundle b){if(dictation==r)dictated(b);}
+            @Override public void onResults(Bundle b){if(dictation==r){dictated(b);stopDictation();}}
+            @Override public void onEvent(int t,Bundle b){}
+            @Override public void onError(int code){if(dictation!=r)return;stopDictation();
+                if(code==android.speech.SpeechRecognizer.ERROR_NO_MATCH||code==android.speech.SpeechRecognizer.ERROR_SPEECH_TIMEOUT)toast("Didn't catch that. Tap the mic and try again.");
+                else if(code==android.speech.SpeechRecognizer.ERROR_NETWORK||code==android.speech.SpeechRecognizer.ERROR_NETWORK_TIMEOUT||code==android.speech.SpeechRecognizer.ERROR_SERVER)toast("Speech to text needs a connection right now.");
+                else if(code==android.speech.SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS)toast("The Google app needs microphone access for speech to text.");
+                else if(code!=android.speech.SpeechRecognizer.ERROR_CLIENT)toast("Speech to text stopped (error "+code+").");}});
+        Intent listen=new Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL,android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            .putExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS,true).putExtra(android.speech.RecognizerIntent.EXTRA_CALLING_PACKAGE,getPackageName());
+        try{r.startListening(listen);}catch(Exception e){stopDictation();error("Speech to text couldn't start.");return;}
+        updateComposeButton();}
+    /** Puts what's been heard so far at the cursor, replacing the previous guess. */
+    private void dictated(Bundle b){if(composer==null)return;java.util.ArrayList<String> heard=b.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION);
+        if(heard==null||heard.isEmpty()||heard.get(0).trim().isEmpty())return;Editable e=composer.getText();
+        int start=Math.min(dictateStart,e.length()),end=Math.max(start,Math.min(dictateEnd,e.length()));
+        String words=ChatText.dictation(e.subSequence(0,start).toString(),heard.get(0));
+        e.replace(start,end,words);dictateStart=start;dictateEnd=start+words.length();composer.setSelection(dictateEnd);}
+    private void stopDictation(){android.speech.SpeechRecognizer r=dictation;dictation=null;if(r!=null){try{r.cancel();}catch(Exception ignored){}try{r.destroy();}catch(Exception ignored){}}
+        if(composer!=null)composer.setHint(composerHint);updateComposeButton();}
     private void startRecording(){if(recorder!=null)return;
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},77);return;}
         File dir=new File(getCacheDir(),"outgoing");if(!dir.isDirectory())dir.mkdirs();recording=new File(dir,java.util.UUID.randomUUID()+"-voice.m4a");
@@ -2090,6 +2145,7 @@ public class PairedActivity extends Activity {
         if(recordBar!=null){recordBar.setVisibility(View.GONE);composeRow.setVisibility(View.VISIBLE);}}
     @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] results){super.onRequestPermissionsResult(request,permissions,results);GivenNames.forget();
         if(request==77){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)startRecording();else toast("Message Center needs the microphone to record voice messages.");}
+        if(request==79){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)startDictation();else toast("Message Center needs the microphone for speech to text.");}
         if(request==LOCATION_PERMISSION){boolean any=false;for(int r:results)if(r==PackageManager.PERMISSION_GRANTED)any=true;if(any)shareLocation();else toast("Location permission is needed to share where you are.");return;}
         if(request==79&&results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED){phoneChecked.clear();photos.clear();if(screen.equals("inbox"))renderInbox();else if(screen.equals("settings"))settings();}
         if(request==78){JSONObject pending=pendingTranscription;pendingTranscription=null;if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED&&pending!=null)transcribe(pending);else if(pending!=null)toast("Transcription needs microphone access.");}}
@@ -2160,6 +2216,7 @@ public class PairedActivity extends Activity {
         settingRow(chats,"Quick replies","Saved phrases above the message box",quickRepliesOn()?quickReplies().size()+" saved":"Off",this::editQuickReplies);
         long arUntil=PairedService.autoReplyUntil(this);boolean arOn=arUntil>System.currentTimeMillis();
         settingRow(chats,"Busy auto-reply",arOn?"“"+PairedService.autoReplyText(this)+"”":"Answers saved contacts once an hour while you're busy",arOn?(arUntil==Long.MAX_VALUE?"On":"Until "+timeOnly(arUntil)):"Off",this::autoReplyMenu);
+        settingRow(chats,"Busy tile","Turn busy auto-reply on or off from the pull-down shade",null,this::addBusyTile);
         int phone=chatSettings.phoneReceipts();
         settingRow(chats,"Read receipts","Chosen per chat: long-press a chat to turn them on",null,()->new AlertDialog.Builder(this).setTitle("Read receipts")
             .setMessage("Off for every chat unless you turn them on for that chat (long-press it in the list, or tap its name at the top of the chat). When on, opening the chat here marks it read on your phone and Google Messages sends a receipt. When off, the chat isn't marked read, so it stays unread in Google Messages.\n\nGoogle Messages' own \"Send read receipts\" setting: "+(phone==1?"on.":phone==0?"off, so no receipts are sent for any chat.":"not reported yet.")+"\n\nPins and chat themes are kept in this app only; pinning here doesn't change Google Messages.").setPositiveButton("OK",null).show());

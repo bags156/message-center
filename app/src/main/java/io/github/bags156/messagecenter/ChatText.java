@@ -154,6 +154,21 @@ final class ChatText {
         return sender + (r.removed ? " removed " + r.emoji + " from “" : " reacted " + r.emoji + " to “") + quote + "”";
     }
 
+    /**
+     * Dictated words as they should be inserted after {@code before}: a space if they'd run into
+     * the previous word, and a capital letter at the start of the message or a new sentence.
+     */
+    static String dictation(String before, String heard) {
+        String words = heard == null ? "" : heard.trim();
+        if (words.isEmpty()) return "";
+        String prior = before == null ? "" : before;
+        String trimmed = prior.replaceAll("\\s+$", "");
+        boolean sentence = trimmed.isEmpty() || trimmed.endsWith(".") || trimmed.endsWith("!") || trimmed.endsWith("?") || prior.endsWith("\n");
+        if (sentence) words = words.substring(0, 1).toUpperCase(Locale.ROOT) + words.substring(1);
+        if (!prior.isEmpty() && !Character.isWhitespace(prior.charAt(prior.length() - 1))) words = " " + words;
+        return words;
+    }
+
     /** Phone numbers compared on their last ten digits, so "+1 (555) 010-2000" matches "5550102000". */
     static boolean sameNumber(String a, String b) {
         String x = digits(a), y = digits(b);

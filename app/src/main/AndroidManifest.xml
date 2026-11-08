@@ -27,6 +27,10 @@
             <action android:name="android.intent.action.INSERT" />
             <data android:mimeType="vnd.android.cursor.dir/event" />
         </intent>
+        <!-- The phone's speech-to-text service, for dictating into the message box. -->
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
     </queries>
     <application
         android:allowBackup="false"
@@ -83,5 +87,17 @@
         <receiver android:name=".PairedBootReceiver" android:exported="false">
             <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /><action android:name="android.intent.action.MY_PACKAGE_REPLACED" /></intent-filter>
         </receiver>
+        <!-- Quick Settings tile: turn busy auto-reply on or off from the pull-down shade. -->
+        <service
+            android:name=".BusyTile"
+            android:exported="true"
+            android:icon="@drawable/ic_chat"
+            android:label="Busy"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data android:name="android.service.quicksettings.TOGGLEABLE_TILE" android:value="true" />
+        </service>
     </application>
 </manifest>
