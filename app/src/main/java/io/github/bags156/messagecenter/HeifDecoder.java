@@ -26,7 +26,29 @@ final class HeifDecoder {
     /** The last reason a decode failed, for diagnostics. */
     static volatile String lastProblem = "";
 
-    private interface Sink { void frame(int index, Image image); }
+    private interface Sink { void frame(int index, Planes planes); }
+
+    /** A decoded picture's samples, from the phone's decoder or the sandboxed software one. */
+    private static final class Planes {
+        byte[] y, u, v;
+        int yRow, yPix, uRow, uPix, vRow, vPix, left, top, width, height, shiftX, shiftY, hi;
+        static Planes of(Image image) {
+            Planes p = new Planes(); Rect crop = image.getCropRect(); Image.Plane[] planes = image.getPlanes();
+            p.hi = image.getFormat() == ImageFormat.YCBCR_P010 ? 1 : 0; // 10-bit: the high byte holds the top 8 bits
+            p.y = bytes(planes[0].getBuffer()); p.yRow = planes[0].getRowStride(); p.yPix = planes[0].getPixelStride();
+            if (planes.length >= 3) { p.u = bytes(planes[1].getBuffer()); p.v = bytes(planes[2].getBuffer()); p.uRow = planes[1].getRowStride(); p.uPix = planes[1].getPixelStride(); p.vRow = planes[2].getRowStride(); p.vPix = planes[2].getPixelStride(); }
+            p.left = crop.left; p.top = crop.top; p.width = crop.width(); p.height = crop.height(); p.shiftX = 1; p.shiftY = 1;
+            return p;
+        }
+        static Planes of(HevcSandbox.Picture pic) {
+            Planes p = new Planes(); p.y = pic.planes[0]; p.yRow = pic.widths[0]; p.yPix = 1; p.width = pic.widths[0]; p.height = pic.heights[0];
+            if (pic.chroma != 0) {
+                p.u = pic.planes[1]; p.v = pic.planes[2]; p.uRow = pic.widths[1]; p.vRow = pic.widths[2]; p.uPix = 1; p.vPix = 1;
+                p.shiftX = pic.chroma == 3 ? 0 : 1; p.shiftY = pic.chroma == 1 ? 1 : 0;
+            }
+            return p;
+        }
+    }
 
     /** True for small HEIC files (stickers, Genmoji) with transparency or several sizes, which Android's decoder would show wrongly. */
     static boolean preferred(File file) {
@@ -102,22 +124,39 @@ final class HeifDecoder {
         int m = colour.matrix; boolean fr = colour.fullRange;
         if (shared) {
             List<byte[]> samples = new ArrayList<>(); for (HeifFile.Item p : parts) samples.add(heif.itemData(p));
-            return decodeSamples(first.hvcc, samples, tileW, tileH, (index, image) ->
-                draw(image, out, w, h, (index % columns) * tileW, (index / columns) * tileH, tileW, tileH, alphaOnly, m, fr));
+            return decodeSamples(first.hvcc, samples, tileW, tileH, (index, planes) ->
+                draw(planes, out, w, h, (index % columns) * tileW, (index / columns) * tileH, tileW, tileH, alphaOnly, m, fr));
         }
         for (int i = 0; i < parts.size(); i++) {
             HeifFile.Item p = parts.get(i); int x = (i % columns) * tileW, y = (i / columns) * tileH;
             List<byte[]> one = new ArrayList<>(); one.add(heif.itemData(p));
-            if (!decodeSamples(p.hvcc, one, p.width, p.height, (index, image) -> draw(image, out, w, h, x, y, tileW, tileH, alphaOnly, m, fr))) return false;
+            if (!decodeSamples(p.hvcc, one, p.width, p.height, (index, planes) -> draw(planes, out, w, h, x, y, tileW, tileH, alphaOnly, m, fr))) return false;
         }
         return true;
     }
 
-    /** Runs coded pictures through an HEVC decoder: software first (handles small sizes), then the phone's hardware. */
+    /**
+     * Runs coded pictures through the phone's HEVC decoders (software ones first, they handle
+     * small sizes), or, for the 4:4:4 and monochrome pictures those refuse, through the
+     * sandboxed software decoder.
+     */
     private static boolean decodeSamples(byte[] hvcc, List<byte[]> samples, int width, int height, Sink sink) {
         byte[] csd = HeifFile.parameterSets(hvcc); int lengthSize = HeifFile.lengthSize(hvcc);
         List<byte[]> frames = new ArrayList<>(); int largest = 0;
         for (byte[] s : samples) { byte[] f = HeifFile.annexB(s, lengthSize); frames.add(f); largest = Math.max(largest, f.length); }
+        boolean ordinary = HeifFile.chromaFormat(hvcc) == 1 && HeifFile.bitDepth(hvcc) <= 10;
+        if (ordinary && phoneDecode(csd, frames, largest, width, height, sink)) return true;
+        for (int i = 0; i < frames.size(); i++) {
+            byte[] f = frames.get(i), stream = new byte[csd.length + f.length];
+            System.arraycopy(csd, 0, stream, 0, csd.length); System.arraycopy(f, 0, stream, csd.length, f.length);
+            HevcSandbox.Picture pic = HevcSandbox.decode(stream);
+            if (pic == null) return false;
+            sink.frame(i, Planes.of(pic));
+        }
+        return true;
+    }
+
+    private static boolean phoneDecode(byte[] csd, List<byte[]> frames, int largest, int width, int height, Sink sink) {
         for (String name : decoders()) {
             MediaCodec codec = null;
             try {
@@ -172,7 +211,7 @@ final class HeifDecoder {
                     if (image != null) {
                         try {
                             int index = (int) Math.round(info.presentationTimeUs / 10_000.0);
-                            sink.frame(index >= 0 && index < frames.size() ? index : got, image); got++;
+                            sink.frame(index >= 0 && index < frames.size() ? index : got, Planes.of(image)); got++;
                         } finally { image.close(); }
                     }
                 }
@@ -184,12 +223,7 @@ final class HeifDecoder {
     }
 
     /** Copies one decoded picture into the canvas at (x0, y0), converting YUV to colour (or taking brightness as transparency). */
-    private static void draw(Image image, int[] out, int outW, int outH, int x0, int y0, int w, int h, boolean alphaOnly, int matrix, boolean fullRange) {
-        Rect crop = image.getCropRect(); Image.Plane[] planes = image.getPlanes();
-        boolean ten = image.getFormat() == ImageFormat.YCBCR_P010; int hi = ten ? 1 : 0; // 10-bit: the high byte holds the top 8 bits
-        byte[] yb = bytes(planes[0].getBuffer()); int yRow = planes[0].getRowStride(), yPix = planes[0].getPixelStride();
-        byte[] ub = null, vb = null; int uRow = 0, uPix = 0, vRow = 0, vPix = 0;
-        if (!alphaOnly && planes.length >= 3) { ub = bytes(planes[1].getBuffer()); vb = bytes(planes[2].getBuffer()); uRow = planes[1].getRowStride(); uPix = planes[1].getPixelStride(); vRow = planes[2].getRowStride(); vPix = planes[2].getPixelStride(); }
+    private static void draw(Planes p, int[] out, int outW, int outH, int x0, int y0, int w, int h, boolean alphaOnly, int matrix, boolean fullRange) {
         double kr, kb;
         switch (matrix) {
             case 1: kr = 0.2126; kb = 0.0722; break;
@@ -200,17 +234,19 @@ final class HeifDecoder {
         }
         double kg = 1 - kr - kb, crR = 2 * (1 - kr), cbB = 2 * (1 - kb), crG = 2 * kr * (1 - kr) / kg, cbG = 2 * kb * (1 - kb) / kg;
         double ys = fullRange ? 1 : 255.0 / 219, cs = fullRange ? 1 : 255.0 / 224; int yo = fullRange ? 0 : 16;
-        int cw = Math.min(w, crop.width()), ch = Math.min(h, crop.height());
+        byte[] yb = p.y, ub = alphaOnly ? null : p.u, vb = alphaOnly ? null : p.v;
+        int cw = Math.min(w, p.width), ch = Math.min(h, p.height);
         for (int y = 0; y < ch; y++) {
             int oy = y0 + y; if (oy >= outH) break;
-            int sy = crop.top + y;
+            int sy = p.top + y;
             for (int x = 0; x < cw; x++) {
                 int ox = x0 + x; if (ox >= outW) break;
-                int sx = crop.left + x, yi = sy * yRow + sx * yPix + hi;
+                int sx = p.left + x, yi = sy * p.yRow + sx * p.yPix + p.hi;
                 int yv = yi < yb.length ? yb[yi] & 0xff : 0;
                 if (alphaOnly) { out[oy * outW + ox] = clamp((yv - yo) * ys); continue; }
-                if (ub == null) { int g = clamp((yv - yo) * ys); out[oy * outW + ox] = 0xff000000 | g << 16 | g << 8 | g; continue; }
-                int ui = (sy >> 1) * uRow + (sx >> 1) * uPix + hi, vi = (sy >> 1) * vRow + (sx >> 1) * vPix + hi;
+                if (ub == null || vb == null) { int g = clamp((yv - yo) * ys); out[oy * outW + ox] = 0xff000000 | g << 16 | g << 8 | g; continue; }
+                int cx = sx >> p.shiftX, cy = sy >> p.shiftY;
+                int ui = cy * p.uRow + cx * p.uPix + p.hi, vi = cy * p.vRow + cx * p.vPix + p.hi;
                 double l = (yv - yo) * ys, cb = ((ui < ub.length ? ub[ui] & 0xff : 128) - 128) * cs, cr = ((vi < vb.length ? vb[vi] & 0xff : 128) - 128) * cs;
                 int r, g, b;
                 if (matrix == 0) { g = clamp(yv); b = clamp(cb + 128); r = clamp(cr + 128); }

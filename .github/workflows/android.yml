@@ -48,7 +48,7 @@ jobs:
           mkdir -p ../app/libs
           gomobile bind -target android/arm64,android/amd64 -androidapi 33 -javapkg io.github.bags156.gm -o ../app/libs/messagebridge.aar .
           go mod vendor
-          tar -czf dependencies-source.tar.gz vendor go.mod go.sum
+          tar -czf dependencies-source.tar.gz vendor go.mod go.sum heic
       - name: Test release update rules
         run: python3 -m unittest discover -s tools -p 'test_*.py' -v
       - name: Test, lint, and build Android APK

@@ -13,4 +13,9 @@ Message Center's Android and Go integration code is maintained in this repositor
 Go's standard library and golang.org/x modules use BSD-style licenses.
 Google protobuf uses a BSD-style license; zerolog uses MIT; google/uuid uses BSD.
 Their source and notices are included in the dependency-source release archive.
+Pictures that phone decoders can't read (such as iPhone Genmoji, which use
+HEVC 4:4:4 colour and a monochrome transparency layer) are decoded with
+libde265 1.0.16 by struktur AG, licensed LGPL-3.0-or-later, in an isolated
+process. Its source and license are in bridge/heic/libde265 and in the
+dependency-source release archive. https://github.com/strukturag/libde265
 Some interface icon shapes follow Material Design icons by Google, licensed Apache-2.0.

@@ -124,6 +124,9 @@ final class HeifFile {
     }
 
     static int lengthSize(byte[] hvcc) { return (hvcc[21] & 3) + 1; }
+    /** 0 = monochrome, 1 = 4:2:0, 2 = 4:2:2, 3 = 4:4:4. */
+    static int chromaFormat(byte[] hvcc) { return hvcc[16] & 3; }
+    static int bitDepth(byte[] hvcc) { return (hvcc[17] & 7) + 8; }
 
     /** Turns length-prefixed picture data into start-code-separated data. */
     static byte[] annexB(byte[] sample, int lengthSize) {

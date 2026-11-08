@@ -47,6 +47,16 @@ public class HeifFileTest {
         assertTrue(f.best().alpha >= 0);
     }
 
+    @Test public void genmojiWithFullColourAndMonochromeLayersIsRecognized() throws Exception {
+        HeifFile f = load("genmoji444");
+        HeifFile.Item best = f.best();
+        assertEquals(354, best.width);
+        assertEquals(3, HeifFile.chromaFormat(best.hvcc));
+        assertEquals(0, HeifFile.chromaFormat(f.items.get(best.alpha).hvcc));
+        assertEquals(8, HeifFile.bitDepth(best.hvcc));
+        assertTrue(best.colr);
+    }
+
     @Test public void notHeif() {
         assertNull(HeifFile.parse("<html>error</html>".getBytes()));
         assertNull(HeifFile.parse(new byte[0]));

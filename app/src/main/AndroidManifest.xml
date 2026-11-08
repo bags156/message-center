@@ -61,6 +61,8 @@
         <!-- Lets another app open or share one downloaded attachment, only when this app grants that file. -->
         <provider android:name=".MediaProvider" android:authorities="io.github.bags156.messagecenter.media" android:exported="false" android:grantUriPermissions="true" />
         <service android:name=".PairedService" android:exported="false" android:foregroundServiceType="remoteMessaging" />
+        <!-- Decodes pictures the phone's own decoders refuse (iPhone Genmoji) in a sandbox with no access to the app's data. -->
+        <service android:name=".HevcDecoderService" android:exported="false" android:process=":picture_decoder" android:isolatedProcess="true" />
         <receiver android:name=".NotificationActions" android:exported="false" />
         <receiver android:name=".Scheduled" android:exported="false" />
         <receiver android:name=".Reminders" android:exported="false" />
