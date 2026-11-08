@@ -122,6 +122,8 @@ jobs:
           adb shell screencap -p /sdcard/settings-2.png && adb pull /sdcard/settings-2.png
           adb shell input swipe 540 1900 540 500 400 && sleep 2
           adb shell screencap -p /sdcard/settings-3.png && adb pull /sdcard/settings-3.png
+          # Small copies in the log, for reviewing the UI where artifacts can't be downloaded.
+          for f in settings-*.png; do convert "$f" -resize 45% -quality 70 "${f%.png}.jpg" && echo "SHOT_BEGIN ${f%.png}" && base64 -w 120 "${f%.png}.jpg" | sed 's/^/SHOT /' && echo "SHOT_END"; done
       - name: Collect Android diagnostics
         if: always()
         run: '"$ANDROID_HOME/platform-tools/adb" logcat -d -s AndroidRuntime > android-runtime.txt || true'
