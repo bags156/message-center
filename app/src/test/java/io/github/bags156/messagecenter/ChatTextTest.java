@@ -54,6 +54,13 @@ public class ChatTextTest {
         assertArrayEquals(new String[]{"👍", "p1"}, r.get(2));
     }
 
+    @Test public void typingNamesKeepATwoWordFirstName() throws Exception {
+        JSONObject chat = new JSONObject("{participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},"
+            + "{ID:{participantID:'p1',number:'+15550102000'},firstName:'Hannah Kay',fullName:'Hannah Kay Bagley'}]}");
+        assertEquals(List.of("Hannah Kay"), PairedProtocol.typingNames(chat, List.of("+15550102000")));
+        assertEquals("Hannah Kay is typing", ChatText.typingLabel(PairedProtocol.typingNames(chat, List.of("+15550102000"))));
+    }
+
     @Test public void typingNamesSkipYourselfAndUseFirstNames() throws Exception {
         JSONObject chat = new JSONObject("{isGroupChat:true,participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},"
             + "{ID:{participantID:'p1',number:'+15550102000'},fullName:'Daniel Mehus'},{ID:{participantID:'p2',number:'+15550103000'},fullName:'Sam Richard Belcher'}]}");

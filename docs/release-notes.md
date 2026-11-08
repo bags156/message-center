@@ -1,18 +1,9 @@
-Message Center 1.0.6.
+Message Center 1.0.7.
 
-**Videos play inside the app**
-- Tapping a video opens Message Center's own player: play/pause, a scrub bar with times, Save and Share. Turn the phone sideways for a bigger picture; it keeps playing. If a video uses a format Android can't play, you can still open it in another app.
+**Message times show again**
+- Dragging a chat left slides the whole conversation and each message's time appears on the right. In 1.0.6 the times were cut off.
 
-**Quieter connection notification**
-- The always-there notification is now a quiet "Message Center is running" that never changes. Android requires it while connected, but its **Hide** button (or Settings → Hide the "Message Center is running" notification) takes you straight to the switch that turns it off; messages keep arriving.
-- A separate notification appears only when the connection drops and doesn't come back within 3 minutes (or right away if you need to do something, like sign in again). It disappears once you're reconnected.
+**Full first names**
+- "Is typing", reactions, replies, @ suggestions and pinned chats now use the first name saved in your contacts, so a two-word first name like "Hannah Kay" stays whole. Without contacts access, Google's first name is used; a nickname you set always wins.
 
-**Unread reminders arrive on time**
-- Reminders used Android's "inexact" alarms, which can arrive up to an hour and a half late on a 2-hour reminder. They now use exact alarms, as do message reminders and scheduled messages.
-- Settings now shows the next reminder (which chat and when) and the last one sent, and has **Send a test reminder**.
-
-**Smaller fixes**
-- Dragging a chat left to see times now slides the whole conversation together, not just your own messages.
-- Opening or answering a chat in the app now clears the red dot on that chat's bubble (the bubble stays, and its notification leaves the shade).
-
-Install over 1.0.5; the package and signing key are unchanged.
+Install over 1.0.6; the package and signing key are unchanged.

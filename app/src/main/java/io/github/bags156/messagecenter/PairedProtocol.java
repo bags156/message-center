@@ -189,6 +189,28 @@ final class PairedProtocol {
         }
         return string(p.optJSONObject("ID"),"number");
     }
+    /**
+     * A person's first name for short labels ("Hannah Kay is typing"): your nickname for them,
+     * else the first name saved in your contacts, else Google's first name, else the first word.
+     */
+    static String firstName(JSONObject p) {
+        if(p==null) return "";
+        if(p.optBoolean("isMe")) return "You";
+        String nick=Nicknames.get(number(p)); if(!nick.isEmpty()) return nick;
+        String given=GivenNames.get(number(p)); if(!given.isEmpty()) return given;
+        String first=string(p,"firstName"); if(!first.isEmpty()&&!first.startsWith("+")) return first;
+        return ChatText.firstName(name(p));
+    }
+    /** firstName() for a message's sender, found the same way as person(). */
+    static String personFirst(JSONObject chat,String id,JSONObject supplied) {
+        if(supplied!=null && !supplied.optBoolean("isMe")){String direct=firstName(supplied); if(!direct.isEmpty()) return direct;}
+        JSONArray participants=chat==null ? null:chat.optJSONArray("participants");
+        if(participants!=null) for(int i=0;i<participants.length();i++) {
+            JSONObject p=participants.optJSONObject(i);
+            if(p!=null && id.equals(string(p.optJSONObject("ID"),"participantID"))) { String n=firstName(p); if(!n.isEmpty()) return n; }
+        }
+        return ChatText.firstName(person(chat,id,supplied));
+    }
     static String person(JSONObject chat,String id,JSONObject supplied) {
         // Only trust the supplied sender for a name; its isMe flag can be wrong on incoming messages.
         String direct=supplied==null || supplied.optBoolean("isMe") ? "":name(supplied); if(!direct.isEmpty()) return direct;
@@ -264,7 +286,7 @@ final class PairedProtocol {
             if(ps!=null) for(int i=0;i<ps.length();i++) { JSONObject p=ps.optJSONObject(i); if(p!=null && ChatText.sameNumber(n,number(p))) { found=p; break; } }
             if(found!=null && found.optBoolean("isMe")) continue;
             if(found==null) found=other(chat);
-            String name=found==null ? "Someone":ChatText.firstName(name(found));
+            String name=found==null ? "Someone":firstName(found);
             if(!names.contains(name)) names.add(name);
         }
         return names;
