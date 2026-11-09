@@ -95,7 +95,7 @@ public final class OnDeviceSmoke extends Instrumentation {
                 "Haha yes!! 😂😂","Can you grab milk and eggs on the way home? Also bread if they have the good kind"};
             for(int i=0;i<300;i++){boolean mine=i%3==0;store.message(new JSONObject().put("messageID","perf"+i).put("conversationID","perf").put("participantID",mine?"me":"p1").put("timestamp",1794000000000000L+i*300_000_000L)
                 .put("messageStatus",new JSONObject().put("status",mine?"OUTGOING_DELIVERED":"INCOMING_COMPLETE"))
-                .put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content",kinds[i%kinds.length]))))),0,true);}}
+                .put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content",kinds[i%kinds.length])))),0,true);}}
         PairedActivity a=(PairedActivity)startActivitySync(new Intent(getTargetContext(),BubbleActivity.class).setAction(Intent.ACTION_VIEW).putExtra("chat","perf").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         waitForIdleSync();long[] runs=new long[5];
         java.lang.reflect.Method render=PairedActivity.class.getDeclaredMethod("renderMessages",boolean.class);render.setAccessible(true);
