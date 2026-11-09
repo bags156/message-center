@@ -78,6 +78,14 @@ final class PairedStore extends SQLiteOpenHelper {
         }
         return out;
     }
+    /** Messages in a chat that may hold a web link (the caller finds the links), newest first. */
+    synchronized List<JSONObject> linkMessages(String chat,int max) {
+        List<JSONObject> out=new ArrayList<>();
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM items WHERE chat=? AND (data LIKE '%http%' OR data LIKE '%www.%') ORDER BY time DESC LIMIT ?",new String[]{chat,String.valueOf(max)})) {
+            while(c.moveToNext())out.add(json(c.getString(0)));
+        }
+        return out;
+    }
     /** How many synced messages in the chat are at or after this time (to load enough to show it). */
     synchronized int countSince(String chat,long time) {
         try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM items WHERE chat=? AND time>=?",new String[]{chat,String.valueOf(time)})){c.moveToFirst();return c.getInt(0);}

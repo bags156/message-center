@@ -222,6 +222,19 @@ final class ChatText {
         return url;
     }
 
+    /** Every web link in a message, in order and without repeats, cleaned up like firstUrl. */
+    static java.util.List<String> urls(String text) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        if (text == null) return out;
+        Matcher m = URL.matcher(text);
+        while (m.find()) {
+            String url = m.group(1).replaceAll("[.,!?;:)\\]'’”]+$", "");
+            if (url.toLowerCase(Locale.ROOT).startsWith("www.")) url = "https://" + url;
+            if (!out.contains(url)) out.add(url);
+        }
+        return out;
+    }
+
     /** "example.com" from a link, without "www.". */
     static String domain(String url) {
         String rest = url.replaceFirst("(?i)^https?://", "");

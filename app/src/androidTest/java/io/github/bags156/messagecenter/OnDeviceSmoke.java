@@ -420,6 +420,18 @@ public final class OnDeviceSmoke extends Instrumentation {
         bubble.getWindow().getDecorView().findViewsWithText(found,"Invisible Ink)",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.isEmpty(),"The \"(sent with Invisible Ink)\" note is shown");found.clear();
         runOnMainSync(cover::performClick);waitForIdleSync();check(cover.getVisibility()==android.view.View.GONE,"Tapping invisible ink didn't show it");
         check(inkContent!=null,"Invisible ink message has nothing under the cover");
+        // Details: what's been shared, counted and sorted into photos & videos, links (not the shared location's map link) and files.
+        PairedActivity chatWindow=(PairedActivity)bubble;onMain(chatWindow,"details");
+        String[] wanted={"Photos & videos, ","Links, 1","Files, 3"};
+        for(String w:wanted){boolean seenIt=false;for(int wait=0;wait<40&&!seenIt;wait++){found.clear();runOnMainSync(()->{});
+                bubble.getWindow().getDecorView().findViewsWithText(found,w,android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);seenIt=!found.isEmpty();if(!seenIt)Thread.sleep(100);}
+            check(seenIt,"Details doesn't list \""+w+"…\" under Shared");}
+        found.clear();
+        runOnMainSync(()->{try{java.lang.reflect.Method m=PairedActivity.class.getDeclaredMethod("sharedScreen",int.class);m.setAccessible(true);m.invoke(chatWindow,1);}catch(Exception e){throw new RuntimeException(e);}});
+        boolean linkShown=false;for(int wait=0;wait<40&&!linkShown;wait++){found.clear();runOnMainSync(()->{});bubble.getWindow().getDecorView().findViewsWithText(found,"example.com/page",android.view.View.FIND_VIEWS_WITH_TEXT);linkShown=!found.isEmpty();if(!linkShown)Thread.sleep(100);}
+        check(linkShown,"The Links tab doesn't show the link that was sent");found.clear();
+        bubble.getWindow().getDecorView().findViewsWithText(found,"Links, 1, selected",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);check(found.size()==1,"The Links tab isn't the one selected");found.clear();
+        runOnMainSync(bubble::onBackPressed);waitForIdleSync();runOnMainSync(bubble::onBackPressed);waitForIdleSync();
         // Screenshots are allowed.
         check((bubble.getWindow().getAttributes().flags&android.view.WindowManager.LayoutParams.FLAG_SECURE)==0,"Screenshots are blocked in chats");
         check((activity.getWindow().getAttributes().flags&android.view.WindowManager.LayoutParams.FLAG_SECURE)==0,"Screenshots are blocked in the inbox");
@@ -441,6 +453,6 @@ public final class OnDeviceSmoke extends Instrumentation {
         getTargetContext().getSharedPreferences("starred",0).edit().clear().commit();
         new ChatSettings(getTargetContext()).setBackground("smoke","");
         checkNotificationPrivacy();
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }

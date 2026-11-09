@@ -1245,6 +1245,9 @@ public class PairedActivity extends Activity {
             LinearLayout texts=vertical();texts.setPadding(dp(16),0,dp(8),0);texts.addView(text(name,17,ink,false));if(!number.isEmpty()&&!number.equals(name))texts.addView(text(number,14,muted,false));
             r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));r.setOnClickListener(v->memberActions(p));content.addView(r);}
         if(group){LinearLayout me=row();me.setPadding(dp(4),dp(10),dp(4),dp(10));me.addView(personAvatar(null,"You",44));TextView you=text("You",17,ink,false);you.setPadding(dp(16),0,0,0);me.addView(you);content.addView(me);}
+        // What's been shared here; filled in once it's been looked up.
+        LinearLayout shared=vertical();content.addView(shared,new LinearLayout.LayoutParams(-1,-2));
+        loadShared(id,sh->{if(screen.equals("details")&&chatId.equals(id))fillSharedSummary(shared,sh);});
         gap(content,20);content.addView(text("This chat",14,muted,true));gap(content,4);
         sheetAction(content,chatSettings.pinned(c)?"Unpin":"Pin to top",()->{togglePin(c);details();});
         sheetAction(content,"Theme & background: "+chatSettings.theme(id).label+(chatSettings.background(id).isEmpty()?"":" + picture"),()->chooseTheme(id));
@@ -1256,7 +1259,6 @@ public class PairedActivity extends Activity {
         sheetAction(content,chatSettings.muted(id)?"Notifications: muted (tap to unmute)":"Notifications: on (tap to mute)",()->toggleMute(id));
         sheetAction(content,chatSettings.snoozed(id)?"Snoozed until "+snoozeLabel(id)+" (tap to change)":"Snooze notifications…",()->snoozeMenu(id));
         sheetAction(content,"Search in chat",()->{thread(id);searchChat();});
-        sheetAction(content,"Photos & files",this::mediaScreen);
         if(!group&&!people.isEmpty()){JSONObject p0=people.get(0);String nick=Nicknames.get(PairedProtocol.number(p0));sheetAction(content,nick.isEmpty()?"Set a nickname…":"Nickname: "+nick+" (change)",()->setNickname(p0));}
         sheetAction(content,"Export chat to a file",()->exportChat(id));
         sheetAction(content,"Notification sound & priority",()->{PairedService.ensureShortcut(this,id);PairedService.openConversationSettings(this,id,PairedProtocol.title(c));});
@@ -1755,25 +1757,97 @@ public class PairedActivity extends Activity {
     private void openMessage(JSONObject m){String chatID=m.optString("conversationID");if(store.chat(chatID)==null){toast("That conversation isn't synced here.");return;}
         thread(chatID);if(store.message(m.optString("messageID"))==null){toast("That message isn't in the synced history.");return;}ui.post(()->showMessage(m));}
 
-    /** Every photo, video, and file shared in this chat (from synced history). */
-    private void mediaScreen(){JSONObject c=store.chat(chatId);if(c==null)return;String id=chatId;base("media");header("Photos & files",this::details);
-        scroll=new ScrollView(this);items=vertical();items.setPadding(dp(8),0,dp(8),dp(32));scroll.addView(items);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-        List<JSONObject> visual=new ArrayList<>(),files=new ArrayList<>();
-        for(JSONObject m:store.mediaMessages(id,400))for(JSONObject media:PairedProtocol.media(m)){String k=PairedProtocol.mediaKind(media);if(k.equals("image")||k.equals("video"))visual.add(media);else files.add(media);}
-        if(visual.isEmpty()&&files.isEmpty()){TextView e=text("No photos or files in the synced history yet.",15,muted,false);e.setGravity(Gravity.CENTER);e.setPadding(dp(24),dp(48),dp(24),dp(24));items.addView(e);return;}
-        int cols=3,gapPx=dp(4),tile=(getResources().getDisplayMetrics().widthPixels-dp(16)-gapPx*(cols-1))/cols;LinearLayout line=null;
-        for(int i=0;i<visual.size();i++){if(i%cols==0){line=row();LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=gapPx;items.addView(line,lp);}
-            JSONObject media=visual.get(i);boolean video=PairedProtocol.mediaKind(media).equals("video");FrameLayout box=new FrameLayout(this);box.setBackground(shape(surface,8));
-            box.setOutlineProvider(new ViewOutlineProvider(){@Override public void getOutline(View v,Outline o){o.setRoundRect(0,0,v.getWidth(),v.getHeight(),dp(8));}});box.setClipToOutline(true);
-            ImageView img=new ImageView(this);img.setScaleType(ImageView.ScaleType.CENTER_CROP);box.addView(img,new FrameLayout.LayoutParams(-1,-1));
-            if(video){TextView play=text("▶",16,Color.WHITE,false);play.setGravity(Gravity.CENTER);play.setBackground(oval(0x99000000));box.addView(play,new FrameLayout.LayoutParams(dp(36),dp(36),Gravity.CENTER));}
-            box.setContentDescription(video?"Video":"Photo");box.setOnClickListener(v->openMedia(media));
-            LinearLayout.LayoutParams tl=new LinearLayout.LayoutParams(tile,tile);if(i%cols!=0)tl.setMarginStart(gapPx);line.addView(box,tl);loadPreview(media,img,video,tile,tile);}
-        if(!files.isEmpty()){items.addView(sectionLabel("Files & audio"));for(JSONObject media:files){String name=PairedProtocol.string(media,"mediaName"),kind=PairedProtocol.mediaKind(media);
-            LinearLayout r=row();r.setPadding(dp(8),dp(10),dp(8),dp(10));pressable(r);r.addView(text(kind.equals("audio")?"🎤":"📄",22,ink,false));
-            LinearLayout texts=vertical();texts.setPadding(dp(14),0,0,0);TextView n=text(name.isEmpty()?(kind.equals("audio")?"Audio message":"File"):name,15,ink,false);n.setSingleLine(true);n.setEllipsize(TextUtils.TruncateAt.MIDDLE);texts.addView(n);
-            String sz=PairedProtocol.size(media.optLong("size"));if(!sz.isEmpty())texts.addView(text(sz,13,muted,false));r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));
-            r.setOnClickListener(v->openMedia(media));items.addView(r);}}}
+    // ---- Shared in this chat: photos & videos, links, and files, newest first and by month ----
+    /** One thing shared in a chat: a photo, video or file (media), or a link (url), and the message it came in. */
+    private static final class SharedItem{final JSONObject message,media;final String url;final long time;
+        SharedItem(JSONObject message,JSONObject media,String url){this.message=message;this.media=media;this.url=url;this.time=PairedProtocol.time(message);}}
+    private static final class Shared{final List<SharedItem> photos=new ArrayList<>(),links=new ArrayList<>(),files=new ArrayList<>();boolean wrote;}
+    /** Everything shared in a chat's synced history. A link sent more than once is listed once, at its newest. */
+    private Shared sharedIn(String chat){Shared s=new Shared();JSONObject c=store.chat(chat);
+        for(JSONObject m:store.mediaMessages(chat,600))for(JSONObject media:PairedProtocol.media(m)){String k=PairedProtocol.mediaKind(media);
+            (k.equals("image")||k.equals("video")?s.photos:s.files).add(new SharedItem(m,media,null));}
+        java.util.Set<String> seen=new HashSet<>();
+        // A shared location's map link is a place, not a link someone sent.
+        for(JSONObject m:store.linkMessages(chat,600)){if(PairedProtocol.location(m)!=null)continue;
+            for(String url:ChatText.urls(PairedProtocol.text(m)))if(seen.add(url.toLowerCase(Locale.ROOT)))s.links.add(new SharedItem(m,null,url));}
+        if(c!=null)for(JSONObject m:store.messages(chat,200))if(PairedProtocol.outgoing(m,c)){s.wrote=true;break;}
+        return s;}
+    private String sharedChat="";private Shared sharedData;private long sharedAt;private int sharedTab;
+    /** Reads what's shared in the background (it goes through the whole chat) and hands it over on the main thread. */
+    private void loadShared(String chat,java.util.function.Consumer<Shared> then){
+        if(sharedData!=null&&sharedChat.equals(chat)&&System.currentTimeMillis()-sharedAt<30_000){then.accept(sharedData);return;}
+        decoder.execute(()->{Shared s=sharedIn(chat);ui.post(()->{sharedChat=chat;sharedData=s;sharedAt=System.currentTimeMillis();then.accept(s);});});}
+    /** In Details: the newest photos, then how many photos, links and files, each opening its list. */
+    private void fillSharedSummary(LinearLayout box,Shared s){box.removeAllViews();gap(box,20);box.addView(text("Shared",14,muted,true));gap(box,6);
+        if(s.photos.isEmpty()&&s.links.isEmpty()&&s.files.isEmpty()){TextView none=text("Nothing shared in the synced history yet.",15,muted,false);none.setPadding(dp(8),dp(8),dp(8),dp(8));box.addView(none);return;}
+        if(!s.photos.isEmpty()){int cols=4,g=dp(4),tile=(getResources().getDisplayMetrics().widthPixels-dp(16)-g*(cols-1))/cols;LinearLayout strip=row();
+            for(int i=0;i<Math.min(cols,s.photos.size());i++){LinearLayout.LayoutParams tl=new LinearLayout.LayoutParams(tile,tile);if(i>0)tl.setMarginStart(g);strip.addView(sharedTile(s.photos.get(i),tile),tl);}
+            box.addView(strip);gap(box,4);}
+        sharedRow(box,"Photos & videos",s.photos.size(),0);sharedRow(box,"Links",s.links.size(),1);sharedRow(box,"Files",s.files.size(),2);}
+    private void sharedRow(LinearLayout box,String label,int count,int tab){LinearLayout r=row();r.setGravity(Gravity.CENTER_VERTICAL);r.setPadding(dp(8),dp(14),dp(8),dp(14));
+        r.addView(text(label,17,ink,false),new LinearLayout.LayoutParams(0,-2,1));r.addView(text(count==0?"None":count+"  ›",15,muted,false));
+        r.setContentDescription(label+", "+count);if(count>0){pressable(r);r.setOnClickListener(v->sharedScreen(tab));}box.addView(r);}
+    private void mediaScreen(){sharedScreen(0);}
+    /** Photos & videos, links, and files shared in this chat, in three tabs, newest first under month headings. */
+    private void sharedScreen(int tab){JSONObject c=store.chat(chatId);if(c==null)return;String id=chatId;sharedTab=tab;base("media");header("Shared",this::details);
+        LinearLayout tabs=row();tabs.setPadding(dp(12),0,dp(12),dp(8));root.addView(tabs);
+        scroll=new ScrollView(this);scroll.setVerticalScrollBarEnabled(false);items=vertical();items.setPadding(dp(8),0,dp(8),dp(32));scroll.addView(items);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        TextView wait=text("Loading…",15,muted,false);wait.setGravity(Gravity.CENTER);wait.setPadding(dp(24),dp(48),dp(24),dp(24));items.addView(wait);
+        loadShared(id,s->{if(!screen.equals("media")||!chatId.equals(id))return;drawSharedTabs(tabs,s,c);drawShared(s,c);});}
+    private void drawSharedTabs(LinearLayout tabs,Shared s,JSONObject c){tabs.removeAllViews();String[] names={"Photos & videos","Links","Files"};int[] counts={s.photos.size(),s.links.size(),s.files.size()};
+        for(int k=0;k<3;k++){int which=k;boolean on=k==sharedTab;TextView chip=text(names[k]+"  "+counts[k],14,on?onFab:ink,on);chip.setPadding(dp(14),dp(8),dp(14),dp(8));chip.setBackground(shape(on?fab:surface,18));
+            chip.setContentDescription(names[k]+", "+counts[k]+(on?", selected":""));pressable(chip);
+            chip.setOnClickListener(v->{if(sharedTab==which)return;sharedTab=which;drawSharedTabs(tabs,s,c);drawShared(s,c);});
+            LinearLayout.LayoutParams cl=new LinearLayout.LayoutParams(-2,-2);cl.setMarginEnd(dp(8));tabs.addView(chip,cl);}}
+    private void drawShared(Shared s,JSONObject c){items.removeAllViews();scroll.scrollTo(0,0);List<SharedItem> list=sharedTab==0?s.photos:sharedTab==1?s.links:s.files;
+        if(list.isEmpty()){TextView e=text(sharedTab==0?"No photos or videos in the synced history yet.":sharedTab==1?"No links in the synced history yet.":"No files or voice messages in the synced history yet.",15,muted,false);
+            e.setGravity(Gravity.CENTER);e.setPadding(dp(24),dp(48),dp(24),dp(24));items.addView(e);return;}
+        int cols=3,g=dp(4),tile=(getResources().getDisplayMetrics().widthPixels-dp(16)-g*(cols-1))/cols,previews=0;String month="";LinearLayout line=null;int inRow=0;
+        // Link previews fetch the page, which tells its owner you looked: only where they're on and you know the people (as in the chat).
+        boolean fetch=linkPreviewsOn()&&c!=null&&(PairedProtocol.allKnown(c)||s.wrote);
+        for(SharedItem it:list){String m=monthLabel(it.time);if(!m.equals(month)){month=m;items.addView(sectionLabel(m));line=null;}
+            if(sharedTab==0){if(line==null||inRow==cols){line=row();LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=g;items.addView(line,lp);inRow=0;}
+                LinearLayout.LayoutParams tl=new LinearLayout.LayoutParams(tile,tile);if(inRow>0)tl.setMarginStart(g);line.addView(sharedTile(it,tile),tl);inRow++;}
+            else if(sharedTab==1)items.addView(linkRow(it,c,fetch&&previews++<30));
+            else items.addView(fileRow(it,c));}}
+    /** "November", or "November 2025" for another year. */
+    private static String monthLabel(long time){java.util.Calendar now=java.util.Calendar.getInstance(),at=java.util.Calendar.getInstance();at.setTimeInMillis(time);
+        String name=at.getDisplayName(java.util.Calendar.MONTH,java.util.Calendar.LONG,Locale.getDefault());
+        return at.get(java.util.Calendar.YEAR)==now.get(java.util.Calendar.YEAR)?name:name+" "+at.get(java.util.Calendar.YEAR);}
+    /** Who shared it and when: "You · Nov 8". */
+    private String sharedBy(SharedItem it,JSONObject c){return (PairedProtocol.outgoing(it.message,c)?"You":senderFirst(it.message,c))+" · "+android.text.format.DateUtils.formatDateTime(this,it.time,android.text.format.DateUtils.FORMAT_SHOW_DATE|android.text.format.DateUtils.FORMAT_ABBREV_MONTH);}
+    private View sharedTile(SharedItem it,int size){JSONObject media=it.media;boolean video=PairedProtocol.mediaKind(media).equals("video");FrameLayout box=new FrameLayout(this);box.setBackground(shape(surface,8));
+        box.setOutlineProvider(new ViewOutlineProvider(){@Override public void getOutline(View v,Outline o){o.setRoundRect(0,0,v.getWidth(),v.getHeight(),dp(8));}});box.setClipToOutline(true);
+        ImageView img=new ImageView(this);img.setScaleType(ImageView.ScaleType.CENTER_CROP);box.addView(img,new FrameLayout.LayoutParams(-1,-1));
+        if(video){TextView play=text("▶",16,Color.WHITE,false);play.setGravity(Gravity.CENTER);play.setBackground(oval(0x99000000));box.addView(play,new FrameLayout.LayoutParams(dp(36),dp(36),Gravity.CENTER));}
+        box.setContentDescription((video?"Video":"Photo")+". Hold for more.");pressable(box);box.setOnClickListener(v->openMedia(media));box.setOnLongClickListener(v->{sharedMenu(it);return true;});
+        loadPreview(media,img,video,size,size);return box;}
+    private View linkRow(SharedItem it,JSONObject c,boolean fetch){String url=it.url,host=ChatText.domain(url);LinearLayout r=row();r.setGravity(Gravity.CENTER_VERTICAL);r.setPadding(dp(8),dp(10),dp(8),dp(10));pressable(r);
+        FrameLayout icon=new FrameLayout(this);icon.setBackground(shape(surface,12));icon.setOutlineProvider(new ViewOutlineProvider(){@Override public void getOutline(View v,Outline o){o.setRoundRect(0,0,v.getWidth(),v.getHeight(),dp(12));}});icon.setClipToOutline(true);
+        TextView letter=text(host.isEmpty()?"🔗":host.substring(0,1).toUpperCase(Locale.ROOT),18,muted,true);letter.setGravity(Gravity.CENTER);icon.addView(letter,new FrameLayout.LayoutParams(-1,-1));
+        ImageView pic=new ImageView(this);pic.setScaleType(ImageView.ScaleType.CENTER_CROP);pic.setVisibility(View.GONE);icon.addView(pic,new FrameLayout.LayoutParams(-1,-1));r.addView(icon,new LinearLayout.LayoutParams(dp(52),dp(52)));
+        LinearLayout texts=vertical();texts.setPadding(dp(14),0,0,0);TextView title=text(host.isEmpty()?url:host,15,ink,false);title.setMaxLines(2);title.setEllipsize(TextUtils.TruncateAt.END);texts.addView(title);
+        TextView where=text(url.replaceFirst("(?i)^https?://(www\\.)?",""),13,muted,false);where.setSingleLine(true);where.setEllipsize(TextUtils.TruncateAt.MIDDLE);texts.addView(where);
+        texts.addView(text(sharedBy(it,c),12,muted,false));r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));
+        LinkPreviews.Done fill=p->{String t=p.optString("title");if(!t.isEmpty())title.setText(t);String image=p.optString("image");
+            if(!image.isEmpty())decoder.execute(()->{Bitmap b=MediaCache.decodeToCover(new File(image),dp(52),dp(52),false);if(b!=null)pic.post(()->{pic.setImageBitmap(b);pic.setVisibility(View.VISIBLE);});});};
+        JSONObject ready=LinkPreviews.peek(url);if(ready!=null){if(!ready.optString("title").isEmpty())fill.done(ready);}else if(fetch)LinkPreviews.load(this,url,fill);
+        r.setContentDescription(host+". "+sharedBy(it,c)+". Hold for more.");r.setOnClickListener(v->openLink(url));r.setOnLongClickListener(v->{sharedMenu(it);return true;});return r;}
+    private View fileRow(SharedItem it,JSONObject c){JSONObject media=it.media;String name=PairedProtocol.string(media,"mediaName"),kind=PairedProtocol.mediaKind(media);
+        LinearLayout r=row();r.setGravity(Gravity.CENTER_VERTICAL);r.setPadding(dp(8),dp(10),dp(8),dp(10));pressable(r);r.addView(text(kind.equals("audio")?"🎤":"📄",22,ink,false));
+        LinearLayout texts=vertical();texts.setPadding(dp(14),0,0,0);TextView n=text(name.isEmpty()?(kind.equals("audio")?"Voice message":"File"):name,15,ink,false);n.setSingleLine(true);n.setEllipsize(TextUtils.TruncateAt.MIDDLE);texts.addView(n);
+        String sz=PairedProtocol.size(media.optLong("size"));texts.addView(text((sz.isEmpty()?"":sz+" · ")+sharedBy(it,c),13,muted,false));r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));
+        r.setOnClickListener(v->openMedia(media));r.setOnLongClickListener(v->{sharedMenu(it);return true;});return r;}
+    /** Hold a shared item: jump to it in the chat, or copy/share/save it. */
+    private void sharedMenu(SharedItem it){List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();JSONObject m=it.message;
+        labels.add("Show in chat");actions.add(()->openMessage(m));
+        if(it.url!=null){String url=it.url;labels.add("Copy link");actions.add(()->getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Link",url)));
+            labels.add("Share link");actions.add(()->startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT,url),null)));}
+        else{JSONObject media=it.media;String kind=PairedProtocol.mediaKind(media),what=kind.equals("image")?"photo":kind.equals("video")?"video":kind.equals("audio")?"audio":"file";
+            labels.add("Save "+what+" to phone");actions.add(()->withFile(media,"Downloading…",file->saveToPhone(file,media)));
+            labels.add("Share "+what);actions.add(()->withFile(media,"Downloading…",file->share(file,media)));}
+        menuSheet(it.url!=null?ChatText.domain(it.url):"",labels,actions);}
+    private void openLink(String url){try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));}catch(Exception e){toast("No browser is installed.");}}
 
     /** Inbox search also finds messages (not just chat names), searched in the background as you type. */
     private void renderMessageHits(){if(items==null)return;SmartText.Search f=SmartText.parseSearch(query);boolean filters=SmartText.hasFilters(f);
