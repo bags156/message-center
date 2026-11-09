@@ -1172,7 +1172,8 @@ public class PairedActivity extends Activity {
         if(!plain.isEmpty())sheetAction(content,"Copy text",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Message",plain));});
         if(!plain.isEmpty())sheetAction(content,"Select text…",()->{d[0].dismiss();selectText(plain);});
         for(JSONObject media:PairedProtocol.media(m)){String transcript=Transcriber.saved(this,PairedProtocol.string(media,"mediaID"));
-            if(transcript!=null)sheetAction(content,"Copy transcript",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Transcript",transcript));});
+            if(transcript!=null){sheetAction(content,"Copy transcript",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Transcript",transcript));});
+                sheetAction(content,"Transcribe again",()->{d[0].dismiss();Transcriber.forget(this,PairedProtocol.string(media,"mediaID"));transcribe(media);});}
             String kind=PairedProtocol.mediaKind(media),what=kind.equals("image")?"photo":kind.equals("video")?"video":kind.equals("audio")?"audio":"file";
             if(kind.equals("image")||kind.equals("video"))sheetAction(content,"Copy "+what,()->{d[0].dismiss();copyToClipboard("",java.util.Collections.singletonList(media));});
             sheetAction(content,"Save "+what+" to phone",()->{d[0].dismiss();withFile(media,"Downloading…",file->saveToPhone(file,media));});
@@ -2231,8 +2232,12 @@ public class PairedActivity extends Activity {
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){pendingTranscription=media;
             toast("Android's speech recognizer needs microphone access, even to read a message. Nothing is recorded.");requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},78);return;}
         String id=PairedProtocol.string(media,"mediaID");if(id.isEmpty()||transcribing.contains(id))return;
+        // Names from this chat help the recognizer spell them (and hear them at all).
+        List<String> names=new ArrayList<>();JSONObject c=store.chat(chatId);
+        if(c!=null)for(JSONObject p:PairedProtocol.members(c)){String n=PairedProtocol.name(p);if(!n.isEmpty()&&!n.startsWith("+")){names.add(n);String first=n.split("\\s+")[0];if(!names.contains(first))names.add(first);}
+            String nick=Nicknames.get(PairedProtocol.number(p));if(!nick.isEmpty()&&!names.contains(nick))names.add(nick);}
         withFile(media,"Downloading…",file->{transcribing.add(id);renderMessages(false);
-            Transcriber.transcribe(this,file,id,(text,err)->{transcribing.remove(id);renderMessages(false);if(!err.isEmpty())error(err);});});}
+            Transcriber.transcribe(this,file,id,names,(text,err)->{transcribing.remove(id);renderMessages(false);if(!err.isEmpty())error(err);});});}
 
     // ---- 0.6: reliability, outbox, contacts, management, search, voice, sharing, links ----
     private Outbox outbox;
