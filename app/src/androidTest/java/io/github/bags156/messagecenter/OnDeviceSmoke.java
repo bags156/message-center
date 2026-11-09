@@ -97,14 +97,21 @@ public final class OnDeviceSmoke extends Instrumentation {
                 .put("messageStatus",new JSONObject().put("status",mine?"OUTGOING_DELIVERED":"INCOMING_COMPLETE"))
                 .put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content",kinds[i%kinds.length])))),0,true);}}
         PairedActivity a=(PairedActivity)startActivitySync(new Intent(getTargetContext(),BubbleActivity.class).setAction(Intent.ACTION_VIEW).putExtra("chat","perf").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-        waitForIdleSync();long[] runs=new long[5];
+        waitForIdleSync();
         java.lang.reflect.Method render=PairedActivity.class.getDeclaredMethod("renderMessages",boolean.class);render.setAccessible(true);
-        for(int r=0;r<runs.length;r++){int at=r;runOnMainSync(()->{try{long t=System.nanoTime();render.invoke(a,false);
-            android.view.View root=a.getWindow().getDecorView();root.measure(android.view.View.MeasureSpec.makeMeasureSpec(root.getWidth(),android.view.View.MeasureSpec.EXACTLY),android.view.View.MeasureSpec.makeMeasureSpec(root.getHeight(),android.view.View.MeasureSpec.EXACTLY));
-            root.layout(0,0,root.getWidth(),root.getHeight());runs[at]=(System.nanoTime()-t)/1_000_000;}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();}
+        java.lang.reflect.Field limit=PairedActivity.class.getDeclaredField("limit");limit.setAccessible(true);
+        // Same machine, same run: before (300 drawn, every text re-scanned) and now (120 drawn, scans reused), alternating.
+        long[] before=new long[5],runs=new long[5];
+        for(int r=0;r<5;r++){int at=r;
+            runOnMainSync(()->{try{limit.setInt(a,300);TextScan.clear();before[at]=timedRedraw(a,render);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
+            runOnMainSync(()->{try{limit.setInt(a,120);runs[at]=timedRedraw(a,render);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();}
+        java.util.Arrays.sort(before);
         a.finish();waitForIdleSync();java.util.Arrays.sort(runs);
         try(PairedStore store=new PairedStore(getTargetContext())){store.deleteChat("perf");}
-        return "redraw 300 msgs "+runs[runs.length/2]+" ms (min "+runs[0]+", max "+runs[runs.length-1]+")";}
+        return "redraw busy chat: before "+before[2]+" ms, now "+runs[2]+" ms (medians of 5, same run)";}
+    private static long timedRedraw(PairedActivity a,java.lang.reflect.Method render)throws Exception{long t=System.nanoTime();render.invoke(a,false);
+        android.view.View root=a.getWindow().getDecorView();root.measure(android.view.View.MeasureSpec.makeMeasureSpec(root.getWidth(),android.view.View.MeasureSpec.EXACTLY),android.view.View.MeasureSpec.makeMeasureSpec(root.getHeight(),android.view.View.MeasureSpec.EXACTLY));
+        root.layout(0,0,root.getWidth(),root.getHeight());return (System.nanoTime()-t)/1_000_000;}
     private static void collectDescriptions(android.view.View v,java.util.List<android.view.View> faces,java.util.List<String> seen){if(v==null)return;
         CharSequence d=v.getContentDescription();if(d!=null&&d.toString().contains("pinned")){seen.add(d.toString());if(d.toString().startsWith("Smoke group")&&d.toString().endsWith(", pinned"))faces.add(v);}
         if(v instanceof android.view.ViewGroup){android.view.ViewGroup g=(android.view.ViewGroup)v;for(int i=0;i<g.getChildCount();i++)collectDescriptions(g.getChildAt(i),faces,seen);}}

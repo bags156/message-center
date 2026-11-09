@@ -52,6 +52,9 @@ final class TextScan {
         return scan;
     }
 
+    /** Forgets every scan (the on-device test uses this to time redraws as they were before caching). */
+    static void clear() { scans.evictAll(); codes.evictAll(); }
+
     /** A login or verification code in the text, or "" (cached; see ChatText.oneTimeCode). */
     static String code(String text) {
         String hit = codes.get(text);
