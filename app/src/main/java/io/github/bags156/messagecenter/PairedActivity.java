@@ -188,7 +188,8 @@ public class PairedActivity extends Activity {
         if(recorder!=null)cancelRecording();if(dictation!=null)stopDictation();recordBar=null;composeRow=null;sendButton=null;recordClock=null;screen=name;batteryCard=null;jumpButton=null;statusView=null;statusRow=null;reconnectButton=null;receiptsMark=null;composer=null;items=null;scroll=null;searchRow=null;attachStrip=null;attachScroll=null;replyPanel=null;typingRow=null;messageViews.clear();ui.removeCallbacks(typingTick);if(typingPulse!=null){typingPulse.cancel();typingPulse=null;}
         dark=(getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;
         textScale=getSharedPreferences("paired",MODE_PRIVATE).getFloat("text_scale",1f);quickRow=null;quickScroll=null;searchChips=null;selecting=false;chosen.clear();selectionBar=null;chatFrame=null;
-        bg=dark?0xff111318:0xfff8f9fc;card=dark?0xff1d2026:Color.WHITE;surface=dark?0xff23252b:0xffe9edf4;ink=dark?0xffe3e2e9:0xff1a1b20;muted=dark?0xffabaeb8:0xff5d5f67;
+        int[] colors=palette(dark,dark&&"black".equals(getSharedPreferences("paired",MODE_PRIVATE).getString("theme","system")));
+        bg=colors[0];card=colors[1];surface=colors[2];ink=colors[3];muted=colors[4];
         fab=dark?0xff3b4766:0xffd3e3fd;onFab=dark?0xffd8e2ff:0xff0b1f3a;danger=dark?0xfff2b8b5:0xffb3261e;
         getWindow().setStatusBarColor(bg);getWindow().setNavigationBarColor(bg);
         frame=new FrameLayout(this);frame.setBackgroundColor(bg);
@@ -1893,9 +1894,17 @@ public class PairedActivity extends Activity {
         new AlertDialog.Builder(this).setMessage("Mark "+(ids.size()==1?"1 conversation":ids.size()+" conversations")+" as read?").setNegativeButton("Cancel",null)
             .setPositiveButton("Mark read",(d,w)->{for(String id:ids)PairedService.markReadFromNotification(this,id,()->{});ui.postDelayed(()->{if(screen.equals("inbox"))renderInbox();},300);toast("Marked "+ids.size()+" as read");}).show();}
     /** Light, dark, or match the phone; Android applies it to every screen of the app (and remembers it). */
+    /**
+     * Background, card, surface (incoming bubbles, fields), text and secondary text. Black is for
+     * OLED screens: true black (those pixels switch off), soft white text so it doesn't glow, and
+     * very dark gray bubbles so they still read as bubbles.
+     */
+    static int[] palette(boolean dark,boolean black){
+        if(black)return new int[]{0xff000000,0xff121214,0xff1c1c1e,0xfff2f2f4,0xff98989f};
+        return dark?new int[]{0xff111318,0xff1d2026,0xff23252b,0xffe3e2e9,0xffabaeb8}:new int[]{0xfff8f9fc,Color.WHITE,0xffe9edf4,0xff1a1b20,0xff5d5f67};}
     private void appTheme(String mode){getSharedPreferences("paired",MODE_PRIVATE).edit().putString("theme",mode).apply();applyThemeSetting(this);}
     static void applyThemeSetting(Context context){String mode=context.getSharedPreferences("paired",MODE_PRIVATE).getString("theme","system");
-        context.getSystemService(android.app.UiModeManager.class).setApplicationNightMode(mode.equals("light")?android.app.UiModeManager.MODE_NIGHT_NO:mode.equals("dark")?android.app.UiModeManager.MODE_NIGHT_YES:android.app.UiModeManager.MODE_NIGHT_AUTO);}
+        context.getSystemService(android.app.UiModeManager.class).setApplicationNightMode(mode.equals("light")?android.app.UiModeManager.MODE_NIGHT_NO:mode.equals("dark")||mode.equals("black")?android.app.UiModeManager.MODE_NIGHT_YES:android.app.UiModeManager.MODE_NIGHT_AUTO);}
     /** Saves starred messages, nicknames, reminders, scheduled messages, chat settings, and app settings to Downloads/Message Center. */
     private void backupNow(){toast("Backing up…");decoder.execute(()->{String result;Uri item=null;
         try{String json=Backup.export(this);String name="message-center-backup-"+new SimpleDateFormat("yyyy-MM-dd-HHmm",Locale.US).format(new Date())+".json";
@@ -2326,7 +2335,8 @@ public class PairedActivity extends Activity {
 
         LinearLayout looks=settingsGroup(content,"Appearance");
         String themeMode=prefs.getString("theme","system");
-        settingRow(looks,"Theme",null,themeMode.equals("light")?"Light":themeMode.equals("dark")?"Dark":"Match phone",()->menuSheet("Theme",java.util.Arrays.asList("Match phone","Light","Dark"),java.util.Arrays.<Runnable>asList(()->{appTheme("system");settings();},()->{appTheme("light");settings();},()->{appTheme("dark");settings();})));
+        settingRow(looks,"Theme",themeMode.equals("black")?"True black for OLED screens: those pixels switch off":null,themeMode.equals("light")?"Light":themeMode.equals("dark")?"Dark":themeMode.equals("black")?"Black":"Match phone",
+            ()->menuSheet("Theme",java.util.Arrays.asList("Match phone","Light","Dark","Black (saves battery on OLED)"),java.util.Arrays.<Runnable>asList(()->{appTheme("system");settings();},()->{appTheme("light");settings();},()->{appTheme("dark");settings();},()->{appTheme("black");settings();})));
         settingRow(looks,"Text size",null,scaleLabel(textScale),()->{float[] sizes={0.9f,1f,1.15f,1.3f};List<Runnable> actions=new ArrayList<>();
             for(float f:sizes)actions.add(()->{prefs.edit().putFloat("text_scale",f).apply();settings();});
             menuSheet("Text size",java.util.Arrays.asList("Small","Default","Large","Larger"),actions);});

@@ -248,6 +248,8 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(!getTargetContext().getPackageManager().queryIntentServices(new Intent(android.service.quicksettings.TileService.ACTION_QS_TILE).setPackage(getTargetContext().getPackageName()),0).isEmpty(),"Busy tile isn't registered");
             PairedService.setAutoReply(getTargetContext(),Long.MAX_VALUE);check(PairedService.autoReplyUntil(getTargetContext())==Long.MAX_VALUE,"Busy mode didn't turn on");
             PairedService.setAutoReply(getTargetContext(),0);
+            // Black theme: true black background, soft (not pure) white text, bubbles that still stand out.
+            int[] black=PairedActivity.palette(true,true);check(black[0]==0xff000000&&black[3]!=0xffffffff&&black[2]!=black[0],"Black theme colors are off");
             // Dictation: words land with spacing and a capital at the start.
             check(ChatText.dictation("","on my way").equals("On my way")&&ChatText.dictation("Hi","there").equals(" there"),"Dictation spacing is wrong");
             Nudges.summary(getTargetContext());
