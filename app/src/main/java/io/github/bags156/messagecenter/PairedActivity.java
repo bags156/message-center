@@ -290,7 +290,7 @@ public class PairedActivity extends Activity {
     private void askContactPhotos(){android.content.SharedPreferences prefs=getSharedPreferences("paired",MODE_PRIVATE);
         if(Avatars.canUsePhonePhotos(this)||prefs.getBoolean("asked_contacts",false))return;prefs.edit().putBoolean("asked_contacts",true).apply();
         new AlertDialog.Builder(this).setTitle("Sharper contact photos?").setMessage("Google only sends small photos. Message Center can use the full-size photos from your phone's contacts for chats, bubbles, notifications, and the widget. They stay on this phone.")
-            .setPositiveButton("Allow",(d,w)->requestPermissions(new String[]{Manifest.permission.READ_CONTACTS},79)).setNegativeButton("Not now",null).show();}
+            .setPositiveButton("Allow",(d,w)->requestPermissions(new String[]{Manifest.permission.READ_CONTACTS},CONTACTS_PERMISSION)).setNegativeButton("Not now",null).show();}
     /** Requests contact photos once per launch for one-to-one chats that do not have one cached. */
     private void requestPhotos(List<JSONObject> chats){
         phonePhotos(chats);
@@ -2236,7 +2236,7 @@ public class PairedActivity extends Activity {
 
     // ---- 0.6: reliability, outbox, contacts, management, search, voice, sharing, links ----
     private Outbox outbox;
-    private JSONObject contacts;private boolean groupMode;private String contactQuery="";private final Map<String,String> picked=new LinkedHashMap<>();
+    private JSONObject contacts;private boolean contactsFailed;private List<PhoneContacts.Entry> phoneContacts;private List<Person> chatPeople;private boolean groupMode;private String contactQuery="";private final Map<String,String> picked=new LinkedHashMap<>();
     private final List<Outgoing> incoming=new ArrayList<>();private String incomingText;
     private MediaRecorder recorder;private File recording;private long recordStart;private LinearLayout recordBar,composeRow;private ImageView sendButton;private TextView recordClock;
     private final Runnable recordTick=this::updateRecordClock;
@@ -2284,8 +2284,14 @@ public class PairedActivity extends Activity {
                 else loadMessages(false);});}).setNegativeButton("Cancel",null).show();}
 
     // Contacts and new conversations
-    private void newMessage(){if(!PairedService.ready()){toast("Connect first, then start a chat.");return;}picked.clear();groupMode=false;contactQuery="";newChat();if(contacts==null)loadContacts();}
-    private void loadContacts(){PairedService.execute(c->c.contacts(),(raw,e)->{if(!e.isEmpty()){toast(e);return;}try{contacts=new JSONObject(raw);}catch(Exception ex){return;}if(screen.equals("newchat"))renderContacts();});}
+    private void newMessage(){if(!PairedService.ready()){toast("Connect first, then start a chat.");return;}picked.clear();groupMode=false;contactQuery="";chatPeople=null;newChat();
+        loadPhoneContacts();if(contacts==null)loadContacts();}
+    /** Google Messages' contacts: its "frequent" list, and the first few hundred of the rest. */
+    private void loadContacts(){contactsFailed=false;PairedService.execute(c->c.contacts(),(raw,e)->{if(!e.isEmpty()){contactsFailed=true;if(screen.equals("newchat"))renderContacts();return;}
+        try{contacts=new JSONObject(raw);}catch(Exception ex){contactsFailed=true;}if(screen.equals("newchat"))renderContacts();});}
+    /** This phone's contacts (everyone, unlike Google's list), read in the background each time you start a conversation. */
+    private void loadPhoneContacts(){if(!PhoneContacts.allowed(this))return;decoder.execute(()->{List<PhoneContacts.Entry> all=PhoneContacts.all(this);
+        ui.post(()->{phoneContacts=all;if(screen.equals("newchat"))renderContacts();});});}
     private void newChat(){remember();base("newchat");header(groupMode?"New group":"New conversation",()->{if(groupMode){groupMode=false;picked.clear();newChat();}else inbox();});
         EditText search=input(groupMode?"Add people by name or number":"Type a name or phone number");search.setSingleLine(true);search.setText(contactQuery);
         LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-1,-2);sp.setMargins(dp(16),0,dp(16),dp(8));root.addView(search,sp);
@@ -2295,22 +2301,65 @@ public class PairedActivity extends Activity {
             LinearLayout.LayoutParams np=new LinearLayout.LayoutParams(-1,-2);np.setMargins(dp(16),dp(4),dp(16),dp(12));root.addView(next,np);}
         search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){contactQuery=s.toString();renderContacts();}public void afterTextChanged(Editable e){}});
         renderContacts();search.requestFocus();}
+    /** Someone you can start a conversation with: from your phone's contacts, Google's list, or a chat you're in. */
+    private static final class Person{final String name,number,formatted,hex,folded,digits;
+        Person(String name,String number,String formatted,String hex){this.name=name;this.number=number;this.formatted=formatted;this.hex=hex;folded=ContactSearch.fold(name);digits=ChatText.digits(number);}}
+    private static final int CONTACTS_PERMISSION=81;
     private void renderContacts(){if(items==null||!screen.equals("newchat"))return;items.removeAllViews();String q=contactQuery.trim(),number=ChatText.normalizeNumber(q);
-        if(!groupMode&&q.isEmpty()){LinearLayout g=row();g.setPadding(dp(8),dp(10),dp(8),dp(10));View face=new FrameLayout(this);face.setBackground(oval(fab));
+        if(!groupMode&&q.isEmpty()){LinearLayout g=row();g.setPadding(dp(8),dp(10),dp(8),dp(10));pressable(g);View face=new FrameLayout(this);face.setBackground(oval(fab));
             TextView plus=text("👥",20,onFab,false);plus.setGravity(Gravity.CENTER);((FrameLayout)face).addView(plus,new FrameLayout.LayoutParams(-1,-1));g.addView(face,new LinearLayout.LayoutParams(dp(44),dp(44)));
             TextView t=text("Create group",17,ink,false);t.setPadding(dp(16),0,0,0);g.addView(t);g.setOnClickListener(v->{groupMode=true;picked.clear();newChat();});items.addView(g);}
         if(!picked.isEmpty()){items.addView(sectionLabel("Selected"));for(Map.Entry<String,String> e:new ArrayList<>(picked.entrySet()))items.addView(contactRow(e.getValue(),e.getKey(),"",""));}
-        if(!number.isEmpty()&&!picked.containsKey(number))items.addView(contactRow("Use "+number,number,"",""));
-        if(contacts==null){items.addView(sectionLabel("Loading contacts…"));return;}
-        String ql=q.toLowerCase(Locale.ROOT),qd=ChatText.digits(q);Set<String> shown=new HashSet<>(picked.keySet());
-        if(q.isEmpty()){org.json.JSONArray top=contacts.optJSONArray("top");if(top!=null&&top.length()>0){items.addView(sectionLabel("Frequent"));addContacts(top,"","",shown,20);}}
-        org.json.JSONArray all=contacts.optJSONArray("all");if(all!=null){items.addView(sectionLabel(q.isEmpty()?"All contacts":"Contacts"));addContacts(all,ql,qd,shown,q.isEmpty()?400:60);}}
-    private void addContacts(org.json.JSONArray list,String ql,String qd,Set<String> shown,int max){int added=0;
-        for(int i=0;i<list.length()&&added<max;i++){JSONObject ct=list.optJSONObject(i);if(ct==null)continue;String name=ct.optString("name");JSONObject num=ct.optJSONObject("number");
-            String n=num==null?"":ChatText.normalizeNumber(PairedProtocol.string(num,"number"));if(n.isEmpty()&&num!=null&&PairedProtocol.string(num,"number").startsWith("+"))n=PairedProtocol.string(num,"number");
-            if(n.isEmpty()||shown.contains(n))continue;String formatted=num==null?n:num.optString("formattedNumber",n);
-            if(!ql.isEmpty()&&!name.toLowerCase(Locale.ROOT).contains(ql)&&(qd.length()<3||!ChatText.digits(n).contains(qd)))continue;
-            shown.add(n);items.addView(contactRow(name.isEmpty()?formatted:name,n,formatted,ct.optString("avatarHexColor")));added++;}}
+        Set<String> shown=new HashSet<>(picked.keySet());
+        if(!number.isEmpty()&&!picked.containsKey(number)){items.addView(contactRow("Use "+number,number,"",""));shown.add(number);}
+        // Without the contacts permission, only Google's partial list can be searched; one row to fix that.
+        if(!PhoneContacts.allowed(this))items.addView(allowContactsRow());
+        String ql=ContactSearch.fold(q),qd=ChatText.digits(q);
+        if(q.isEmpty()&&contacts!=null){org.json.JSONArray top=contacts.optJSONArray("top");if(top!=null&&top.length()>0){items.addView(sectionLabel("Frequent"));int added=0;
+            for(Person p:googlePeople(top)){if(added>=20)break;if(!shown.add(p.number))continue;items.addView(contactRow(p.name,p.number,p.formatted,p.hex));added++;}}}
+        List<Person> everyone=everyone();List<Person> hits=new ArrayList<>();List<Integer> scores=new ArrayList<>();
+        for(Person p:everyone){if(shown.contains(p.number))continue;int sc=ContactSearch.score(p.folded,ContactSearch.fold(Nicknames.get(p.number)),p.digits,ql,qd);if(sc<0)continue;
+            // Best matches first; ties keep the list's own (alphabetical) order.
+            int at=hits.size();while(at>0&&scores.get(at-1)>sc)at--;hits.add(at,p);scores.add(at,sc);shown.add(p.number);}
+        boolean loading=phoneContacts==null&&PhoneContacts.allowed(this)||contacts==null&&!contactsFailed;
+        if(!hits.isEmpty()){items.addView(sectionLabel(q.isEmpty()?"All contacts":"Contacts"));int max=q.isEmpty()?600:80;
+            for(int i=0;i<hits.size()&&i<max;i++){Person p=hits.get(i);items.addView(contactRow(p.name,p.number,p.formatted,p.hex));}}
+        else if(loading)items.addView(sectionLabel("Loading contacts…"));
+        else if(!q.isEmpty()&&number.isEmpty()){TextView none=text("No one called “"+q+"”. Type their number to message them.",15,muted,false);none.setPadding(dp(8),dp(16),dp(8),dp(8));items.addView(none);}
+        if(contactsFailed&&phoneContacts==null){TextView note=text("Google Messages didn't send its contact list. You can still type a number.",13,muted,false);note.setPadding(dp(8),dp(12),dp(8),dp(4));items.addView(note);}}
+    /** Everyone to search: this phone's contacts, then anyone else from Google's list, then people from your chats. One row per number. */
+    private List<Person> everyone(){List<Person> out=new ArrayList<>();Set<String> numbers=new HashSet<>();
+        if(phoneContacts!=null)for(PhoneContacts.Entry e:phoneContacts){String detail=e.label.isEmpty()?e.formatted:e.label+" · "+e.formatted;if(numbers.add(e.name+"\n"+e.number))out.add(new Person(e.name,e.number,detail,""));}
+        Set<String> phoneNumbers=new HashSet<>();for(Person p:out)phoneNumbers.add(p.number);
+        List<Person> more=new ArrayList<>();
+        if(contacts!=null){org.json.JSONArray all=contacts.optJSONArray("all");if(all!=null)for(Person p:googlePeople(all))if(!phoneNumbers.contains(p.number)&&numbers.add(p.number))more.add(p);}
+        if(chatPeople==null)chatPeople=peopleFromChats();for(Person p:chatPeople)if(!phoneNumbers.contains(p.number)&&numbers.add(p.number))more.add(p);
+        java.text.Collator order=java.text.Collator.getInstance();order.setStrength(java.text.Collator.PRIMARY);more.sort((a,b)->order.compare(a.name,b.name));
+        if(phoneContacts==null)return more;
+        // Merged into the phone's alphabetical list rather than tacked on the end.
+        List<Person> merged=new ArrayList<>(out.size()+more.size());int i=0,j=0;
+        while(i<out.size()||j<more.size()){if(j>=more.size()||i<out.size()&&order.compare(out.get(i).name,more.get(j).name)<=0)merged.add(out.get(i++));else merged.add(more.get(j++));}
+        return merged;}
+    private List<Person> googlePeople(org.json.JSONArray list){List<Person> out=new ArrayList<>();
+        for(int i=0;i<list.length();i++){JSONObject ct=list.optJSONObject(i);if(ct==null)continue;String name=ct.optString("name");JSONObject num=ct.optJSONObject("number");
+            String raw=num==null?"":PairedProtocol.string(num,"number"),n=ChatText.normalizeNumber(raw);if(n.isEmpty()&&raw.startsWith("+"))n=raw;if(n.isEmpty())continue;
+            String formatted=num==null?n:num.optString("formattedNumber",n);out.add(new Person(name.isEmpty()?formatted:name,n,formatted,ct.optString("avatarHexColor")));}
+        return out;}
+    /** People from your conversations (including archived ones), so anyone you've messaged can be found even if they aren't a contact. */
+    private List<Person> peopleFromChats(){List<Person> out=new ArrayList<>();Set<String> seen=new HashSet<>();
+        for(int folder:new int[]{1,2})for(JSONObject c:store.chats("",folder))for(JSONObject p:PairedProtocol.members(c)){String raw=PairedProtocol.number(p),n=ChatText.normalizeNumber(raw);
+            if(n.isEmpty()&&raw.startsWith("+"))n=raw;if(n.isEmpty()||!seen.add(n))continue;String name=PairedProtocol.name(p),formatted=p.optString("formattedNumber",n);
+            out.add(new Person(name.isEmpty()?formatted:name,n,formatted,p.optString("avatarHexColor")));}
+        return out;}
+    private View allowContactsRow(){LinearLayout r=row();r.setGravity(Gravity.CENTER_VERTICAL);r.setPadding(dp(8),dp(10),dp(8),dp(10));pressable(r);
+        TextView icon=text("📇",22,ink,false);icon.setGravity(Gravity.CENTER);r.addView(icon,new LinearLayout.LayoutParams(dp(44),dp(44)));
+        LinearLayout texts=vertical();texts.setPadding(dp(16),0,dp(8),0);texts.addView(text("Search all your contacts",17,ink,false));
+        texts.addView(text("Google Messages only shares some of them. Allow contacts to search everyone on this phone; they stay here.",14,muted,false));r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));
+        r.setOnClickListener(v->askForContacts());return r;}
+    /** The contacts permission; if Android won't ask again, its settings page for this app. */
+    private void askForContacts(){android.content.SharedPreferences prefs=getSharedPreferences("paired",MODE_PRIVATE);
+        if(shouldShowRequestPermissionRationale(Manifest.permission.READ_CONTACTS)||!prefs.getBoolean("asked_contacts",false)){prefs.edit().putBoolean("asked_contacts",true).apply();requestPermissions(new String[]{Manifest.permission.READ_CONTACTS},CONTACTS_PERMISSION);return;}
+        toast("Turn on Contacts under Permissions.");try{startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.fromParts("package",getPackageName(),null)));}catch(Exception ignored){}}
     private TextView sectionLabel(String label){TextView t=text(label,14,muted,true);t.setPadding(dp(8),dp(14),dp(8),dp(6));return t;}
     private View contactRow(String name,String number,String formatted,String hex){LinearLayout r=row();r.setPadding(dp(8),dp(8),dp(8),dp(8));pressable(r);
         JSONObject p=new JSONObject();try{p.put("avatarHexColor",hex);}catch(Exception ignored){}r.addView(personAvatar(p,name,44));
@@ -2429,7 +2478,9 @@ public class PairedActivity extends Activity {
         if(request==77){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)startRecording();else toast("Message Center needs the microphone to record voice messages.");}
         if(request==79){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)startDictation();else toast("Message Center needs the microphone for speech to text.");}
         if(request==LOCATION_PERMISSION){boolean any=false;for(int r:results)if(r==PackageManager.PERMISSION_GRANTED)any=true;if(any)shareLocation();else toast("Location permission is needed to share where you are.");return;}
-        if(request==79&&results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED){phoneChecked.clear();photos.clear();if(screen.equals("inbox"))renderInbox();else if(screen.equals("settings"))settings();}
+        if(request==CONTACTS_PERMISSION&&results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED){phoneChecked.clear();photos.clear();
+            if(screen.equals("inbox"))renderInbox();else if(screen.equals("settings"))settings();else if(screen.equals("newchat"))loadPhoneContacts();}
+        if(request==CONTACTS_PERMISSION&&screen.equals("newchat"))renderContacts();
         if(request==78){JSONObject pending=pendingTranscription;pendingTranscription=null;if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED&&pending!=null)transcribe(pending);else if(pending!=null)toast("Transcription needs microphone access.");}}
     /** Plays an audio attachment in place; tap again to pause. */
     private void playAudio(JSONObject media,TextView label){String id=PairedProtocol.string(media,"mediaID");
@@ -2508,7 +2559,7 @@ public class PairedActivity extends Activity {
         settingSwitch(chats,"Message effects","Balloons, Slam, invisible ink and other effects iPhones send, and phrases like “Happy birthday”",effectsOn(),on->prefs.edit().putBoolean("message_effects",on).apply());
         settingRow(chats,"Maps app for addresses",null,mapsAppLabel(),()->chooseMapsApp(pkg->{if(screen.equals("settings"))settings();}));
         settingRow(chats,"Calendar app for dates","Tap a date or time in a message to add it",calendarAppLabel(),()->chooseCalendarApp(pkg->{if(screen.equals("settings"))settings();}));
-        if(!Avatars.canUsePhonePhotos(this))settingRow(chats,"Use names and photos from contacts","Full first names (like \"Hannah Kay\") and contact photos",null,()->{if(shouldShowRequestPermissionRationale(Manifest.permission.READ_CONTACTS)||!prefs.getBoolean("asked_contacts",false)){prefs.edit().putBoolean("asked_contacts",true).apply();requestPermissions(new String[]{Manifest.permission.READ_CONTACTS},79);}
+        if(!Avatars.canUsePhonePhotos(this))settingRow(chats,"Use names and photos from contacts","Full first names (like \"Hannah Kay\") and contact photos",null,()->{if(shouldShowRequestPermissionRationale(Manifest.permission.READ_CONTACTS)||!prefs.getBoolean("asked_contacts",false)){prefs.edit().putBoolean("asked_contacts",true).apply();requestPermissions(new String[]{Manifest.permission.READ_CONTACTS},CONTACTS_PERMISSION);}
             else startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())));});
 
         LinearLayout alerts=settingsGroup(content,"Notifications");

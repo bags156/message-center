@@ -186,6 +186,31 @@ public final class OnDeviceSmoke extends Instrumentation {
         reader.getWindow().getDecorView().findViewsWithText(fx,"We got the house!!",android.view.View.FIND_VIEWS_WITH_TEXT);check(!fx.isEmpty(),"The message sent with Confetti is missing");fx.clear();
         reader.getWindow().getDecorView().findViewsWithText(fx,"Sent with Confetti. Tap to replay it.",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);check(fx.size()==1,"No \"Sent with Confetti\" line to replay it ("+fx.size()+")");
         reader.finish();waitForIdleSync();}
+    /** New conversation: finds people in the phone's contacts and in your chats, not just Google's partial list. */
+    private void checkNewConversationSearch(PairedActivity a)throws Exception{
+        try(PairedStore store=new PairedStore(getTargetContext())){store.chat(new JSONObject("{conversationID:'riley',name:'Riley Chatfield',type:'RCS',lastMessageTimestamp:1794000000000000,participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'r1',number:'+15550104444'},fullName:'Riley Chatfield'}]}"));}
+        java.util.List<PhoneContacts.Entry> phone=new java.util.ArrayList<>();
+        phone.add(new PhoneContacts.Entry("Hannah Kay","+14795550123","(479) 555-0123","Mobile"));
+        for(int i=0;i<500;i++)phone.add(new PhoneContacts.Entry("Person "+i,"+1479556"+String.format(java.util.Locale.ROOT,"%04d",i),"479-556-"+i,"Mobile"));
+        phone.add(new PhoneContacts.Entry("Zoë Último","+14795550999","(479) 555-0999","Work"));
+        java.lang.reflect.Field phoneF=PairedActivity.class.getDeclaredField("phoneContacts"),googleF=PairedActivity.class.getDeclaredField("contacts"),queryF=PairedActivity.class.getDeclaredField("contactQuery");
+        phoneF.setAccessible(true);googleF.setAccessible(true);queryF.setAccessible(true);
+        java.lang.reflect.Method render=PairedActivity.class.getDeclaredMethod("renderContacts");render.setAccessible(true);
+        // Not signed in here, so the screen is opened directly with stand-in contacts (Google's list empty, as if it hadn't come).
+        runOnMainSync(()->{try{phoneF.set(a,phone);googleF.set(a,new JSONObject("{top:[],all:[]}"));queryF.set(a,"");}catch(Exception e){throw new RuntimeException(e);}});
+        onMain(a,"newChat");
+        java.util.function.BiFunction<String,String,Boolean> shows=(typed,text)->{boolean[] hit=new boolean[1];
+            runOnMainSync(()->{try{queryF.set(a,typed);render.invoke(a);java.util.ArrayList<android.view.View> f=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(f,text,android.view.View.FIND_VIEWS_WITH_TEXT);hit[0]=!f.isEmpty();}catch(Exception e){throw new RuntimeException(e);}});return hit[0];};
+        check(shows.apply("kay","Hannah Kay"),"New conversation doesn't find a phone contact by last name");
+        check(shows.apply("kay","Mobile · (479) 555-0123"),"A phone contact's number type and number aren't shown");
+        check(shows.apply("zoe","Zoë Último"),"Search should ignore accents (\"zoe\" → Zoë)");
+        check(shows.apply("riley","Riley Chatfield"),"Someone from a chat (not a contact) can't be found");
+        check(shows.apply("Person 499","Person 499"),"The 500th contact can't be found (only part of the list is searched)");
+        check(shows.apply("xqzv","No one called"),"No message when nobody matches");
+        boolean asks=shows.apply("","Search all your contacts");check(asks==!PhoneContacts.allowed(a),"The \"Search all your contacts\" row "+(asks?"shows with":"is missing without")+" the contacts permission");
+        runOnMainSync(()->{try{phoneF.set(a,null);googleF.set(a,null);queryF.set(a,"");}catch(Exception e){throw new RuntimeException(e);}});
+        try(PairedStore store=new PairedStore(getTargetContext())){store.deleteChat("riley");}
+        onMain(a,"inbox");}
     /** The inbox: a chat further down getting a message moves to the top without sliding the rows you're looking at. */
     private void checkInboxKeepsItsPlace(PairedActivity a)throws Exception{
         String people="participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'p1',number:'+15550102000'},fullName:'Daniel Example'}]";
@@ -443,6 +468,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(!PairedService.canReconnect(getTargetContext()),"Reconnect offered with no saved session to reconnect with");
         checkPinnedTap((PairedActivity)activity);
         checkInboxKeepsItsPlace((PairedActivity)activity);
+        checkNewConversationSearch((PairedActivity)activity);
         checkMarkup((PairedActivity)activity);
         String speed=measureRedraw();
         try(PairedStore store=new PairedStore(getTargetContext())){store.clear();}
@@ -453,6 +479,6 @@ public final class OnDeviceSmoke extends Instrumentation {
         getTargetContext().getSharedPreferences("starred",0).edit().clear().commit();
         new ChatSettings(getTargetContext()).setBackground("smoke","");
         checkNotificationPrivacy();
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }
