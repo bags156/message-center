@@ -63,8 +63,20 @@ public final class PairedService extends Service {
     private long lastSync;private final Runnable syncTick=()->requestSync(false);
     /** Per chat: the Google chat time already fetched up to, so the same chat isn't fetched again for nothing. */
     private final Map<String,Long> caughtUp=new ConcurrentHashMap<>();
-    /** Backstop checks: every minute while you're using the phone, every 5 minutes with the screen off. */
-    private static final long SYNC_SCREEN_ON_MS=60_000,SYNC_SCREEN_OFF_MS=5*60_000,SYNC_MIN_GAP_MS=10_000;
+    /**
+     * Backstop checks, in case Google quietly stops pushing: every minute while Message Center
+     * is on screen, every 5 minutes otherwise, every 15 with the screen off. Unlocking, opening
+     * the app and network changes still check right away.
+     */
+    private static final long SYNC_VISIBLE_MS=60_000,SYNC_SCREEN_ON_MS=5*60_000,SYNC_SCREEN_OFF_MS=15*60_000,SYNC_MIN_GAP_MS=10_000;
+    /** Message Center windows on screen (the app and its bubbles). */
+    private static int visibleScreens;
+    /** For the problem report: background checks and chat saves since the connection started. */
+    private static final java.util.concurrent.atomic.AtomicInteger syncs=new java.util.concurrent.atomic.AtomicInteger(),chatWrites=new java.util.concurrent.atomic.AtomicInteger();
+    private static final long startedAt=System.currentTimeMillis();
+    static void screenVisible(boolean visible){visibleScreens=Math.max(0,visibleScreens+(visible?1:-1));PairedService s=current;if(s!=null)s.main.post(s::scheduleSync);}
+    static String backgroundSummary(){long hours=Math.max(1,(System.currentTimeMillis()-startedAt)/3_600_000);
+        return "Background: "+syncs.get()+" catch-up checks and "+chatWrites.get()+" chat saves in about "+hours+" h; checking every "+(visibleScreens>0?"minute (app open)":"5 min (screen on) / 15 min (screen off)");}
     private android.content.BroadcastReceiver screenReceiver;private android.net.ConnectivityManager.NetworkCallback networkCallback;
     static final String KEY_REPLY="reply";
     /** Shortcut category matched by res/xml/shortcuts.xml, so recent chats appear in Android's share sheet. */
@@ -190,7 +202,8 @@ public final class PairedService extends Service {
                 case "SETTINGS" -> {JSONObject rcs=new JSONObject(payload);ChatSettings settings=new ChatSettings(this);int previous=settings.receiptAvailability();
                     settings.setPhoneRcs(rcs.optBoolean("rcsEnabled"));settings.setPhoneReceipts(rcs.optBoolean("sendReadReceipts"));
                     if(previous==0&&settings.receiptAvailability()==1)receipts.googleEnabled();main.post(this::flushReadReceipts);changed(kind);}
-                case "CONVERSATION" -> {applyChat(new JSONObject(payload));changed(kind);}
+                // Google repeats unchanged chats (every reconnect sends them all): only a real change redraws.
+                case "CONVERSATION" -> {if(applyChat(new JSONObject(payload)))changed(kind);}
                 case "MESSAGE" -> {
                     JSONObject envelope=new JSONObject(payload),message=envelope.getJSONObject("message");
                     boolean existed=store.message(message,0,true);touch(message);fullArrived(message);
@@ -240,7 +253,8 @@ public final class PairedService extends Service {
         store.page("folder:"+folder,next,note);changed("CONVERSATION");return "";
     }
     /** Saves a chat from Google; once Google says it's read (on the phone or anywhere), this app's notification goes too. */
-    private void applyChat(JSONObject c) {store.chat(c);if(!c.optBoolean("unread"))dismiss(c.optString("conversationID"));}
+    /** Saves a chat from Google; true if anything about it changed. */
+    private boolean applyChat(JSONObject c) {boolean changed=store.chat(c);if(changed)chatWrites.incrementAndGet();if(!c.optBoolean("unread"))dismiss(c.optString("conversationID"));return changed;}
     /** Drops a chat's notification if this app posted one (bubbles stay). */
     private void dismiss(String id) {synchronized(notified){if(notified.remove(id)==null)return;}clearNotification(this,id);}
     /** Called when the app is opened: catch up with Google now (at most every 20 seconds). */
@@ -265,9 +279,9 @@ public final class PairedService extends Service {
         // after a reconnect Google sends the chat list first, so that already matches.) Chats already
         // fetched up to that time aren't fetched again, in case the time moved for something that
         // isn't a message, like a reaction.
-        List<String> missed=new ArrayList<>();Map<String,Long> times=new HashMap<>();
+        List<String> missed=new ArrayList<>();Map<String,Long> times=new HashMap<>();boolean anyChanged=false;syncs.incrementAndGet();
         for(int i=0;i<chats.length();i++){JSONObject c=chats.getJSONObject(i);String id=c.optString("conversationID");long at=PairedProtocol.time(c);
-            if(at>Math.max(store.newestTime(id),caughtUp.getOrDefault(id,0L))+1500){missed.add(id);times.put(id,at);}applyChat(c);}
+            if(at>Math.max(store.newestTime(id),caughtUp.getOrDefault(id,0L))+1500){missed.add(id);times.put(id,at);}anyChanged|=applyChat(c);}
         if(!missed.isEmpty()){
             long recent=System.currentTimeMillis()-30*60_000;ChatSettings settings=new ChatSettings(this);
             // Five chats per check; any others are picked up by the next one.
@@ -282,10 +296,14 @@ public final class PairedService extends Service {
             try{source.reactivate();}catch(Exception ignored){}
             changed("MESSAGE");
         }
-        changed("CONVERSATION");
+        // Nothing new: no redraw, widget refresh or reminder reschedule.
+        if(anyChanged||!missed.isEmpty())changed("CONVERSATION");
     }
     private void scheduleSync() {main.removeCallbacks(syncTick);if(!ready)return;
-        boolean screenOn=getSystemService(android.os.PowerManager.class).isInteractive();main.postDelayed(syncTick,screenOn?SYNC_SCREEN_ON_MS:SYNC_SCREEN_OFF_MS);}
+        boolean screenOn=getSystemService(android.os.PowerManager.class).isInteractive();
+        long wait=!screenOn?SYNC_SCREEN_OFF_MS:visibleScreens>0?SYNC_VISIBLE_MS:SYNC_SCREEN_ON_MS;
+        // Already overdue for the new rhythm (say, the app just opened): check now.
+        main.postDelayed(syncTick,Math.max(0,Math.min(wait,lastSync+wait-System.currentTimeMillis())));}
     /** Pushes most often stall when the phone wakes or changes networks, so check right then. */
     private void watchWakeAndNetwork() {
         screenReceiver=new android.content.BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){

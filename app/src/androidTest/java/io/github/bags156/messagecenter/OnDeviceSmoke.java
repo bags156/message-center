@@ -97,6 +97,11 @@ public final class OnDeviceSmoke extends Instrumentation {
             store.chat(new JSONObject("{conversationID:'scrolly',name:'Scroll test',type:'RCS',lastMessageTimestamp:1794005200000000,participants:["
                 +"{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'p1',number:'+15550102000'},fullName:'Daniel Example'}]}"));
             for(int i=0;i<80;i++)textMessage(store,"scrolly",i);
+            // Battery: Google repeats unchanged chats; those aren't saved (or redrawn) again, a real change is.
+            String same="{conversationID:'scrolly',name:'Scroll test',type:'RCS',lastMessageTimestamp:1794005200000000,participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'p1',number:'+15550102000'},fullName:'Daniel Example'}]}";
+            check(!store.chat(new JSONObject(same)),"An unchanged chat was saved again");
+            check(store.chat(new JSONObject(same.replace("Scroll test","Scroll test!"))),"A changed chat wasn't saved");store.chat(new JSONObject(same));
+            check(PairedService.backgroundSummary().startsWith("Background: "),"Background summary missing");
             // Catching up after a reconnect compares Google's chats with the newest message saved here.
             check(store.newestTime("scrolly")==(1794000400000000L+79*60_000_000L)/1000,"Newest saved message time is wrong: "+store.newestTime("scrolly"));
             check(store.newestTime("no-such-chat")==0,"A chat with nothing saved should have no newest time");}

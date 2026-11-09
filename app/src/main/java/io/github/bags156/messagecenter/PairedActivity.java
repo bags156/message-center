@@ -148,7 +148,7 @@ public class PairedActivity extends Activity {
     }
     /** A tapped notification (or bubble) delivers its chat here when this screen is already open. */
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(!bubble()&&receiveShare(intent))return;if(MessagesWidget.NEW_CHAT.equals(intent.getAction())){if(login!=null)destroyLogin();inbox();newMessage();return;}String id=intent.getStringExtra("chat");if(id!=null&&!id.isEmpty()){if(login!=null)destroyLogin();thread(id);showFromIntent(intent);}}
-    @Override protected void onResume(){super.onResume();resumed=true;refreshDraft();if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
+    @Override protected void onResume(){super.onResume();resumed=true;PairedService.screenVisible(true);refreshDraft();if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
         if(PairedService.ready()&&screen.equals("pair")){CookieManager.getInstance().removeAllCookies(null);inbox();askNotifications();}
         else if(!bubble()&&!PairedService.emoji().isEmpty()&&login==null)pairing();
         else {updateStatus();PairedService.syncNow();
@@ -156,7 +156,7 @@ public class PairedActivity extends Activity {
             if(screen.equals("chat")){renderMessages(false);if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();if(!bubble())PairedService.clearNotification(this,chatId);}
             else if(screen.equals("inbox")){if(batteryCard!=null&&!showBatteryCard()){root.removeView(batteryCard);batteryCard=null;}renderInbox();refreshInbox(false);
                 if(!bubble()&&PairedService.ready()&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED)askContactPhotos();}}}
-    @Override protected void onPause(){resumed=false;if(dictation!=null)stopDictation();remember();if(inline!=null)inline.pause();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&player.isPlaying()){player.pause();updatePlayLabel();}if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
+    @Override protected void onPause(){if(resumed)PairedService.screenVisible(false);resumed=false;if(dictation!=null)stopDictation();remember();if(inline!=null)inline.pause();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&player.isPlaying()){player.pause();updatePlayLabel();}if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
     @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);if(focused)refreshDraft();if(focused&&store!=null){markReadIfAllowed();updateReceiptStatus();}}
     /** Picks up a draft typed in the other window (bubble or full app) so you carry on where you left off. */
     private void refreshDraft(){if(composer==null||drafts==null||chatId.isEmpty()||!screen.equals("chat"))return;String stored=drafts.getOrDefault(chatId,"");
@@ -2341,7 +2341,7 @@ public class PairedActivity extends Activity {
         if(bad!=null){include.setText("Include the picture or video that wouldn't open ("+PairedProtocol.size(bad.length())+")");include.setChecked(true);include.setTextColor(ink);content.addView(include);}
         TextView fine=text("Includes the app's version, your phone model, the connection history and the app's error log. No message text. You choose where to send it next (email, Drive…).",13,muted,false);fine.setPadding(0,dp(10),0,0);content.addView(fine);
         new AlertDialog.Builder(this).setTitle("Report a problem").setView(content).setNegativeButton("Cancel",null).setPositiveButton("Create report",(d,w)->{String note=e.getText().toString().trim();boolean withFile=bad!=null&&include.isChecked();
-            String details="Connection: "+PairedService.status(this)+(PairedService.ready()?" (ready)":" (not ready)")+"\nPicture decoder: "+(HeifDecoder.lastProblem.isEmpty()?"no problems":HeifDecoder.lastProblem)
+            String details="Connection: "+PairedService.status(this)+(PairedService.ready()?" (ready)":" (not ready)")+"\n"+PairedService.backgroundSummary()+"\nPicture decoder: "+(HeifDecoder.lastProblem.isEmpty()?"no problems":HeifDecoder.lastProblem)
                 +"\nNotifications allowed: "+(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED)+"\nBattery optimized: "+batteryRestricted()+"\nReminders: "+Nudges.summary(this).replace('\n',' ');
             decoder.execute(()->{try{File zip=Diagnostics.buildReport(this,note,details,withFile);Uri uri=MediaProvider.uri(zip,zip.getName());
                 ui.post(()->{Intent send=new Intent(Intent.ACTION_SEND).setType("application/zip").putExtra(Intent.EXTRA_STREAM,uri).putExtra(Intent.EXTRA_SUBJECT,"Message Center problem report").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);

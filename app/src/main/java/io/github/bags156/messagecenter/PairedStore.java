@@ -24,12 +24,16 @@ final class PairedStore extends SQLiteOpenHelper {
     @Override public void onUpgrade(SQLiteDatabase db,int before,int after) {throw new IllegalStateException("Unsupported database version");}
     private static JSONObject json(String s) {try{return new JSONObject(s);}catch(Exception e){return new JSONObject();}}
     synchronized long snapshot() { try(Cursor c=getReadableDatabase().rawQuery("SELECT value FROM meta WHERE id=1",null)){c.moveToFirst();return c.getLong(0);} }
-    synchronized void chat(JSONObject data) {
-        String id=data.optString("conversationID");if(id.isEmpty())return;
-        int folder=folder(data.optString("status"));if(folder==0){deleteChat(id);return;}
-        ContentValues v=new ContentValues();v.put("id",id);v.put("data",data.toString());v.put("updated",PairedProtocol.time(data));
+    /** Saves a chat; returns false (and writes nothing) when it's the same as what's saved. */
+    synchronized boolean chat(JSONObject data) {
+        String id=data.optString("conversationID");if(id.isEmpty())return false;
+        int folder=folder(data.optString("status"));if(folder==0){deleteChat(id);return true;}
+        String text=data.toString();
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM chats WHERE id=?",new String[]{id})){if(c.moveToFirst()&&text.equals(c.getString(0)))return false;}
+        ContentValues v=new ContentValues();v.put("id",id);v.put("data",text);v.put("updated",PairedProtocol.time(data));
         v.put("folder",folder);
         getWritableDatabase().insertWithOnConflict("chats",null,v,SQLiteDatabase.CONFLICT_REPLACE);
+        return true;
     }
     /** 1 inbox, 2 archived, 3 blocked or spam (hidden), 0 deleted (removed). */
     static int folder(String status) {

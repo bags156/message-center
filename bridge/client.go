@@ -43,6 +43,10 @@ func NewClient(saved string, sink Sink) (*Client, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Client{gm: libgm.NewClient(auth, nil, zerolog.Nop(), exhttp.SensibleClientSettings.WithGlobalTimeout(45*time.Second)), sink: sink, ctx: ctx, cancel: cancel}
+	// Checks that Google Messages on the phone still answers. Each check wakes the phone's
+	// Google Messages too; every 2 minutes (the library's default is 1) halves that, and a
+	// dropped connection is still caught within a minute by the long poll's own timeout.
+	c.gm.SetPingInterval(2 * time.Minute)
 	c.gm.SetEventHandler(c.handle)
 	return c, nil
 }
