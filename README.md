@@ -27,6 +27,7 @@ For Obtainium, use `https://github.com/bags156/message-center`. Regular releases
 - An independent foreground connection and incoming-message notifications, including a boot receiver for an enabled saved connection.
 - Google-reported send/delivery/read status. Request acceptance is labeled separately from delivery.
 - Authenticated encryption of the paired session with Android Keystore, private app storage for synced messages, and disabled cloud backup.
+- Message effects: when an iPhone sends Balloons, Confetti, Slam, Invisible Ink and the rest, RCS only delivers a "(sent with …)" note. The chat plays the effect and hides the note (tap "Replay" to see it again); "Happy birthday", "Congratulations" and "Happy New Year" play theirs too. RCS can't carry an effect, so none are sent.
 
 ## Current limits
 

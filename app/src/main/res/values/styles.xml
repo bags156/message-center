@@ -5,6 +5,8 @@
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowActionModeOverlay">true</item>
+        <!-- No highlight box when pressing menu items, dialog buttons or switches. -->
+        <item name="android:colorControlHighlight">#00000000</item>
         <item name="android:windowBackground">#F8F9FC</item>
         <item name="android:statusBarColor">#F8F9FC</item>
         <item name="android:navigationBarColor">#F8F9FC</item>

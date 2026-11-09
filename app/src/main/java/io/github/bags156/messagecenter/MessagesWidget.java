@@ -52,7 +52,7 @@ public final class MessagesWidget extends AppWidgetProvider {
             boolean unread = settings.unread(c);
             CharSequence name = title;
             if (unread) { SpannableString s = new SpannableString(title); s.setSpan(new StyleSpan(Typeface.BOLD), 0, s.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE); name = s; }
-            String preview = PairedProtocol.string(c.optJSONObject("latestMessage"), "displayContent");
+            String preview = Effects.preview(PairedProtocol.string(c.optJSONObject("latestMessage"), "displayContent"));
             if (PairedProtocol.latestFromMe(c) && !preview.isEmpty()) preview = "You: " + preview;
             views.setViewVisibility(ROW[i], View.VISIBLE);
             views.setTextViewText(NAME[i], name);

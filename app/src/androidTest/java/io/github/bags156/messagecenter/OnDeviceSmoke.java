@@ -156,12 +156,74 @@ public final class OnDeviceSmoke extends Instrumentation {
         onMain(reader,"details");runOnMainSync(reader::onBackPressed);waitForIdleSync();
         android.widget.ScrollView back=chatScroll(reader);check(back!=null&&back!=sv,"Back from Details didn't reopen the chat");
         runOnMainSync(()->y[0]=back.getScrollY());check(Math.abs(y[0]-reading)<=slack,"Coming back from Details moved the chat: "+reading+" → "+y[0]);
+        // Something above the screen grows after it was drawn (a photo or link preview finishing loading): what you're reading stays still.
+        java.lang.reflect.Field viewsField=PairedActivity.class.getDeclaredField("messageViews");viewsField.setAccessible(true);
+        java.util.Map<?,?> views=(java.util.Map<?,?>)viewsField.get(reader);Object[] spot=new Object[2];String[] grown={""};
+        runOnMainSync(()->{try{java.lang.reflect.Method spotAt=PairedActivity.class.getDeclaredMethod("spotAt",int.class);spotAt.setAccessible(true);Object sp=spotAt.invoke(reader,back.getScrollY());
+            java.lang.reflect.Field idF=sp.getClass().getDeclaredField("id"),offF=sp.getClass().getDeclaredField("offset");idF.setAccessible(true);offF.setAccessible(true);spot[0]=idF.get(sp);spot[1]=offF.get(sp);
+            for(java.util.Map.Entry<?,?> e:views.entrySet()){android.view.View v=(android.view.View)e.getValue();if(v.getParent()!=null&&v.getBottom()<back.getScrollY()-50){grown[0]=String.valueOf(e.getKey());
+                v.setPadding(v.getPaddingLeft(),v.getPaddingTop()+400,v.getPaddingRight(),v.getPaddingBottom());break;}}}catch(Exception e){throw new RuntimeException(e);}});
+        waitForIdleSync();runOnMainSync(()->{});waitForIdleSync();
+        check(!grown[0].isEmpty(),"No message above the screen to grow");
+        runOnMainSync(()->{android.view.View v=(android.view.View)views.get(spot[0]);y[0]=v==null?-99999:v.getTop()-back.getScrollY();});
+        check(Math.abs(y[0]-(Integer)spot[1])<=slack,"A message above the screen growing moved what you're reading: "+spot[1]+" → "+y[0]+" px from the top");
         // At the newest message, new arrivals still keep you at the bottom.
         runOnMainSync(()->back.scrollTo(0,back.getChildAt(0).getHeight()));waitForIdleSync();
         try(PairedStore store=new PairedStore(getTargetContext())){textMessage(store,"scrolly",81);}
         runOnMainSync(()->{try{java.lang.reflect.Method m=PairedActivity.class.getDeclaredMethod("messagesLoaded",boolean.class);m.setAccessible(true);m.invoke(reader,false);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
         runOnMainSync(()->y[1]=back.getChildAt(0).getHeight()-back.getHeight()-back.getScrollY());check(y[1]<=slack,"A new message at the bottom didn't keep the chat at the newest ("+y[1]+" px short)");
+        // An iPhone message sent with Confetti, arriving while the chat is open: the note is hidden and the confetti plays.
+        try(PairedStore store=new PairedStore(getTargetContext())){store.message(new JSONObject().put("messageID","scrolly-fx").put("conversationID","scrolly").put("participantID","p1").put("timestamp",1794000400000000L+90*60_000_000L)
+            .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","We got the house!! (sent with Confetti)")))),0,true);}
+        boolean[] played=new boolean[1];
+        runOnMainSync(()->{try{java.lang.reflect.Method m=PairedActivity.class.getDeclaredMethod("renderMessages",boolean.class);m.setAccessible(true);m.invoke(reader,false);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
+        runOnMainSync(()->{try{java.lang.reflect.Field f=PairedActivity.class.getDeclaredField("playing");f.setAccessible(true);Object v=f.get(reader);played[0]=v!=null&&((android.view.View)v).isAttachedToWindow();}catch(Exception e){throw new RuntimeException(e);}});
+        check(played[0]==android.animation.ValueAnimator.areAnimatorsEnabled(),"Confetti "+(played[0]?"played with animations off":"didn't play")+" for a message an iPhone sent with it");
+        java.util.ArrayList<android.view.View> fx=new java.util.ArrayList<>();
+        reader.getWindow().getDecorView().findViewsWithText(fx,"(sent with",android.view.View.FIND_VIEWS_WITH_TEXT);check(fx.isEmpty(),"The iPhone's \"(sent with Confetti)\" note is still shown");
+        reader.getWindow().getDecorView().findViewsWithText(fx,"We got the house!!",android.view.View.FIND_VIEWS_WITH_TEXT);check(!fx.isEmpty(),"The message sent with Confetti is missing");fx.clear();
+        reader.getWindow().getDecorView().findViewsWithText(fx,"Sent with Confetti. Tap to replay it.",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);check(fx.size()==1,"No \"Sent with Confetti\" line to replay it ("+fx.size()+")");
         reader.finish();waitForIdleSync();}
+    /** The inbox: a chat further down getting a message moves to the top without sliding the rows you're looking at. */
+    private void checkInboxKeepsItsPlace(PairedActivity a)throws Exception{
+        String people="participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'p1',number:'+15550102000'},fullName:'Daniel Example'}]";
+        long newest=1794200000000000L;
+        try(PairedStore store=new PairedStore(getTargetContext())){for(int i=0;i<30;i++)store.chat(new JSONObject("{conversationID:'row"+i+"',name:'Row "+i+"',type:'RCS',lastMessageTimestamp:"+(newest-i*60_000_000L)+","+people+"}"));}
+        onMain(a,"inbox");
+        // Not signed in here, so the inbox stops at "Connect Google Messages"; the list is drawn into a box of its own.
+        java.lang.reflect.Field rootF=PairedActivity.class.getDeclaredField("root"),scrollF=PairedActivity.class.getDeclaredField("scroll"),itemsF=PairedActivity.class.getDeclaredField("items");
+        rootF.setAccessible(true);scrollF.setAccessible(true);itemsF.setAccessible(true);
+        java.lang.reflect.Method render=PairedActivity.class.getDeclaredMethod("renderInbox");render.setAccessible(true);
+        android.widget.ScrollView[] box=new android.widget.ScrollView[1];android.widget.LinearLayout[] list=new android.widget.LinearLayout[1];
+        runOnMainSync(()->{try{box[0]=new android.widget.ScrollView(a);list[0]=new android.widget.LinearLayout(a);list[0].setOrientation(android.widget.LinearLayout.VERTICAL);box[0].addView(list[0]);
+            ((android.view.ViewGroup)rootF.get(a)).addView(box[0],new android.widget.LinearLayout.LayoutParams(-1,Math.round(400*a.getResources().getDisplayMetrics().density)));
+            scrollF.set(a,box[0]);itemsF.set(a,list[0]);render.invoke(a);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
+        int slack=Math.round(3*a.getResources().getDisplayMetrics().density);
+        int rowTag=a.getResources().getIdentifier("chat_row","id",a.getPackageName());check(rowTag!=0,"Inbox row tag id missing");
+        java.util.function.Function<String,android.view.View> row=id->{for(int i=0;i<list[0].getChildCount();i++){android.view.View v=list[0].getChildAt(i);if(id.equals(v.getTag(rowTag)))return v;}return null;};
+        android.view.View[] at=new android.view.View[1];int[] y=new int[2];
+        runOnMainSync(()->{at[0]=row.apply("row8");if(at[0]!=null){box[0].scrollTo(0,at[0].getTop()+10);}});waitForIdleSync();
+        check(at[0]!=null,"Inbox rows weren't drawn ("+list[0].getChildCount()+" rows)");
+        runOnMainSync(()->{android.view.View v=row.apply("row8");y[0]=v.getTop()-box[0].getScrollY();});
+        // row25 (below the screen) gets a message and moves to the top.
+        try(PairedStore store=new PairedStore(getTargetContext())){store.chat(new JSONObject("{conversationID:'row25',name:'Row 25',type:'RCS',lastMessageTimestamp:"+(newest+60_000_000L)+","+people+"}"));}
+        runOnMainSync(()->{try{render.invoke(a);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
+        runOnMainSync(()->{android.view.View v=row.apply("row8");y[1]=v==null?-99999:v.getTop()-box[0].getScrollY();});
+        check(Math.abs(y[1]-y[0])<=slack,"A chat moving to the top slid the inbox rows you were looking at: "+y[0]+" → "+y[1]);
+        // The row you're looking at itself gets a message: it moves up, and the rows around it stay put.
+        runOnMainSync(()->{android.view.View v=row.apply("row9");y[0]=v.getTop()-box[0].getScrollY();});
+        try(PairedStore store=new PairedStore(getTargetContext())){store.chat(new JSONObject("{conversationID:'row8',name:'Row 8',type:'RCS',lastMessageTimestamp:"+(newest+120_000_000L)+","+people+"}"));}
+        runOnMainSync(()->{try{render.invoke(a);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
+        runOnMainSync(()->{android.view.View v=row.apply("row9");y[1]=v==null?-99999:v.getTop()-box[0].getScrollY();});
+        check(Math.abs(y[1]-y[0])<=slack,"The chat you were looking at moving up took the inbox with it: row below went "+y[0]+" → "+y[1]);
+        // At the top of the list, a chat that moves up comes into view.
+        runOnMainSync(()->box[0].scrollTo(0,0));waitForIdleSync();
+        try(PairedStore store=new PairedStore(getTargetContext())){store.chat(new JSONObject("{conversationID:'row20',name:'Row 20',type:'RCS',lastMessageTimestamp:"+(newest+180_000_000L)+","+people+"}"));}
+        runOnMainSync(()->{try{render.invoke(a);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
+        runOnMainSync(()->{y[0]=box[0].getScrollY();android.view.View v=row.apply("row20");y[1]=v==null?-1:v.getTop();});
+        check(y[0]==0&&y[1]>=0&&y[1]<Math.round(80*a.getResources().getDisplayMetrics().density),"At the top, a chat that moved up isn't in view (scroll "+y[0]+", row at "+y[1]+")");
+        try(PairedStore store=new PairedStore(getTargetContext())){for(int i=0;i<30;i++)store.deleteChat("row"+i);}
+        onMain(a,"inbox");}
     @Override public void onStart(){Bundle result=new Bundle();try {
         // Real JNI load on Android, not a mocked Java bridge.
         Client client=Bridge.newClient("",(kind,payload)->{});
@@ -212,6 +274,7 @@ public final class OnDeviceSmoke extends Instrumentation {
                 +"{mediaContent:{mediaID:'doc',mimeType:'application/pdf',mediaName:'Lease.pdf',size:52000}},{messageContent:{content:'Caption'}}]}"),0,true);
             // An iPhone "Laughed at an image" right after a photo: shown on the photo, not as a line.
             store.message(new JSONObject("{messageID:'tb1',conversationID:'smoke',participantID:'p1',timestamp:1794000251000000,messageStatus:{status:'INCOMING_COMPLETE'},messageInfo:[{messageContent:{content:'Laughed at an image'}}]}"),0,true);
+            store.message(new JSONObject("{messageID:'ink',conversationID:'smoke',participantID:'p1',timestamp:1794000260000000,messageStatus:{status:'INCOMING_COMPLETE'},messageInfo:[{messageContent:{content:'The surprise is Saturday (sent with Invisible Ink)'}}]}"),0,true);
             store.message(new JSONObject("{messageID:'f',conversationID:'smoke',participantID:'me',timestamp:1794000280000000,messageStatus:{status:'OUTGOING_FAILED_GENERIC'},messageInfo:[{messageContent:{content:'See https://example.com/page'}}]}"),0,true);
             new Outbox(getTargetContext()).add("smoke","Queued while offline","");
             store.message(new JSONObject("{messageID:'v1',conversationID:'smoke',participantID:'p1',timestamp:1794000285000000,messageStatus:{status:'INCOMING_COMPLETE'},messageInfo:[{mediaContent:{mediaID:'aud1',mimeType:'audio/mp4',mediaName:'Voice message.m4a',size:42000}}]}"),0,true);
@@ -348,6 +411,13 @@ public final class OnDeviceSmoke extends Instrumentation {
         bubble.getWindow().getDecorView().findViewsWithText(found,"Not on your phone",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.size()==1,"A photo the phone never sent isn't labeled as missing ("+found.size()+")");found.clear();
         // Photos that need the phone say what they're waiting for (not a blank box). Offline here, so: the connection.
         bubble.getWindow().getDecorView().findViewsWithText(found,"Waiting for the connection",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.size()>=2,"Photos waiting on the phone don't say so offline ("+found.size()+")");found.clear();
+        // Invisible ink: covered and blurred until tapped; the iPhone's note isn't shown.
+        bubble.getWindow().getDecorView().findViewsWithText(found,"Invisible ink message. Double-tap to show it.",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);check(found.size()==1,"Invisible ink message isn't covered ("+found.size()+")");
+        android.view.View cover=found.get(0);found.clear();android.view.View inkContent=((android.view.ViewGroup)cover.getParent()).getChildAt(0);
+        check(cover.getVisibility()==android.view.View.VISIBLE,"Invisible ink cover is hidden before it's tapped");
+        bubble.getWindow().getDecorView().findViewsWithText(found,"Invisible Ink)",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.isEmpty(),"The \"(sent with Invisible Ink)\" note is shown");found.clear();
+        runOnMainSync(cover::performClick);waitForIdleSync();check(cover.getVisibility()==android.view.View.GONE,"Tapping invisible ink didn't show it");
+        check(inkContent!=null,"Invisible ink message has nothing under the cover");
         // Screenshots are allowed.
         check((bubble.getWindow().getAttributes().flags&android.view.WindowManager.LayoutParams.FLAG_SECURE)==0,"Screenshots are blocked in chats");
         check((activity.getWindow().getAttributes().flags&android.view.WindowManager.LayoutParams.FLAG_SECURE)==0,"Screenshots are blocked in the inbox");
@@ -358,6 +428,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkChatKeepsItsPlace();
         check(!PairedService.canReconnect(getTargetContext()),"Reconnect offered with no saved session to reconnect with");
         checkPinnedTap((PairedActivity)activity);
+        checkInboxKeepsItsPlace((PairedActivity)activity);
         checkMarkup((PairedActivity)activity);
         String speed=measureRedraw();
         try(PairedStore store=new PairedStore(getTargetContext())){store.clear();}
@@ -368,6 +439,6 @@ public final class OnDeviceSmoke extends Instrumentation {
         getTargetContext().getSharedPreferences("starred",0).edit().clear().commit();
         new ChatSettings(getTargetContext()).setBackground("smoke","");
         checkNotificationPrivacy();
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }

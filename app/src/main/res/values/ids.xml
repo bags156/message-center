@@ -2,4 +2,6 @@
 <resources>
     <item name="tile_state" type="id" />
     <item name="time_label" type="id" />
+    <item name="chat_row" type="id" />
+    <item name="chat_time" type="id" />
 </resources>

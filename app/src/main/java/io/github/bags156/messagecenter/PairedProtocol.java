@@ -85,8 +85,12 @@ final class PairedProtocol {
         for(JSONObject media:media(m))parts.add(mediaLabel(media));
         return String.join("\n",parts);
     }
-    /** Only the typed text of a message, without attachments. */
-    static String text(JSONObject m) {
+    /** Only the typed text of a message, without attachments (or an iPhone's "(sent with Balloons)" note; see effect). */
+    static String text(JSONObject m) { return Effects.strip(rawText(m)); }
+    /** The effect an iPhone sent this message with ("balloons", "slam", "invisible ink"), or "". */
+    static String effect(JSONObject m) { return Effects.note(rawText(m)).effect; }
+    /** The typed text exactly as it arrived. */
+    static String rawText(JSONObject m) {
         JSONArray infos=m.optJSONArray("messageInfo"); List<String> parts=new ArrayList<>();
         if(infos!=null) for(int i=0;i<infos.length();i++) {
             JSONObject part=infos.optJSONObject(i); if(part==null) continue;

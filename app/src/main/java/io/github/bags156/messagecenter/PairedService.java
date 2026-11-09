@@ -240,7 +240,7 @@ public final class PairedService extends Service {
             if(!network.isShutdown())network.execute(()->{try{store.chat(new JSONObject(client.chat(id)));changed("CONVERSATION");}catch(Exception ignored){}});}
         if(PairedProtocol.time(message)>=PairedProtocol.time(chat)) {
             chat.put("lastMessageTimestamp",String.valueOf(message.optLong("timestamp")));
-            chat.put("latestMessage",new JSONObject().put("displayContent",PairedProtocol.body(message)));
+            chat.put("latestMessage",new JSONObject().put("displayContent",Effects.INK.equals(PairedProtocol.effect(message))?"Sent with invisible ink":PairedProtocol.body(message)));
             store.chat(chat);
         }
     }
@@ -747,7 +747,9 @@ public final class PairedService extends Service {
     static void retryOutbox(Context context,String id) {new Outbox(context).setState(id,Outbox.WAITING,"");PairedService s=current;if(s!=null){s.changed("OUTBOX");s.flushOutbox();}}
     private static Uri chatUri(String id) {return new Uri.Builder().scheme("messagecenter").authority("chat").appendPath(id).build();}
     private static String notificationText(String sender,JSONObject m) {
-        String body=PairedProtocol.body(m),reply=ChatText.replyFallbackBody(body);
+        // Invisible ink stays hidden until it's tapped in the chat.
+        String fx=PairedProtocol.effect(m);if(Effects.INK.equals(fx))return "Sent with invisible ink";
+        String body=PairedProtocol.body(m),reply=ChatText.replyFallbackBody(body);if(body.isEmpty()&&!fx.isEmpty())return "Sent with "+Effects.label(fx);
         if(reply!=null)return "↩ "+reply;
         String line=ChatText.reactionLine("",body);if(line!=null)return line.trim();
         return m.optJSONObject("replyMessage")!=null&&!PairedProtocol.string(m.optJSONObject("replyMessage"),"messageID").isEmpty()?"↩ "+body:body;
