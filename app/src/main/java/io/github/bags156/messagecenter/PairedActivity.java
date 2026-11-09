@@ -94,7 +94,12 @@ public class PairedActivity extends Activity {
     private static final int BLUE=0xff2864f0;
     private static final long LOGIN_POLL_MS=1500;
     private static final String[] REACTIONS={"❤️","👍","👎","😂","😮","😢","❓","🎉"};
-    private int bg,card,ink,muted,surface,fab,onFab,danger,folder=1,limit=300;
+    private int bg,card,ink,muted,surface,fab,onFab,danger,folder=1,limit=WINDOW;
+    /**
+     * Messages drawn when a chat opens; scrolling to the top draws this many more saved ones.
+     * Every redraw lays out each drawn message, so drawing fewer saves battery.
+     */
+    private static final int WINDOW=120;private boolean moreSaved;
     private boolean dark;
     private PairedStore store;private ChatSettings chatSettings;
     private FrameLayout frame;private LinearLayout root,items,replyPanel,typingRow;private LinearLayout statusRow;private TextView reconnectButton,receiptsMark;private TextView statusView,replyLabel,replyQuote,typingLabel;private ObjectAnimator typingPulse;
@@ -131,8 +136,13 @@ public class PairedActivity extends Activity {
         if(screen.equals("pair") && PairedService.ready()){CookieManager.getInstance().removeAllCookies(null);inbox();askNotifications();return;}
         updateStatus();
         updateReceiptStatus();
-        if(screen.equals("inbox"))renderInbox();else if(screen.equals("chat")){renderMessages(false);markReadIfAllowed();updateTyping();}
+        // A connection-status change only needs the status line, unless being connected changed (photo tiles, empty states).
+        boolean ready=PairedService.ready();if("STATUS".equals(i.getStringExtra("kind"))&&ready==drawnReady)return;drawnReady=ready;
+        // Updates come in bursts (sending one message brings several within a moment): redraw once per burst.
+        ui.removeCallbacks(refreshScreen);ui.postDelayed(refreshScreen,REDRAW_BURST_MS);
     }};
+    private static final long REDRAW_BURST_MS=80;private boolean drawnReady;
+    private final Runnable refreshScreen=()->{if(screen.equals("inbox"))renderInbox();else if(screen.equals("chat")){renderMessages(false);markReadIfAllowed();updateTyping();}};
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);Diagnostics.init(this);HevcSandbox.init(this);GivenNames.init(this);drafts=new Drafts(this);drafts.prefs().registerOnSharedPreferenceChangeListener(draftChanged);store=new PairedStore(this);chatSettings=new ChatSettings(this);outbox=new Outbox(this);starred=new Starred(this);Nicknames.load(this);
         if(state!=null){String shot=state.getString("capture");if(shot!=null)pendingCapture=new File(shot);chatId=state.getString("chat","");replyId=state.getString("reply","");if(drafts.getOrDefault(chatId,"").isEmpty())drafts.put(chatId,state.getString("draft",""));}
@@ -538,7 +548,7 @@ public class PairedActivity extends Activity {
         Spot back=(screen.equals("details")||backFromSaved)&&id.equals(backChat)?backSpot:null;backChat="";backSpot=null;backFromSaved=false;
         // Opening a chat with unread messages: remember where they start, for the "New messages" line.
         if(!id.equals(chatId)||!screen.equals("chat")){JSONObject before=store.chat(id);unreadSince=before!=null&&chatSettings.unread(before)?chatSettings.seen(id):-1;unreadJump=unreadSince>0;}
-        remember();chatId=id;if(back==null)limit=300;replyId="";base("chat");JSONObject c=store.chat(id);ChatTheme theme=chatSettings.theme(id);
+        remember();chatId=id;if(back==null)limit=WINDOW;replyId="";base("chat");JSONObject c=store.chat(id);ChatTheme theme=chatSettings.theme(id);
         root.setPadding(dp(4),dp(4),dp(4),dp(8));
         LinearLayout bar=row();if(!bubble())bar.addView(icon(R.drawable.ic_back,ink,"Back",this::inbox));else bar.setPadding(dp(12),0,0,0);
         LinearLayout who=row();View face=avatar(c,40);who.addView(face);
@@ -652,7 +662,7 @@ public class PairedActivity extends Activity {
         items.removeAllViews();unreadDivider=null;inlineSeen=false;
         JSONObject c=store.chat(chatId);ChatTheme theme=chatSettings.theme(chatId);boolean group=c!=null&&PairedProtocol.other(c)==null;
         List<JSONObject> messages=new ArrayList<>();for(JSONObject m:store.messages(chatId,limit))if(!PairedProtocol.body(m).isEmpty()||!PairedProtocol.event(m,c).isEmpty())messages.add(m);
-        if(messages.size()>=limit-5)items.addView(button("Show more saved messages",false,()->{limit+=300;renderMessages(false);}));
+        moreSaved=messages.size()>=limit-5;if(moreSaved)items.addView(button("Show more saved messages",false,()->{limit+=WINDOW;renderMessages(false);}));
         // iPhone reactions sent as text ("Laughed at an image") go on the message they're about, like any other reaction.
         tapbacks=new HashMap<>();messages=placeTapbacks(messages,tapbacks);
         if(messages.isEmpty()){TextView empty=text(PairedService.ready()?"No messages have synced for this conversation yet.":"Messages will appear once the connection is ready.",14,muted,false);empty.setGravity(Gravity.CENTER);empty.setPadding(dp(24),dp(48),dp(24),dp(24));items.addView(empty);}
@@ -668,6 +678,7 @@ public class PairedActivity extends Activity {
         boolean fresh=!chatId.equals(motionChat)||anchorOlder;if(!chatId.equals(motionChat)){motionChat=chatId;motionSeen.clear();motionOutbox.clear();motionReactions.clear();motionRunning.clear();motionOutboxBefore=0;}
         int arriving=0;for(JSONObject m:messages)if(!motionSeen.contains(m.optString("messageID")))arriving++;
         motionReady=!fresh&&android.animation.ValueAnimator.areAnimatorsEnabled();boolean animate=motionReady&&arriving<=4;
+        Map<String,JSONObject> remindersById=new HashMap<>();for(JSONObject r:Reminders.all(this))remindersById.put(r.optString("message"),r);
         // Read receipts on: when (or whether) the receipt went out, under the message it's for.
         JSONObject receipt=chatSettings.receipts(chatId)?new ReadReceiptQueue(this).get(chatId):null;
         // Link previews open the page, which tells its owner you looked; only do that for people you know or have written to.
@@ -693,8 +704,8 @@ public class PairedActivity extends Activity {
             if(!reactors.isEmpty()){LinearLayout.LayoutParams rl=new LinearLayout.LayoutParams(-1,-2);rl.topMargin=-dp(7);View pill=reactionPill(m,c,reactors,out[i]);items.addView(pill,rl);
                 Integer had=motionReactions.put(mid,reactors.size());motion(((ViewGroup)pill).getChildAt(0),"r:"+mid,POP,motionReady&&!isNew&&(had==null||reactors.size()>had));}
             else motionReactions.remove(mid);
-            if(!out[i]){String code=ChatText.oneTimeCode(PairedProtocol.text(m));if(!code.isEmpty())items.addView(codeChip(code,false,theme));}
-            JSONObject rem=Reminders.forMessage(this,m.optString("messageID"));
+            if(!out[i]){String code=TextScan.code(PairedProtocol.text(m));if(!code.isEmpty())items.addView(codeChip(code,false,theme));}
+            JSONObject rem=remindersById.get(mid);
             if(rem!=null){TextView rt=text("⏰ Reminder "+separatorStamp(rem.optLong("at")),11,muted,false);rt.setGravity(out[i]?Gravity.END:Gravity.START);rt.setPadding(dp(16),dp(2),dp(16),0);rt.setOnClickListener(v->remindMenu(m));items.addView(rt,new LinearLayout.LayoutParams(-1,-2));}
             if(starred.has(m.optString("messageID"))){TextView st=text("★ Starred",11,muted,false);st.setGravity(out[i]?Gravity.END:Gravity.START);st.setPadding(dp(16),dp(2),dp(16),0);items.addView(st,new LinearLayout.LayoutParams(-1,-2));}
             if(!out[i]&&receipt!=null&&receipt.optString("messageID").equals(m.optString("messageID"))){View read=readLine(receipt);if(read!=null)items.addView(read,new LinearLayout.LayoutParams(-1,-2));}
@@ -740,6 +751,10 @@ public class PairedActivity extends Activity {
             on.removeIf(r->r[1].equals(who)&&(!t.removed||ReactionParser.sameEmoji(r[0],t.emoji)));
             if(!t.removed)on.add(new String[]{t.emoji,who});}
         return shown;}
+    /** Puts a text's links (worked out once, see TextScan) on a bubble; false when it has none. */
+    private static boolean applyLinks(TextView t,TextScan scan){if(scan.linkUrls.length==0)return false;SpannableString sp=new SpannableString(t.getText());boolean any=false;
+        for(int k=0;k<scan.linkUrls.length;k++){int[] r=scan.linkRanges[k];if(r[0]<0||r[1]>sp.length()||r[0]>=r[1])continue;sp.setSpan(new URLSpan(scan.linkUrls[k]),r[0],r[1],Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);any=true;}
+        if(any)t.setText(sp);return any;}
     private View bubble(JSONObject m,JSONObject c,ChatTheme theme,boolean outgoing,boolean joinPrev,boolean joinNext){
         LinearLayout wrap=vertical();String body=PairedProtocol.text(m),fallback=ChatText.replyFallbackBody(body);List<JSONObject> media=PairedProtocol.media(m);
         String target=store.replyTarget(m);
@@ -759,15 +774,16 @@ public class PairedActivity extends Activity {
         TextView text=text(fallback!=null?fallback:body,17,outgoing?theme.onBubble(dark):ink,false);text.setTextSize(17*textScale);text.setLineSpacing(0,1.1f);text.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));b.addView(text);
         // One to three emoji alone are shown large, without a bubble.
         if(media.isEmpty()&&target.isEmpty()&&fallback==null){int jumbo=ChatText.emojiOnly(body);if(jumbo>0){text.setTextSize(jumbo==1?48:jumbo==2?40:34);b.setBackground(null);b.setPadding(dp(4),0,dp(4),0);}}
-        if(Linkify.addLinks(text,Linkify.WEB_URLS|Linkify.EMAIL_ADDRESSES|Linkify.PHONE_NUMBERS)){text.setLinkTextColor(outgoing?theme.onBubble(dark):ink);text.setHighlightColor(((outgoing?theme.onBubble(dark):ink)&0x00ffffff)|0x26000000);text.setMovementMethod(LinkMovementMethod.getInstance());text.setOnLongClickListener(v->{messageSheet(m);return true;});}
+        TextScan scan=TextScan.of(text.getText().toString(),PairedProtocol.time(m)>0?PairedProtocol.time(m):System.currentTimeMillis());
+        if(applyLinks(text,scan)){text.setLinkTextColor(outgoing?theme.onBubble(dark):ink);text.setHighlightColor(((outgoing?theme.onBubble(dark):ink)&0x00ffffff)|0x26000000);text.setMovementMethod(LinkMovementMethod.getInstance());text.setOnLongClickListener(v->{messageSheet(m);return true;});}
         // Street addresses open in your maps app.
-        List<int[]> places=ChatText.addresses(text.getText().toString());
+        List<int[]> places=scan.places;
         if(!places.isEmpty()){Spannable sp=text.getText() instanceof Spannable?(Spannable)text.getText():new SpannableString(text.getText());int linkColor=outgoing?theme.onBubble(dark):ink;
             for(int[] r:places){if(sp.getSpans(r[0],r[1],URLSpan.class).length>0)continue;String where=sp.subSequence(r[0],r[1]).toString();
                 sp.setSpan(new ClickableSpan(){@Override public void onClick(View w){openPlace(where);}@Override public void updateDrawState(TextPaint ds){ds.setColor(linkColor);ds.setUnderlineText(true);}},r[0],r[1],Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);}
             text.setText(sp);text.setHighlightColor((linkColor&0x00ffffff)|0x26000000);text.setMovementMethod(LinkMovementMethod.getInstance());text.setOnLongClickListener(v->{messageSheet(m);return true;});}
         // Tracking numbers, flights, and "Friday at 6" are tappable too.
-        List<SmartText.Hit> smart=SmartText.all(text.getText().toString(),PairedProtocol.time(m)>0?PairedProtocol.time(m):System.currentTimeMillis(),java.util.TimeZone.getDefault());
+        List<SmartText.Hit> smart=scan.smart;
         if(!smart.isEmpty()){Spannable sp=text.getText() instanceof Spannable?(Spannable)text.getText():new SpannableString(text.getText());int linkColor=outgoing?theme.onBubble(dark):ink;boolean added=false;
             for(SmartText.Hit h:smart){if(sp.getSpans(h.start,h.end,URLSpan.class).length>0||sp.getSpans(h.start,h.end,ClickableSpan.class).length>0)continue;added=true;
                 sp.setSpan(new ClickableSpan(){@Override public void onClick(View w){smartTap(h,m,c);}@Override public void updateDrawState(TextPaint ds){ds.setColor(linkColor);ds.setUnderlineText(true);}},h.start,h.end,Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);}
@@ -899,6 +915,8 @@ public class PairedActivity extends Activity {
     private String calendarAppLabel(){String pkg=getSharedPreferences("paired",MODE_PRIVATE).getString("calendar_app","");if(pkg.isEmpty())return "Ask the first time";if(pkg.equals("ask"))return "Ask every time";
         try{return String.valueOf(getPackageManager().getApplicationLabel(getPackageManager().getApplicationInfo(pkg,0)));}catch(Exception e){return "Ask the first time";}}
     private void jumpTo(String id){View v=messageViews.get(id);
+        // Saved but older than what's drawn: draw back to it, then jump.
+        if(v==null&&scroll!=null){JSONObject saved=store.message(id);if(saved!=null&&chatId.equals(saved.optString("conversationID"))&&store.countSince(chatId,PairedProtocol.time(saved))>limit){showMessage(saved);return;}}
         if(v==null||scroll==null){toast("That message isn't loaded here. Scroll up to load older messages.");return;}
         scroll.smoothScrollTo(0,Math.max(0,v.getTop()-dp(96)));
         v.animate().alpha(0.35f).setDuration(180).withEndAction(()->v.animate().alpha(1f).setDuration(420).start()).start();}
@@ -961,7 +979,9 @@ public class PairedActivity extends Activity {
         }
         return r;
     }
-    private void loadOlderMessages(){if(busy||!screen.equals("chat"))return;String cursor=store.page("messages:"+chatId,false);if(cursor.isEmpty())return;anchorOlder=true;loadMessages(true);}
+    private void loadOlderMessages(){if(busy||!screen.equals("chat"))return;
+        // Older saved messages first (no network), keeping your place; then older pages from Google.
+        if(moreSaved){limit+=WINDOW;renderMessages(false);return;}String cursor=store.page("messages:"+chatId,false);if(cursor.isEmpty())return;anchorOlder=true;loadMessages(true);}
     private void loadMessages(boolean more){if(busy)return;String id=chatId,cursor=more?store.page("messages:"+id,false):"";
         if(more&&cursor.isEmpty()){anchorOlder=false;String note=store.page("messages:"+id,true);toast(note.isEmpty()?"Refresh this conversation first.":note);return;}
         busy=true;PairedService.loadMessages(id,cursor,(v,e)->{busy=false;if(!e.isEmpty()){anchorOlder=false;toast(e);}if(screen.equals("chat")&&chatId.equals(id))messagesLoaded(more);});}
@@ -1682,7 +1702,7 @@ public class PairedActivity extends Activity {
     /** A one-to-one chat with a short code or business name that isn't a saved contact (a fresh verification code stays in the inbox). */
     private boolean promotion(JSONObject c){if(chatSettings.pinned(c))return false;JSONObject other=PairedProtocol.other(c);if(other==null||PairedProtocol.known(other))return false;
         if(!SmartText.shortCodeSender(PairedProtocol.number(other)))return false;
-        JSONObject last=latestStored(c.optString("conversationID"));return last==null||ChatText.oneTimeCode(PairedProtocol.text(last)).isEmpty()||System.currentTimeMillis()-PairedProtocol.time(last)>3_600_000L;}
+        JSONObject last=latestStored(c.optString("conversationID"));return last==null||TextScan.code(PairedProtocol.text(last)).isEmpty()||System.currentTimeMillis()-PairedProtocol.time(last)>3_600_000L;}
     private View promotionsRow(List<JSONObject> promos){int unread=0;for(JSONObject c:promos)if(chatSettings.unread(c))unread++;
         LinearLayout entry=row();entry.setPadding(dp(4),dp(9),dp(4),dp(9));entry.setGravity(Gravity.CENTER_VERTICAL);entry.setBackground(ripple());
         TextView icon=text("🏷",20,ink,false);icon.setGravity(Gravity.CENTER);icon.setBackground(oval(surface));entry.addView(icon,new LinearLayout.LayoutParams(dp(46),dp(46)));
