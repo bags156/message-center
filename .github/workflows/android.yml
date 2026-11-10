@@ -53,6 +53,8 @@ jobs:
         run: python3 -m unittest discover -s tools -p 'test_*.py' -v
       - name: Test, lint, and build Android APK
         run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleRelease :app:assembleDebug :app:assembleDebugAndroidTest
+      - name: Verify native libraries for 16 KB Android pages
+        run: python3 tools/check_apk_native_alignment.py app/build/outputs/apk/release/app-release-unsigned.apk
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: unsigned-apk

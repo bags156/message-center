@@ -140,6 +140,7 @@ public class PairedActivity extends Activity {
     private final android.os.Handler loginTimer=new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable loginPoll=this::pollLogin;
     private final BroadcastReceiver receiver=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){
+        if("PHOTO_TEXT".equals(i.getStringExtra("kind"))){searchedFor="";if(screen.equals("inbox"))renderInbox();return;}
         if("TYPING".equals(i.getStringExtra("kind"))){updateTyping();return;}
         if(!bubble() && !PairedService.emoji().isEmpty() && !shownEmoji.equals(PairedService.emoji())){destroyLogin();pairing();return;}
         if(screen.equals("pair") && PairedService.ready()){CookieManager.getInstance().removeAllCookies(null);inbox();askNotifications();return;}
@@ -168,6 +169,7 @@ public class PairedActivity extends Activity {
     /** A tapped notification (or bubble) delivers its chat here when this screen is already open. */
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(!bubble()&&receiveShare(intent))return;if(MessagesWidget.NEW_CHAT.equals(intent.getAction())){if(login!=null)destroyLogin();inbox();newMessage();return;}String id=intent.getStringExtra("chat");if(id!=null&&!id.isEmpty()){if(login!=null)destroyLogin();thread(id);showFromIntent(intent);}}
     @Override protected void onResume(){super.onResume();resumed=true;PairedService.screenVisible(true);refreshDraft();if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
+        PhotoText.indexDownloaded(this,false);
         if(PairedService.ready()&&screen.equals("pair")){CookieManager.getInstance().removeAllCookies(null);inbox();askNotifications();}
         else if(!bubble()&&!PairedService.emoji().isEmpty()&&login==null)pairing();
         else {updateStatus();PairedService.syncNow();
@@ -181,7 +183,7 @@ public class PairedActivity extends Activity {
     private void refreshDraft(){if(composer==null||drafts==null||chatId.isEmpty()||!screen.equals("chat"))return;String stored=drafts.getOrDefault(chatId,"");
         if(stored.equals(composer.getText().toString()))return;composer.setText(stored);composer.setSelection(stored.length());}
     @Override protected void onSaveInstanceState(Bundle out){remember();out.putString("screen",screen);if(screen.equals("settings")&&settingsScroll!=null)out.putInt("settings_y",settingsScroll.getScrollY());if(pendingCapture!=null)out.putString("capture",pendingCapture.getPath());out.putString("chat",chatId);if(screen.equals("chat")){Spot at=chatSpotNow();if(at!=null){out.putString("spot",at.id);out.putInt("spot_offset",at.offset);}}out.putString("reply",replyId);out.putString("draft",drafts.getOrDefault(chatId,""));super.onSaveInstanceState(out);}
-    @Override public void onBackPressed(){if(selecting){stopSelecting();return;}if(screen.equals("media")){details();return;}if(screen.equals("details")){thread(chatId);return;}if(bubble()){super.onBackPressed();return;}if(login!=null){destroyLogin();inbox();}else if(screen.equals("inbox")&&(folder!=1||unknownOnly||promoOnly)){folder=1;unknownOnly=false;promoOnly=false;inbox();}else if(!screen.equals("inbox")){remember();inbox();}else super.onBackPressed();}
+    @Override public void onBackPressed(){if(selecting){stopSelecting();return;}if(screen.equals("media")){details();return;}if(screen.equals("details")){thread(chatId);return;}if(bubble()){super.onBackPressed();return;}if(login!=null){destroyLogin();inbox();}else if(screen.equals("inbox")&&(folder!=1||unknownOnly||promoOnly||needsReplyOnly)){folder=1;unknownOnly=false;promoOnly=false;needsReplyOnly=false;inbox();}else if(!screen.equals("inbox")){remember();inbox();}else super.onBackPressed();}
 
     // ---- Shared building blocks ----
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
@@ -319,10 +321,10 @@ public class PairedActivity extends Activity {
     }
 
     // ---- Inbox ----
-    private void inbox(){if(bubble()){if(!chatId.isEmpty())thread(chatId);else finish();return;}remember();chatId="";replyId="";base("inbox");
-        if(folder!=1){unknownOnly=false;promoOnly=false;}
-        LinearLayout bar=row();TextView title=text(folder==2?"Archived":folder==3?"Blocked & spam":unknownOnly?"Unknown senders":promoOnly?"Promotions":"Messages",26,ink,false);title.setPadding(dp(folder!=1||unknownOnly||promoOnly?8:4),0,0,0);
-        if(folder!=1||unknownOnly||promoOnly)bar.addView(icon(R.drawable.ic_back,ink,"Back",()->{folder=1;unknownOnly=false;promoOnly=false;inbox();}));
+    private void inbox(){if(bubble()){if(!chatId.isEmpty())thread(chatId);else finish();return;}remember();chatId="";replyId="";base("inbox");searchedFor="";
+        if(folder!=1){unknownOnly=false;promoOnly=false;needsReplyOnly=false;}
+        LinearLayout bar=row();TextView title=text(folder==2?"Archived":folder==3?"Blocked & spam":unknownOnly?"Unknown senders":promoOnly?"Promotions":needsReplyOnly?"Needs a reply":"Messages",26,ink,false);title.setPadding(dp(folder!=1||unknownOnly||promoOnly||needsReplyOnly?8:4),0,0,0);
+        if(folder!=1||unknownOnly||promoOnly||needsReplyOnly)bar.addView(icon(R.drawable.ic_back,ink,"Back",()->{folder=1;unknownOnly=false;promoOnly=false;needsReplyOnly=false;inbox();}));
         bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
         if(new SessionVault(this).exists()){bar.addView(icon(R.drawable.ic_search,ink,"Search",this::toggleSearch));bar.addView(icon(R.drawable.ic_more,ink,"More options",null));
             View more=bar.getChildAt(bar.getChildCount()-1);pressable(more);more.setOnClickListener(this::inboxMenu);}
@@ -332,6 +334,7 @@ public class PairedActivity extends Activity {
             root.addView(button("Connect Google Messages",true,this::signIn));gap(root,12);
             note(root,"This replaces the earlier notification companion. Your old notification captures are separate from synced conversations. Full archive coverage and background delivery need testing on your phone.");return;
         }
+        if(folder==1){TextView follow=text(needsReplyOnly?"All conversations  ›":"Needs a reply  ›",14,muted,false);follow.setPadding(dp(16),dp(10),dp(16),dp(10));follow.setOnClickListener(v->{needsReplyOnly=!needsReplyOnly;unknownOnly=false;promoOnly=false;inbox();});root.addView(follow);}
         if(hasIncoming())root.addView(shareBanner());
         else if(folder==1&&showBatteryCard())root.addView(batteryCard=batteryBanner());
         searchRow=row();EditText search=input("Search conversations");search.setSingleLine(true);search.setText(query);searchRow.addView(search,new LinearLayout.LayoutParams(-1,-2));
@@ -389,12 +392,19 @@ public class PairedActivity extends Activity {
         if(keepSpot==null||placing!=null||pinnedBottom||!screen.equals("chat")||scroll==null||items==null||!scroll.isLaidOut())return true;
         View v=messageViews.get(keepSpot.id);if(v==null||v.getParent()!=items)return true;
         int want=Math.max(0,v.getTop()-keepSpot.offset);if(Math.abs(want-scroll.getScrollY())>1)scroll.scrollTo(0,want);return true;}
-    private String inboxKey(){return folder+"|"+unknownOnly+"|"+promoOnly+"|"+query;}
+    private boolean needsReplyOnly;
+    private String inboxKey(){return folder+"|"+unknownOnly+"|"+promoOnly+"|"+needsReplyOnly+"|"+query;}
+    private boolean needsReply(JSONObject c){String id=c.optString("conversationID");return NeedsReply.pending(store.replyBoundary(id,c),c,chatSettings.replyDismissed(id),chatSettings.replySnoozed(id),System.currentTimeMillis());}
+    private void replyFollowUp(JSONObject c){String id=c.optString("conversationID");long latest=NeedsReply.incoming(store.replyBoundary(id,c),c);
+        String[] choices={"Mark handled","Show in this list in 1 hour","Show tomorrow","Show in 3 days","Clear follow-up snooze / handled mark"};
+        new AlertDialog.Builder(this).setTitle("Needs a reply").setItems(choices,(d,which)->{long now=System.currentTimeMillis();if(which==0)chatSettings.dismissReply(id,latest);
+            else if(which==4){chatSettings.dismissReply(id,0);chatSettings.snoozeReply(id,0);}else chatSettings.snoozeReply(id,now+(which==1?3_600_000L:which==2?86_400_000L:3*86_400_000L));
+            if(screen.equals("inbox"))renderInbox();else if(screen.equals("details"))details();}).setNegativeButton("Close",null).show();}
     private void toggleSearch(){if(searchRow==null)return;boolean show=searchRow.getVisibility()!=View.VISIBLE;searchRow.setVisibility(show?View.VISIBLE:View.GONE);
         EditText field=(EditText)searchRow.getChildAt(0);if(show){field.requestFocus();getSystemService(InputMethodManager.class).showSoftInput(field,0);}else{field.setText("");hideKeyboard(field);}}
     private void inboxMenu(View anchor){PopupMenu menu=new PopupMenu(this,anchor);Menu m=menu.getMenu();
-        m.add(0,1,0,folder==1?"Archived":"Inbox");if(folder==1)m.add(0,7,0,"Mark all as read");if(folder==1){m.add(0,4,1,"Blocked & spam");if(!unknownOnly)m.add(0,6,1,"Unknown senders");}m.add(0,5,2,"Starred messages");m.add(0,2,3,"Refresh");m.add(0,3,4,"Settings");
-        menu.setOnMenuItemClickListener(item->{switch(item.getItemId()){case 1->{folder=folder==1?2:1;unknownOnly=false;promoOnly=false;inbox();}case 4->{folder=3;inbox();}case 5->starredScreen();case 6->{unknownOnly=true;inbox();}case 7->markAllRead();case 2->refreshInbox(true);case 3->settings();default->{}}return true;});menu.show();}
+        m.add(0,8,0,needsReplyOnly?"All conversations":"Needs a reply");m.add(0,1,0,folder==1?"Archived":"Inbox");if(folder==1)m.add(0,7,0,"Mark all as read");if(folder==1){m.add(0,4,1,"Blocked & spam");if(!unknownOnly)m.add(0,6,1,"Unknown senders");}m.add(0,5,2,"Starred messages");m.add(0,2,3,"Refresh");m.add(0,3,4,"Settings");
+        menu.setOnMenuItemClickListener(item->{switch(item.getItemId()){case 1->{folder=folder==1?2:1;unknownOnly=false;promoOnly=false;needsReplyOnly=false;inbox();}case 4->{folder=3;inbox();}case 5->starredScreen();case 6->{unknownOnly=true;inbox();}case 7->markAllRead();case 8->{needsReplyOnly=!needsReplyOnly;folder=1;unknownOnly=false;promoOnly=false;inbox();}case 2->refreshInbox(true);case 3->settings();default->{}}return true;});menu.show();}
     private void refreshInbox(boolean force){if(!PairedService.ready()||busy)return;long now=System.currentTimeMillis();if(!force&&now-lastInboxRefresh<30_000)return;lastInboxRefresh=now;loadChats(false);}
     private void loadOlderChats(){if(busy||!PairedService.ready())return;if(store.page("folder:"+folder,false).isEmpty())return;loadChats(true);}
     private void renderInbox(){if(items==null||!screen.equals("inbox"))return;
@@ -405,17 +415,18 @@ public class PairedActivity extends Activity {
         items.removeAllViews();
         SmartText.Search filtered=SmartText.parseSearch(query);boolean filtering=SmartText.hasFilters(filtered);
         List<JSONObject> chats=filtering?new ArrayList<>():InboxOrder.sort(store.chats(query,folder),chatSettings::pinned);
+        if(needsReplyOnly)chats.removeIf(c->!needsReply(c));
         chats.removeIf(c->pendingDeletes.contains(c.optString("conversationID")));
         if(unknownOnly){List<JSONObject> unknown=new ArrayList<>();for(JSONObject c:chats)if(unknownSender(c))unknown.add(c);chats=unknown;}
         // Promotions (texts from short codes like 28302) get their own list, unless you turned that off.
         List<JSONObject> promos=new ArrayList<>();
         if(promoOnly){List<JSONObject> only=new ArrayList<>();for(JSONObject c:chats)if(promotion(c))only.add(c);chats=only;}
-        else if(folder==1&&!unknownOnly&&query.trim().isEmpty()&&promotionsSeparate()){for(JSONObject c:chats)if(promotion(c))promos.add(c);chats.removeAll(promos);}
-        if(chats.isEmpty()&&promos.isEmpty()&&!filtering){TextView empty=text(PairedService.ready()?(query.isEmpty()?(promoOnly?"No promotions.":"No conversations here yet."):"No chats with that name."):"Your conversations will appear once the connection is ready.",15,muted,false);
+        else if(folder==1&&!unknownOnly&&!needsReplyOnly&&query.trim().isEmpty()&&promotionsSeparate()){for(JSONObject c:chats)if(promotion(c))promos.add(c);chats.removeAll(promos);}
+        if(chats.isEmpty()&&promos.isEmpty()&&!filtering){TextView empty=text(PairedService.ready()?(query.isEmpty()?(needsReplyOnly?"All caught up in your synced conversations.":promoOnly?"No promotions.":"No conversations here yet."):"No chats with that name."):"Your conversations will appear once the connection is ready.",15,muted,false);
             empty.setGravity(Gravity.CENTER);empty.setPadding(dp(24),dp(48),dp(24),dp(24));items.addView(empty);}
         if(autoReplyActive())items.addView(autoReplyBanner());
         // Pinned chats sit in a grid at the top (three across), like iPhone Messages; the rest are rows.
-        boolean grid=folder==1&&!unknownOnly&&query.trim().isEmpty();List<JSONObject> pins=new ArrayList<>();
+        boolean grid=folder==1&&!unknownOnly&&!needsReplyOnly&&query.trim().isEmpty();List<JSONObject> pins=new ArrayList<>();
         if(grid)for(JSONObject c:chats)if(chatSettings.pinned(c))pins.add(c);
         if(!pins.isEmpty()){View g=pinnedGrid(pins);g.setTag(R.id.chat_row,"\npinned");items.addView(g);}
         if(!promos.isEmpty())items.addView(promotionsRow(promos));
@@ -511,6 +522,7 @@ public class PairedActivity extends Activity {
             labels.add("Chat theme…");actions.add(()->chooseTheme(id));
             labels.add(receipts?"Turn off read receipts for this chat":"Turn on read receipts for this chat");actions.add(()->toggleReceipts(id));
             labels.add(group?"Group details":"Details");actions.add(()->{chatId=id;details();});
+            labels.add("Needs a reply / mark handled…");actions.add(()->replyFollowUp(c));
             labels.add("Open as bubble");actions.add(()->openBubble(id));}
         labels.add(blocked?"Unblock":"Block…");actions.add(()->block(c));
         labels.add("Delete conversation…");actions.add(()->deleteChat(c));
@@ -644,7 +656,7 @@ public class PairedActivity extends Activity {
         LinearLayout replyTexts=vertical();replyTexts.setPadding(dp(10),0,dp(8),0);replyLabel=text("",13,theme.accent(dark),true);replyQuote=text("",14,muted,false);
         replyQuote.setSingleLine(true);replyQuote.setEllipsize(TextUtils.TruncateAt.END);replyTexts.addView(replyLabel);replyTexts.addView(replyQuote);
         replyPanel.addView(replyTexts,new LinearLayout.LayoutParams(0,-2,1));replyPanel.addView(icon(R.drawable.ic_close,muted,"Cancel reply",this::cancelReply));root.addView(replyPanel);
-        if(!id.equals(outgoingChat)){for(Outgoing o:outgoing)if(!o.sending)o.file.delete();outgoing.removeIf(o->!o.sending);outgoingChat=id;}
+        if(!id.equals(outgoingChat)){for(Outgoing o:outgoing)if(!o.sending)discardPicked(o);outgoing.removeIf(o->!o.sending);outgoingChat=id;}
         attachStrip=row();attachScroll=new HorizontalScrollView(this);attachScroll.setHorizontalScrollBarEnabled(false);attachScroll.setPadding(dp(16),dp(4),dp(16),dp(6));attachScroll.addView(attachStrip);root.addView(attachScroll);
         // Recording: cancel, a pulsing dot and the time, your voice as it comes in, and send.
         recordBar=row();recordBar.setGravity(Gravity.CENTER_VERTICAL);recordBar.setPadding(dp(4),dp(6),dp(10),dp(6));recordBar.setVisibility(View.GONE);
@@ -773,7 +785,7 @@ public class PairedActivity extends Activity {
             ValueAnimator a=ValueAnimator.ofFloat(blur,0f);a.setDuration(420);a.addUpdateListener(x->{float r=(float)x.getAnimatedValue();content.setRenderEffect(r<0.5f?null:android.graphics.RenderEffect.createBlurEffect(r,r,android.graphics.Shader.TileMode.DECAL));});
             a.addListener(new android.animation.AnimatorListenerAdapter(){@Override public void onAnimationEnd(android.animation.Animator an){content.setRenderEffect(null);}});a.start();box.postDelayed(later,INK_SHOWN_MS);});
         cover.setOnLongClickListener(v->{messageSheet(m);return true;});return box;}
-    private void renderMessages(boolean bottom){if(items==null||!screen.equals("chat"))return;voiceCards.clear();voiceOrder.clear();
+    private void renderMessages(boolean bottom){if(items==null||!screen.equals("chat"))return;refreshSavedAttachments();voiceCards.clear();voiceOrder.clear();
         ScrollView sv=scroll;View content=sv.getChildAt(0);int y,before;boolean atBottom;Spot spot;
         // If the last redraw hasn't been laid out yet, its new views have no positions; keep aiming where it was aiming.
         if(placing!=null&&placingIn==sv){sv.getViewTreeObserver().removeOnPreDrawListener(placing);placing=null;y=placeY;before=placeBefore;atBottom=bottom||placeBottom;spot=atBottom?null:placeSpot;}
@@ -1126,11 +1138,12 @@ public class PairedActivity extends Activity {
         switch(s){
             case "OUTGOING_DISPLAYED","OUTGOING_DELIVERED"->{ImageView ticks=new ImageView(this);ticks.setImageResource(R.drawable.ic_ticks);
                 boolean read=s.equals("OUTGOING_DISPLAYED");ticks.setImageTintList(ColorStateList.valueOf(read?theme.onAccent(dark):muted));if(read)ticks.setBackground(oval(theme.accent(dark)));
-                ticks.setPadding(dp(3),dp(3),dp(3),dp(3));ticks.setContentDescription(read?"Read":"Delivered");r.addView(ticks,new LinearLayout.LayoutParams(dp(22),dp(22)));}
+                ticks.setPadding(dp(3),dp(3),dp(3),dp(3));ticks.setContentDescription(read?"Read":"Delivered");r.addView(ticks,new LinearLayout.LayoutParams(dp(22),dp(22)));
+                if(!PairedProtocol.media(m).isEmpty())r.addView(text(read?"Read":"Delivered",12,muted,false));}
             case "OUTGOING_COMPLETE"->r.addView(text("Sent",12,muted,false));
             case "OUTGOING_SENDING","OUTGOING_YET_TO_SEND","OUTGOING_RESENDING","OUTGOING_VALIDATING","OUTGOING_AWAITING_RETRY"->{
                 // Two minutes on, it's most likely waiting on your phone, not this app.
-                boolean slow=System.currentTimeMillis()-PairedProtocol.time(m)>120_000;TextView t=text(slow?"Still sending on your phone • Tap for help":"Sending…",12,muted,false);
+                boolean slow=System.currentTimeMillis()-PairedProtocol.time(m)>120_000;TextView t=text(slow?"Still sending on your phone • Tap for help":!PairedProtocol.media(m).isEmpty()?"Waiting for your phone to send…":"Sending…",12,muted,false);
                 if(slow)t.setOnClickListener(v->stuckSendingHelp());r.addView(t);}
             default->{}
         }
@@ -1187,6 +1200,8 @@ public class PairedActivity extends Activity {
             thread(chat.getString("conversationID"));}catch(Exception ex){error("The new conversation could not be opened.");}});}
     /** Long-press a message: react (tap your current reaction to remove it), reply, copy, or see reactions. */
     private void messageSheet(JSONObject m){JSONObject c=store.chat(chatId);LinearLayout content=vertical();Dialog[] d=new Dialog[1];
+        int photoNumber=0;for(JSONObject media:PairedProtocol.media(m))if(MediaCache.mime(media).startsWith("image/")){
+            int number=++photoNumber;sheetAction(content,"Read text in photo "+number,()->{d[0].dismiss();readPhotoText(media);});}
         List<String[]> reactors=reactorsOf(m);String mine=myReaction(m,c);
         List<String> choices=new ArrayList<>(java.util.Arrays.asList(REACTIONS));if(!mine.isEmpty()&&!choices.contains(mine)){choices.add(0,mine);choices.remove(choices.size()-1);}
         LinearLayout emojis=row();String current=mine;
@@ -1294,6 +1309,7 @@ public class PairedActivity extends Activity {
         String ownShows=NotificationPrivacy.own(this,id);
         sheetAction(content,"Notifications show: "+(ownShows.isEmpty()?"same as all chats ("+NotificationPrivacy.label(NotificationPrivacy.mode(this)).toLowerCase(Locale.ROOT)+")":NotificationPrivacy.label(ownShows).toLowerCase(Locale.ROOT)),()->chatNotificationContent(id));
         sheetAction(content,"Search in chat",()->{thread(id);searchChat();});
+        sheetAction(content,"Needs a reply / mark handled…",()->replyFollowUp(c));
         if(!group&&!people.isEmpty()){JSONObject p0=people.get(0);String nick=Nicknames.get(PairedProtocol.number(p0));sheetAction(content,nick.isEmpty()?"Set a nickname…":"Nickname: "+nick+" (change)",()->setNickname(p0));}
         sheetAction(content,"Export chat to a file",()->exportChat(id));
         sheetAction(content,"Notification sound & priority",()->{PairedService.ensureShortcut(this,id);PairedService.openConversationSettings(this,id,PairedProtocol.title(c));});
@@ -1312,7 +1328,22 @@ public class PairedActivity extends Activity {
     private final List<Outgoing> outgoing=new ArrayList<>();private String outgoingChat="";
     private LinearLayout attachStrip;private HorizontalScrollView attachScroll;
     /** A file picked to send, copied into this app's cache first. */
-    private static final class Outgoing{final File file;final String name,mime;boolean sending;Outgoing(File f,String n,String m){file=f;name=n;mime=m;}}
+    private static final class Outgoing{final File file;final String name,mime;boolean sending,small;volatile PhotoPrep.Ready prepared;volatile String variant="",preparationError="";volatile int preparationToken;volatile boolean preparing;
+        Outgoing(File f,String n,String m){file=f;name=n;mime=m;}}
+    private static final java.util.concurrent.ExecutorService photoPreparation=java.util.concurrent.Executors.newSingleThreadExecutor();
+    private String photoQuality(){return PhotoQuality.normalize(getSharedPreferences("paired",MODE_PRIVATE).getString("photo_quality",PhotoQuality.STANDARD));}
+    private void prepareWhileTyping(Outgoing o){if(o.sending||!o.mime.startsWith("image/"))return;JSONObject c=store.chat(chatId);boolean mms=c==null||!PairedProtocol.rcs(c);String quality=photoQuality(),variant=quality+"|"+mms;
+        if(variant.equals(o.variant))return;o.variant=variant;int token=++o.preparationToken;o.preparing=true;o.preparationError="";
+        photoPreparation.execute(()->{PhotoPrep.Ready ready=PhotoPrep.prepare(o.file,o.name,o.mime,mms,quality);
+            if(token!=o.preparationToken){if(!ready.file.equals(o.file))ready.file.delete();return;}
+            PhotoPrep.Ready old=o.prepared;o.prepared=ready;o.preparing=false;o.preparationError=ready.error;
+            if(old!=null&&!old.file.equals(o.file)&&!old.file.equals(ready.file))old.file.delete();
+            ui.post(()->{if(outgoing.contains(o)&&screen.equals("chat"))renderAttachments();});});}
+    private void choosePhotoQuality(){String[] values={PhotoQuality.FAST,PhotoQuality.STANDARD,PhotoQuality.FULL};String selected=photoQuality();int current=selected.equals(PhotoQuality.FAST)?0:selected.equals(PhotoQuality.FULL)?2:1;
+        new AlertDialog.Builder(this).setTitle("Photo quality")
+            .setSingleChoiceItems(new String[]{"Fast • smaller uploads","Standard • sharp, practical size","Full quality • larger files"},current,(d,which)->{getSharedPreferences("paired",MODE_PRIVATE).edit().putString("photo_quality",values[which]).apply();
+                for(Outgoing o:outgoing)if(!o.sending){o.variant="";prepareWhileTyping(o);}d.dismiss();renderAttachments();}).setNeutralButton("About quality",(d,w)->new AlertDialog.Builder(this).setMessage("Fast uses smaller pictures. Standard keeps photos sharp at a practical size. Full quality keeps the original when supported; format conversion may still be needed. MMS always uses its smaller size limit.").setPositiveButton("OK",null).show()).setNegativeButton("Close",null).show();}
+    private void discardPicked(Outgoing o){o.preparationToken++;o.file.delete();PhotoPrep.Ready ready=o.prepared;if(ready!=null&&!ready.file.equals(o.file))ready.file.delete();}
     /** A photo or video shown in the chat at its own shape, or a file/audio card. Tap to open, long-press for options. */
     private View mediaView(JSONObject m,JSONObject media,boolean outgoing,ChatTheme theme){
         String kind=PairedProtocol.mediaKind(media);LinearLayout line=row();line.setGravity(outgoing?Gravity.END:Gravity.START);
@@ -1685,6 +1716,7 @@ public class PairedActivity extends Activity {
         return new Outgoing(target,name,mime);}
     /** The row of picked attachments above the message box, each removable until sent. */
     private void renderAttachments(){if(attachStrip==null)return;attachStrip.removeAllViews();attachScroll.setVisibility(outgoing.isEmpty()?View.GONE:View.VISIBLE);
+        for(Outgoing o:outgoing)prepareWhileTyping(o);
         for(Outgoing o:outgoing){FrameLayout tile=new FrameLayout(this);tile.setBackground(shape(surface,14));
             tile.setOutlineProvider(new ViewOutlineProvider(){@Override public void getOutline(View v,Outline ol){ol.setRoundRect(0,0,v.getWidth(),v.getHeight(),dp(14));}});tile.setClipToOutline(true);
             boolean visual=o.mime.startsWith("image/")||o.mime.startsWith("video/");
@@ -1695,61 +1727,77 @@ public class PairedActivity extends Activity {
                 t.setEllipsize(TextUtils.TruncateAt.END);t.setPadding(dp(4),dp(4),dp(4),0);box.addView(t);tile.addView(box,new FrameLayout.LayoutParams(-1,-1));}
             if(o.sending){TextView s=text("Sending…",11,Color.WHITE,true);s.setGravity(Gravity.CENTER);s.setBackgroundColor(0x99000000);tile.addView(s,new FrameLayout.LayoutParams(-1,-1));}
             else {ImageView x=new ImageView(this);x.setImageResource(R.drawable.ic_close);x.setImageTintList(ColorStateList.valueOf(Color.WHITE));x.setBackground(oval(0x99000000));x.setPadding(dp(3),dp(3),dp(3),dp(3));
-                x.setContentDescription("Remove "+o.name);x.setOnClickListener(v->{outgoing.remove(o);o.file.delete();renderAttachments();});tile.addView(x,new FrameLayout.LayoutParams(dp(22),dp(22),Gravity.TOP|Gravity.END));
+                x.setContentDescription("Remove "+o.name);x.setOnClickListener(v->{outgoing.remove(o);discardPicked(o);renderAttachments();});tile.addView(x,new FrameLayout.LayoutParams(dp(22),dp(22),Gravity.TOP|Gravity.END));
                 // Photos can be marked up before sending (not GIFs, which would stop moving).
                 if(o.mime.startsWith("image/")&&!o.mime.equals("image/gif")){TextView pen=text("✎",12,Color.WHITE,true);pen.setGravity(Gravity.CENTER);pen.setBackground(oval(0x99000000));
                     tile.addView(pen,new FrameLayout.LayoutParams(dp(22),dp(22),Gravity.BOTTOM|Gravity.START));tile.setContentDescription("Mark up "+o.name);tile.setOnClickListener(v->markUp(o));}}
-            LinearLayout.LayoutParams tl=new LinearLayout.LayoutParams(dp(72),dp(72));tl.setMarginEnd(dp(8));attachStrip.addView(tile,tl);}updateComposeButton();}
+            LinearLayout.LayoutParams tl=new LinearLayout.LayoutParams(dp(72),dp(72));tl.setMarginEnd(dp(8));attachStrip.addView(tile,tl);}
+        boolean photos=false,preparing=false;long bytes=0;for(Outgoing o:outgoing)if(o.mime.startsWith("image/")){photos=true;preparing|=o.preparing;bytes+=o.prepared!=null?o.prepared.file.length():Math.min(o.file.length(),PhotoQuality.bytes(photoQuality(),false));}
+        if(photos){TextView quality=text("Photo quality: "+PhotoQuality.label(photoQuality())+"\n"+(preparing?"Preparing size…":PhotoQuality.size(bytes))+" • Tap to change",13,ink,false);quality.setPadding(dp(12),dp(10),dp(12),dp(10));quality.setBackground(shape(surface,14));
+            quality.setContentDescription("Photo quality: "+PhotoQuality.label(photoQuality())+(preparing?", preparing":", "+PhotoQuality.size(bytes)));quality.setOnClickListener(v->{if(!busy)choosePhotoQuality();});attachStrip.addView(quality,new LinearLayout.LayoutParams(-2,dp(72)));}updateComposeButton();}
     /** Opens an attached photo to draw on, add text to, or crop; the edited copy takes its place. */
     private void markUp(Outgoing o){if(o.sending)return;MarkupEditor.open(this,o.file,edited->{int i=outgoing.indexOf(o);if(i<0||o.sending){edited.delete();return;}
-        String name=o.name.replaceAll("\\.[A-Za-z0-9]+$","")+".jpg";outgoing.set(i,new Outgoing(edited,name,"image/jpeg"));o.file.delete();renderAttachments();});}
+        String name=o.name.replaceAll("\\.[A-Za-z0-9]+$","")+".jpg";outgoing.set(i,new Outgoing(edited,name,"image/jpeg"));discardPicked(o);renderAttachments();});}
     /** Sends each attachment on its own, followed by the typed text after the first one. */
     /**
      * Sends what's in the attachment strip. Each one moves into the chat right away as a "Sending…"
      * bubble (so the strip doesn't hang around and then drop the chat down when it empties), and is
      * replaced by the real message when Google shows it.
      */
-    private void sendAttachments(JSONObject c,String caption,String reply){String id=chatId;List<Outgoing> batch=new ArrayList<>();for(Outgoing o:outgoing)if(!o.sending)batch.add(o);
-        if(batch.isEmpty())return;long now=System.currentTimeMillis();List<PendingMedia> sends=new ArrayList<>();
-        for(int i=0;i<batch.size();i++){Outgoing o=batch.get(i);o.sending=true;outgoing.remove(o);PendingMedia p=new PendingMedia(id,o,i==0?caption:"",i==0?reply:"",now);pendingMedia.add(p);sends.add(p);thumbFor(p);}
-        // Not busy: you can keep chatting (and new messages keep coming in) while a video compresses and uploads.
-        renderAttachments();
-        if(composer!=null){composer.setText("");}drafts.remove(id);cancelReply();repliedSinceInbox=true;renderMessages(true);sendNext(c,sends,0);}
-    private void sendNext(JSONObject c,List<PendingMedia> sends,int index){
-        if(index>=sends.size()){if(screen.equals("chat")&&chatId.equals(sends.get(0).chat))loadMessages(false);return;}
-        PendingMedia p=sends.get(index);Outgoing o=p.item;
-        // A picture message (MMS) carries about 1 MB, so photos and videos are made to fit; RCS gets a sensible size. See PhotoPrep and VideoPlan.
-        boolean mms=p.small||!PairedProtocol.rcs(c);
-        long queued=System.currentTimeMillis();android.content.Context app=getApplicationContext();boolean video=o.mime.startsWith("video/");
-        PairedService.executeSend(client->{long start=System.currentTimeMillis();
-            PhotoPrep.Ready ready=video?VideoPrep.prepare(app,o.file,o.name,o.mime,mms,percent->ui.post(()->{p.prep=percent;showPendingStatus(p);}))
-                :PhotoPrep.prepare(o.file,o.name,o.mime,mms);
-            long prepared=System.currentTimeMillis();if(video)ui.post(()->{p.prep=-1;showPendingStatus(p);});
-            try{return client.sendMedia(c.toString(),ready.file.getPath(),ready.name,ready.mime,p.captionHandled?"":p.caption,p.reply);}
-            finally{// For "Report a problem": how long each step took (sizes and times only).
-                Diagnostics.note("Sent "+(ready.mime.startsWith("image/")?"photo":ready.mime.startsWith("video/")?"video":"attachment")+" "+(ready.file.length()/1024)+" KB"+(ready.file!=o.file?" (from "+(o.file.length()/1024)+" KB)":"")+": waited "+(start-queued)+" ms, prepared "+(prepared-start)+" ms, uploaded and sent "+(System.currentTimeMillis()-prepared)+" ms");
-                if(ready.file!=o.file)ready.file.delete();}},(value,e)->{p.prep=-1;
-            if(!e.isEmpty()){
-                // This one and the rest stay in the chat as "Not sent"; tap to send again or remove.
-                for(int k=index;k<sends.size();k++){sends.get(k).error=k==index?e:"Not sent because an earlier attachment failed.";}
-                if(screen.equals("chat"))renderMessages(false);toast(e);return;}
-            // The file is kept until Google shows the photo, so "Send again" can still send it.
-            p.sent=System.currentTimeMillis();
-            // The bridge submits media and text separately: a combined request can stall on the phone.
-            // A text-only failure must never turn into a retry of the already-accepted photo.
-            try{JSONObject submitted=new JSONObject(value);p.tmp=submitted.optString("mediaTmpID");p.captionHandled=true;
-                String textError=submitted.optString("captionError");if(!p.caption.isEmpty()&&!textError.isEmpty()){
-                    outbox.addStoppedCaption(p.chat,p.caption,p.reply,"The attachment was accepted. This text needs attention: "+textError,submitted.optBoolean("captionUncertain"));
-                    toast("Attachment submitted. Tap the separate text for details.");}}
-            catch(Exception ignored){p.captionHandled=true;if(!p.caption.isEmpty())outbox.addStoppedCaption(p.chat,p.caption,p.reply,
-                "The attachment was accepted, but the text outcome couldn't be read. Check Google Messages before retrying.",true);}
-            // Sent again in place of a failed one: the failed copy goes.
-            if(!p.replaces.isEmpty()){String gone=p.replaces;PairedService.execute(cl->{cl.deleteMessage(gone);return "";},(x,err)->{if(err.isEmpty()){store.deleteMessage(gone);if(screen.equals("chat"))renderMessages(false);}});}
-            if(screen.equals("chat"))renderMessages(false);sendNext(c,sends,index+1);});}
+    private void sendAttachments(JSONObject c,String caption,String reply){
+        String id=chatId,quality=photoQuality();boolean mms=!PairedProtocol.rcs(c);List<Outgoing> batch=new ArrayList<>();for(Outgoing o:outgoing)if(!o.sending)batch.add(o);
+        if(batch.isEmpty())return;busy=true;for(Outgoing o:batch)o.sending=true;if(composer!=null)composer.setEnabled(false);renderAttachments();
+        android.content.Context app=getApplicationContext();
+        photoPreparation.execute(()->{List<Outgoing> saved=new ArrayList<>();String problem="";MediaOutbox box=new MediaOutbox(app);
+            for(int i=0;i<batch.size();i++){Outgoing o=batch.get(i);try{
+                boolean fit=mms||o.small;String chosen=o.small?PhotoQuality.FAST:quality;PhotoPrep.Ready ready=(chosen+"|"+fit).equals(o.variant)?o.prepared:null;
+                if(ready!=null&&!ready.error.isEmpty())throw new java.io.IOException(ready.error);
+                box.enqueue(id,o.file,o.name,o.mime,i==0?caption:"",i==0?reply:"",chosen,fit,o.small,ready);saved.add(o);
+            }catch(Exception e){problem=e.getMessage()==null?"The attachment couldn't be saved. Check free space.":e.getMessage();break;}}
+            String error=problem;ui.post(()->{busy=false;for(Outgoing o:batch)o.sending=false;outgoing.removeAll(saved);
+                if(composer!=null)composer.setEnabled(true);
+                if(!saved.isEmpty()){drafts.remove(id);repliedSinceInbox=true;if(screen.equals("chat")&&chatId.equals(id)){if(composer!=null)composer.setText("");cancelReply();}}
+                if(screen.equals("chat")){renderAttachments();renderMessages(true);}if(!error.isEmpty())toast(error);
+                if(!saved.isEmpty())PairedService.flushAttachments(app);
+            });
+        });
+    }
+    private void refreshSavedAttachments(){
+        MediaOutbox box=new MediaOutbox(this);List<JSONObject> jobs=box.all();Set<String> present=new HashSet<>();
+        for(JSONObject j:jobs){String id=j.optString("id");present.add(id);PendingMedia p=null;for(PendingMedia old:pendingMedia)if(id.equals(old.queueId)){p=old;break;}
+            if(p==null){p=new PendingMedia(j.optString("chat"),new Outgoing(new File(j.optString("file")),j.optString("name"),j.optString("mime")),j.optString("caption"),j.optString("reply"),j.optLong("created"));p.queueId=id;pendingMedia.add(p);thumbFor(p);}
+            p.job=j;p.echo=j.optString("mediaEcho");p.tmp=j.optString("mediaTmpID");p.sent=p.tmp.isEmpty()?0:j.optLong("created");p.captionHandled=!j.optString("captionState").equals("pending");
+            String state=j.optString("state");p.error=state.equals(MediaOutbox.FAILED)||state.equals(MediaOutbox.UNSURE)?j.optString("error"):"";
+        }
+        pendingMedia.removeIf(p->!p.queueId.isEmpty()&&!present.contains(p.queueId));
+    }
+    private void renderSavedAttachment(PendingMedia p,ChatTheme theme){JSONObject j=p.job;if(j==null)return;JSONObject echo=p.echo.isEmpty()?null:store.message(p.echo);
+        boolean actual=echo!=null&&!PairedProtocol.media(echo).isEmpty();
+        if(!actual){gap(items,8);items.addView(pendingThumb(p,theme),new LinearLayout.LayoutParams(-1,-2));TextView status=text(MediaOutbox.label(j,PairedService.ready()),12,p.error.isEmpty()?muted:danger,false);
+            status.setGravity(Gravity.END);status.setPadding(dp(8),dp(3),dp(8),dp(6));status.setOnClickListener(v->savedAttachmentOptions(p,false));items.addView(status,new LinearLayout.LayoutParams(-1,-2));p.status=status;}
+        JSONObject textEcho=store.message(j.optString("captionEcho"));
+        if(!p.caption.isEmpty()&&(textEcho==null||PairedProtocol.text(textEcho).isEmpty())){
+            LinearLayout line=row();line.setGravity(Gravity.END);TextView body=text(p.caption,17,theme.onBubble(dark),false);body.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));body.setPadding(dp(16),dp(11),dp(16),dp(11));body.setBackground(shape(theme.bubble(dark),22));body.setAlpha(0.75f);line.addView(body);items.addView(line);
+            TextView state=text(MediaOutbox.captionLabel(j),12,muted,false);state.setGravity(Gravity.END);state.setPadding(dp(8),dp(3),dp(8),dp(6));items.addView(state,new LinearLayout.LayoutParams(-1,-2));
+            body.setOnClickListener(v->savedAttachmentOptions(p,true));state.setOnClickListener(v->savedAttachmentOptions(p,true));}
+    }
+    private void savedAttachmentOptions(PendingMedia p,boolean text){MediaOutbox box=new MediaOutbox(this);JSONObject j=box.get(p.queueId);if(j==null)return;
+        String state=j.optString(text?"captionState":"state"),problem=j.optString(text?"captionError":"error"),label=text?MediaOutbox.captionLabel(j):MediaOutbox.label(j,PairedService.ready());
+        boolean canRetry=state.equals(MediaOutbox.FAILED)||state.equals(MediaOutbox.UNSURE),canRemove=canRetry||state.equals(MediaOutbox.WAITING)||state.equals(MediaOutbox.SENT)||state.equals(MediaOutbox.DELIVERED);
+        String explanation=problem.isEmpty()?label:problem;if(state.equals(MediaOutbox.UNSURE))explanation+="\n\nIt may already have been sent. Check Google Messages before choosing to send again.";
+        AlertDialog.Builder dialog=new AlertDialog.Builder(this).setTitle(text?"Text with attachment":"Saved attachment").setMessage(explanation).setNegativeButton("Close",null);
+        if(canRetry)dialog.setPositiveButton(text?"Retry text only":"Retry attachment only",(d,w)->{JSONObject current=box.get(p.queueId);if(current==null)return;
+            String now=current.optString(text?"captionState":"state");if(!now.equals(MediaOutbox.FAILED)&&!now.equals(MediaOutbox.UNSURE)){toast("This send is already running.");return;}
+            box.retry(p.queueId,text);PairedService.flushAttachments(this);renderMessages(false);});
+        if(canRemove)dialog.setNeutralButton("Remove saved copy",(d,w)->{JSONObject current=box.get(p.queueId);if(current==null)return;String now=current.optString("state");
+            if(now.equals(MediaOutbox.PREPARING)||now.equals(MediaOutbox.UPLOADING)||now.equals(MediaOutbox.SUBMITTING)||current.optString("captionState").equals(MediaOutbox.SUBMITTING)){toast("This send is still running.");return;}
+            new AlertDialog.Builder(this).setMessage("Remove this attachment and its pending text from the local queue? Messages already submitted to Google Messages are retained there.").setNegativeButton("Keep",null).setPositiveButton("Remove",(a,b)->{box.remove(p.queueId);renderMessages(false);}).show();});
+        else dialog.setNeutralButton("Google Messages",(d,w)->openGoogle());dialog.show();
+    }
     // ---- Attachments on their way: shown at the bottom of the chat until Google shows the real message ----
     /** echo: Google's copy of this photo; tmp links its submission separately from the accompanying text. */
     /** prep: how far along a video is being compressed (0-100), or -1. status: its label while it's on screen. */
-    private static final class PendingMedia{final String chat,caption,reply;final Outgoing item;final long started;long sent;String error="",replaces="",echo="",tmp="";boolean small,captionHandled;Bitmap thumb;int prep=-1;TextView status;
+    private static final class PendingMedia{final String chat,caption,reply;final Outgoing item;final long started;long sent;String error="",replaces="",echo="",tmp="",queueId="";JSONObject job;boolean small,captionHandled;Bitmap thumb;int prep=-1;TextView status;
         PendingMedia(String chat,Outgoing item,String caption,String reply,long started){this.chat=chat;this.item=item;this.caption=caption;this.reply=reply;this.started=started;}}
     private final List<PendingMedia> pendingMedia=new ArrayList<>();
     private void thumbFor(PendingMedia p){Outgoing o=p.item;boolean visual=o.mime.startsWith("image/")||o.mime.startsWith("video/");if(!visual)return;
@@ -1762,7 +1810,7 @@ public class PairedActivity extends Activity {
      */
     private void settlePendingMedia(JSONObject c){if(pendingMedia.isEmpty())return;List<JSONObject> recent=store.messages(chatId,40);Set<String> claimed=new HashSet<>();
         for(PendingMedia p:pendingMedia)if(p.chat.equals(chatId)&&!p.echo.isEmpty())claimed.add(p.echo);
-        for(java.util.Iterator<PendingMedia> it=pendingMedia.iterator();it.hasNext();){PendingMedia p=it.next();if(!p.chat.equals(chatId)||p.sent==0)continue;
+        for(java.util.Iterator<PendingMedia> it=pendingMedia.iterator();it.hasNext();){PendingMedia p=it.next();if(!p.queueId.isEmpty()||!p.chat.equals(chatId)||p.sent==0)continue;
             boolean done=false;
             if(p.echo.isEmpty()&&!p.tmp.isEmpty())for(JSONObject m:recent){String mid=m.optString("messageID");
                 if(!claimed.contains(mid)&&PairedProtocol.outgoing(m,c)&&(p.tmp.equals(m.optString("tmpID"))||p.tmp.equals(mid))){p.echo=mid;claimed.add(mid);break;}}
@@ -1794,11 +1842,12 @@ public class PairedActivity extends Activity {
         box.setAlpha(p.error.isEmpty()?0.85f:0.6f);LinearLayout.LayoutParams bl=new LinearLayout.LayoutParams(w,h);bl.bottomMargin=dp(4);line.addView(box,bl);
         box.setOnClickListener(v->pendingOptions(p));return line;}
     /** Tap an attachment on its way: send it again, or remove it (only once it's failed or stuck). */
-    private void pendingOptions(PendingMedia p){JSONObject echo=p.echo.isEmpty()?null:store.message(p.echo);boolean failed=!p.error.isEmpty()||echo!=null&&PairedProtocol.failed(echo);
+    private void pendingOptions(PendingMedia p){if(!p.queueId.isEmpty()){savedAttachmentOptions(p,false);return;}JSONObject echo=p.echo.isEmpty()?null:store.message(p.echo);boolean failed=!p.error.isEmpty()||echo!=null&&PairedProtocol.failed(echo);
         boolean stuck=p.sent>0&&p.echo.isEmpty()&&System.currentTimeMillis()-p.sent>180_000;if(!failed&&!stuck)return;
         new AlertDialog.Builder(this).setMessage(!p.error.isEmpty()?p.error:failed?whyNotSent(echo):"Your phone hasn't picked this up. You can send it again.")
             .setPositiveButton("Send again",(d,x)->retryPending(p)).setNegativeButton("Remove",(d,x)->{pendingMedia.remove(p);p.item.file.delete();renderMessages(false);}).setNeutralButton("Cancel",null).show();}
     private void renderPendingMedia(ChatTheme theme){for(PendingMedia p:pendingMedia){if(!p.chat.equals(chatId))continue;
+        if(!p.queueId.isEmpty()){renderSavedAttachment(p,theme);continue;}
         // Shown inside Google's copy of it instead (see bubbleBody).
         JSONObject echo=p.echo.isEmpty()?null:store.message(p.echo);if(echo!=null&&!PairedProtocol.body(echo).isEmpty())continue;gap(items,8);
         View line=pendingThumb(p,theme);items.addView(line,new LinearLayout.LayoutParams(-1,-2));int fg=theme.onBubble(dark);
@@ -1816,7 +1865,7 @@ public class PairedActivity extends Activity {
     private final Set<PendingMedia> motionPending=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
     private void retryPending(PendingMedia p){if(!PairedService.ready()){toast("Connect to Google Messages first.");return;}JSONObject c=store.chat(p.chat);if(c==null)return;
         if(!p.item.file.isFile()){toast("That attachment is no longer on this phone. Send it again with +.");pendingMedia.remove(p);renderMessages(false);return;}
-        if(!p.echo.isEmpty())p.replaces=p.echo;p.echo="";p.tmp="";p.error="";p.sent=0;renderMessages(false);List<PendingMedia> one=new ArrayList<>();one.add(p);sendNext(c,one,0);}
+        pendingMedia.remove(p);p.item.sending=false;p.item.small=p.small;outgoing.add(p.item);sendAttachments(c,p.captionHandled?"":p.caption,p.reply);}
     // ---- 0.7: swipes, jump to latest, codes, jumbo emoji, details, starred, media, search, scheduling ----
     private Starred starred;private TextView jumpButton;private int newWhileAway;private long newestSeenTime;
     private String searchedFor="";private List<JSONObject> searchHits=new ArrayList<>();private int searchGeneration;
@@ -1895,7 +1944,7 @@ public class PairedActivity extends Activity {
         LinearLayout r=vertical();r.setPadding(dp(12),dp(12),dp(12),dp(12));pressable(r);
         String who=PairedProtocol.outgoing(m,c)?"You":senderFirst(m,c);
         r.addView(text((showChat&&c!=null?PairedProtocol.title(c)+" • ":"")+who+" • "+separatorStamp(PairedProtocol.time(m)),12,muted,false));
-        TextView t=text(displayBody(m),15,ink,false);t.setMaxLines(3);t.setEllipsize(TextUtils.TruncateAt.END);r.addView(t);
+        TextView t=text(m.has("_photoText")?"Text in picture: "+m.optString("_photoText"):displayBody(m),15,ink,false);t.setMaxLines(3);t.setEllipsize(TextUtils.TruncateAt.END);r.addView(t);
         r.setOnClickListener(v->openMessage(m));return r;}
     private void openMessage(JSONObject m){String chatID=m.optString("conversationID");if(store.chat(chatID)==null){toast("That conversation isn't synced here.");return;}
         thread(chatID);if(store.message(m.optString("messageID"))==null){toast("That message isn't in the synced history.");return;}ui.post(()->showMessage(m));}
@@ -2001,6 +2050,7 @@ public class PairedActivity extends Activity {
     /** Words plus filters: from:name, has:photo, has:link, last:7d. */
     private List<JSONObject> searchMessages(SmartText.Search f,int max){long since=f.days>0?System.currentTimeMillis()-f.days*86_400_000L:0;
         List<JSONObject> candidates=f.text.trim().length()>=2?store.searchAll(f.text,2000):store.recent(4000,since);List<JSONObject> out=new ArrayList<>();
+        if(f.text.trim().length()>=2)candidates=withPictureHits(candidates,f.text,"",2000);
         Map<String,JSONObject> chats=new HashMap<>();String from=f.from.toLowerCase(Locale.ROOT);
         for(JSONObject m:candidates){if(out.size()>=max)break;if(since>0&&PairedProtocol.time(m)<since)continue;
             if(f.photo){boolean pic=false;for(JSONObject a:PairedProtocol.media(m)){String k=PairedProtocol.mediaKind(a);if(k.equals("image")||k.equals("video"))pic=true;}if(!pic)continue;}
@@ -2008,6 +2058,7 @@ public class PairedActivity extends Activity {
             if(!from.isEmpty()){String cid=m.optString("conversationID");JSONObject c=chats.computeIfAbsent(cid,store::chat);
                 String who=PairedProtocol.outgoing(m,c)?"you":senderName(m,c).toLowerCase(Locale.ROOT);String chatName=c==null?"":PairedProtocol.title(c).toLowerCase(Locale.ROOT);
                 if(!who.contains(from)&&!chatName.contains(from))continue;}
+            if(needsReplyOnly){JSONObject conversation=chats.computeIfAbsent(m.optString("conversationID"),store::chat);if(conversation==null||!needsReply(conversation))continue;}
             out.add(m);}
         return out;}
     private void pickFromFilter(EditText search){List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
@@ -2167,7 +2218,7 @@ public class PairedActivity extends Activity {
         for(Outgoing o:incoming)o.file.delete();incoming.clear();incoming.addAll(files);incomingText=body.isEmpty()?null:body;forwardingNow=true;
         if(missing>0)toast(missing==1?"One attachment isn't downloaded yet and was left out.":missing+" attachments aren't downloaded yet and were left out.");
         if(selecting)stopSelecting();if(bubble()){startActivity(new Intent(this,PairedActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));return;}
-        folder=1;unknownOnly=false;promoOnly=false;inbox();}
+        folder=1;unknownOnly=false;promoOnly=false;needsReplyOnly=false;inbox();}
     private Outgoing copyFile(File source,String name,String mime) throws Exception{if(name==null||name.isEmpty())name="attachment";if(mime==null||mime.isEmpty())mime="application/octet-stream";
         File dir=new File(getCacheDir(),"outgoing");if(!dir.isDirectory())dir.mkdirs();File target=new File(dir,java.util.UUID.randomUUID()+"-"+name.replaceAll("[^A-Za-z0-9._-]","_"));
         java.nio.file.Files.copy(source.toPath(),target.toPath());return new Outgoing(target,name,mime);}
@@ -2455,7 +2506,7 @@ public class PairedActivity extends Activity {
                             java.nio.file.Files.copy(file.toPath(),copy.toPath());String mime=PairedProtocol.string(part,"mimeType");
                             PendingMedia p=new PendingMedia(id,new Outgoing(copy,name,mime.isEmpty()?"application/octet-stream":mime),at==0?caption:"","",now);p.small=tooBig;if(at==0)p.replaces=m.optString("messageID");
                             sends.add(p);pendingMedia.add(p);thumbFor(p);}catch(Exception e){error("That attachment couldn't be read to send again.");}
-                        if(--left[0]==0&&!sends.isEmpty()){renderMessages(true);sendNext(c,sends,0);}});}})
+                        if(--left[0]==0&&!sends.isEmpty()){for(PendingMedia p:sends){pendingMedia.remove(p);p.item.small=p.small;outgoing.add(p.item);}renderAttachments();sendAttachments(c,caption,"");}});}})
             .setNegativeButton("Cancel",null).show();}
 
     /** What this chat's notifications show, apart from the setting for all chats: e.g. just "New message" for one chat. */
@@ -2583,21 +2634,34 @@ public class PairedActivity extends Activity {
     // Search inside a chat
     private void searchChat(){LinearLayout content=vertical();EditText q=input("Search this conversation");q.setSingleLine(true);content.addView(q);gap(content,8);
         LinearLayout results=vertical();ScrollView rs=new ScrollView(this);rs.addView(results);content.addView(rs,new LinearLayout.LayoutParams(-1,Math.round(getResources().getDisplayMetrics().heightPixels*0.45f)));
-        TextView hint=text("Searches messages synced to this phone. Use ⋮ → Load older messages to include more.",13,muted,false);results.addView(hint);
+        TextView hint=text("Searches synced messages and indexed text in downloaded pictures. Use ⋮ → Load older messages to include more history.",13,muted,false);results.addView(hint);
         Dialog d=sheet(content);String id=chatId;JSONObject c=store.chat(id);int[] generation={0};
         q.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int cc,int a){}public void afterTextChanged(Editable e){}
             public void onTextChanged(CharSequence s,int st,int b,int cc){String query=s.toString();int g=++generation[0];
-                decoder.execute(()->{List<JSONObject> found=query.trim().length()<2?new ArrayList<>():store.search(id,query,60);ui.post(()->{if(g!=generation[0])return;results.removeAllViews();
+                decoder.execute(()->{List<JSONObject> found=query.trim().length()<2?new ArrayList<>():withPictureHits(store.search(id,query,60),query,id,60);ui.post(()->{if(g!=generation[0])return;results.removeAllViews();
                     if(query.trim().length()<2){results.addView(hint);return;}if(found.isEmpty()){results.addView(text("No matches in synced messages",14,muted,false));return;}
                     for(JSONObject m:found){LinearLayout r=vertical();r.setPadding(dp(4),dp(10),dp(4),dp(10));pressable(r);
                         r.addView(text((PairedProtocol.outgoing(m,c)?"You":senderName(m,c))+" • "+separatorStamp(PairedProtocol.time(m)),12,muted,false));
-                        TextView t=text(PairedProtocol.text(m),15,ink,false);t.setMaxLines(3);t.setEllipsize(TextUtils.TruncateAt.END);r.addView(t);
+                        TextView t=text(m.has("_photoText")?"Text in picture: "+m.optString("_photoText"):PairedProtocol.text(m),15,ink,false);t.setMaxLines(3);t.setEllipsize(TextUtils.TruncateAt.END);r.addView(t);
                         r.setOnClickListener(v->{d.dismiss();showMessage(m);});results.addView(r);}});});}});
         q.requestFocus();}
     private void showMessage(JSONObject m){if(!screen.equals("chat"))return;int needed=store.countSince(chatId,PairedProtocol.time(m));if(needed>limit)limit=needed+20;
         renderMessages(false);String mid=m.optString("messageID");scroll.postDelayed(()->jumpTo(mid),150);}
 
     // Voice messages
+    private List<JSONObject> withPictureHits(List<JSONObject> messages,String words,String chat,int max){
+        List<JSONObject> out=new ArrayList<>(messages);Set<String> seen=new HashSet<>();for(JSONObject m:out)seen.add(m.optString("messageID"));
+        for(JSONObject m:PhotoText.matches(this,store,words,chat,max))if(seen.add(m.optString("messageID")))out.add(m);
+        out.sort((a,b)->Long.compare(PairedProtocol.time(b),PairedProtocol.time(a)));return out.size()>max?new ArrayList<>(out.subList(0,max)):out;
+    }
+    private void readPhotoText(JSONObject media){withFile(media,"Getting the photo…",file->{toast("Recognizing text on this phone…");PhotoText.scan(this,media,file,true,(recognized,error)->{
+        if(isFinishing()||isDestroyed())return;String shown=!error.isEmpty()?error:recognized.trim().isEmpty()?"No clear Latin-script text was found in this picture.":recognized;
+        TextView result=text(shown,16,ink,false);result.setTextIsSelectable(true);result.setPadding(dp(18),dp(12),dp(18),dp(12));ScrollView scroll=new ScrollView(this);scroll.addView(result);
+        AlertDialog.Builder dialog=new AlertDialog.Builder(this).setTitle("Text in picture").setView(scroll).setNegativeButton("Close",null);
+        if(error.isEmpty()&&!recognized.trim().isEmpty())dialog.setPositiveButton("Copy text",(d,w)->{getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Picture text",recognized));toast("Picture text copied");});dialog.show();});});}
+    private void savedAttachments(){List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
+        for(JSONObject j:new MediaOutbox(this).all()){JSONObject c=store.chat(j.optString("chat"));labels.add((c==null?"Conversation":PairedProtocol.title(c))+" • "+MediaOutbox.label(j,PairedService.ready()));String id=j.optString("chat");actions.add(()->thread(id));}
+        if(labels.isEmpty()){toast("No saved attachments are waiting.");return;}menuSheet("Saved attachments",labels,actions);}
     private void updateComposeButton(){if(sendButton==null||composer==null)return;
         if(dictation!=null){sendButton.setImageResource(R.drawable.ic_stop);sendButton.setContentDescription("Stop dictating");return;}
         boolean mic=micShowing();sendButton.setImageResource(mic?R.drawable.ic_mic:R.drawable.ic_send);sendButton.setContentDescription(mic?"Dictate a message. Press and hold to record a voice message.":"Send");}
@@ -2838,6 +2902,11 @@ public class PairedActivity extends Activity {
         android.content.SharedPreferences prefs=getSharedPreferences("paired",MODE_PRIVATE);
 
         LinearLayout chats=settingsGroup(content,"Chats");
+        settingRow(chats,"Photo quality","Photos prepare on this phone while you type",PhotoQuality.label(photoQuality()),this::choosePhotoQuality);
+        settingRow(chats,"Saved attachments","Queued photos and videos survive closing the app; unconfirmed sends wait for review",String.valueOf(new MediaOutbox(this).all().size()),this::savedAttachments);
+        settingSwitch(chats,"Search text in pictures","On-device recognition of Latin-script text in downloaded photos",PhotoText.enabled(this),on->{prefs.edit().putBoolean("photo_text",on).apply();if(on)PhotoText.indexDownloaded(this,true);else PhotoText.clear(this);searchedFor="";});
+        int indexed;try(PhotoText index=new PhotoText(this)){indexed=index.count();}
+        settingRow(chats,"Scan downloaded pictures","Includes older pictures already downloaded here; does not download remote photos",indexed+" indexed",()->{PhotoText.indexDownloaded(this,true);toast("Indexing downloaded pictures. Search results update as they finish.");});
         settingSwitch(chats,"Typing indicators","Let others see when you're typing",prefs.getBoolean("send_typing",true),on->prefs.edit().putBoolean("send_typing",on).apply());
         settingSwitch(chats,"Undo send","5 seconds to take a message back",undoSendOn(),on->prefs.edit().putBoolean("undo_send",on).apply());
         settingRow(chats,"Quick replies","Saved phrases above the message box",quickRepliesOn()?quickReplies().size()+" saved":"Off",this::editQuickReplies);

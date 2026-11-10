@@ -24,8 +24,9 @@ final class PhotoPrep {
     static final long RCS_BYTES = 2_500_000, MMS_BYTES = 950_000;
 
     static final class Ready {
-        final File file; final String name, mime;
-        Ready(File file, String name, String mime) { this.file = file; this.name = name; this.mime = mime; }
+        final File file; final String name, mime,error;
+        Ready(File file,String name,String mime){this(file,name,mime,"");}
+        Ready(File file,String name,String mime,String error){this.file=file;this.name=name;this.mime=mime;this.error=error;}
     }
 
     /** The size to scale (w × h) to so its long edge is at most edge; the same size if it already fits. */
@@ -38,14 +39,20 @@ final class PhotoPrep {
 
     /** Whether a photo needs work before sending, from its type, pixel size and file size. */
     static boolean needsWork(String mime, int w, int h, long bytes, boolean mms) {
+        return needsWork(mime,w,h,bytes,mms,PhotoQuality.STANDARD);
+    }
+    static boolean needsWork(String mime,int w,int h,long bytes,boolean mms,String quality) {
         String m = mime.toLowerCase(Locale.ROOT);
         if (!m.startsWith("image/") || m.equals("image/gif")) return false;
         boolean plain = m.equals("image/jpeg") || m.equals("image/jpg") || m.equals("image/png");
-        return !plain || Math.max(w, h) > (mms ? MMS_EDGE : RCS_EDGE) || bytes > (mms ? MMS_BYTES : RCS_BYTES);
+        return !plain || Math.max(w,h)>PhotoQuality.edge(quality,mms) || bytes>PhotoQuality.bytes(quality,mms);
     }
 
     /** The photo to send (a new file next to the original if it was changed). Call off the main thread. */
     static Ready prepare(File in, String name, String mime, boolean mms) {
+        return prepare(in,name,mime,mms,PhotoQuality.STANDARD);
+    }
+    static Ready prepare(File in,String name,String mime,boolean mms,String quality) {
         String m = mime == null ? "" : mime.toLowerCase(Locale.ROOT);
         if (!m.startsWith("image/") || m.equals("image/gif")) return new Ready(in, name, mime);
         try {
@@ -55,10 +62,10 @@ final class PhotoPrep {
                 size[0] = info.getSize().getWidth(); size[1] = info.getSize().getHeight();
                 decoder.setTargetSize(1, 1); // only the size is wanted here
             });
-            if (!needsWork(m, size[0], size[1], in.length(), mms)) return new Ready(in, name, mime);
-            int edge = mms ? MMS_EDGE : RCS_EDGE;
+            if (!needsWork(m,size[0],size[1],in.length(),mms,quality)) return new Ready(in,name,mime);
+            int edge = Math.min(8192,PhotoQuality.edge(quality,mms));
             String base = name.replaceAll("\\.[A-Za-z0-9]+$", "");
-            File out = new File(in.getParentFile(), in.getName().replaceAll("\\.[A-Za-z0-9]+$", "") + "-send.jpg");
+            File out = new File(in.getParentFile(), in.getName().replaceAll("\\.[A-Za-z0-9]+$", "") + "-send-"+PhotoQuality.normalize(quality)+(mms?"-mms":"")+".jpg");
             for (int attempt = 0; attempt < 4; attempt++) {
                 int[] target = fit(size[0], size[1], edge);
                 Bitmap bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(in), (decoder, info, src) -> {
@@ -71,17 +78,17 @@ final class PhotoPrep {
                     Canvas c = new Canvas(flat); c.drawColor(Color.WHITE); c.drawBitmap(bitmap, 0, 0, null);
                     bitmap.recycle(); bitmap = flat;
                 }
-                for (int quality = 88; quality >= (mms ? 50 : 80); quality -= 8) {
-                    try (FileOutputStream os = new FileOutputStream(out)) { bitmap.compress(Bitmap.CompressFormat.JPEG, quality, os); }
-                    if (!mms || out.length() <= MMS_BYTES) { bitmap.recycle(); return new Ready(out, base + ".jpg", "image/jpeg"); }
+                for (int jpeg = PhotoQuality.jpeg(quality); jpeg >= (mms ? 48 : PhotoQuality.FULL.equals(quality)?95:64); jpeg -= 8) {
+                    try (FileOutputStream os = new FileOutputStream(out)) { bitmap.compress(Bitmap.CompressFormat.JPEG,jpeg,os); }
+                    if (out.length() <= PhotoQuality.bytes(quality,mms)) { bitmap.recycle(); return new Ready(out,base+".jpg","image/jpeg"); }
                 }
                 bitmap.recycle();
                 edge = Math.round(edge * 0.75f); // still too big for MMS: smaller again
             }
-            return new Ready(out, base + ".jpg", "image/jpeg");
+            return new Ready(out,base+".jpg","image/jpeg",out.length()>PhotoQuality.bytes(quality,mms)?"The photo couldn't be made small enough at this quality.":"");
         } catch (Exception | OutOfMemoryError e) {
             Diagnostics.note("Photo couldn't be prepared for sending: " + e.getClass().getSimpleName());
-            return new Ready(in, name, mime);
+            return new Ready(in,name,mime,"This photo couldn't be prepared. Try another quality or choose it again.");
         }
     }
 

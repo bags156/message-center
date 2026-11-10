@@ -10,6 +10,10 @@ import org.json.JSONObject;
  * so a pin changed here overrides Google's pin state only inside this app.
  */
 final class ChatSettings {
+    long replyDismissed(String id){return prefs.getLong("reply-done:"+id,0);}
+    long replySnoozed(String id){return prefs.getLong("reply-later:"+id,0);}
+    void dismissReply(String id,long time){prefs.edit().putLong("reply-done:"+id,time).remove("reply-later:"+id).apply();}
+    void snoozeReply(String id,long time){prefs.edit().putLong("reply-later:"+id,time).apply();}
     private final SharedPreferences prefs;
     ChatSettings(Context context) { prefs = context.getSharedPreferences("chat-settings", Context.MODE_PRIVATE); }
 

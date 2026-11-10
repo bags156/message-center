@@ -1,10 +1,10 @@
-Message Center 1.4.21.
+Message Center 1.5.0.
 
-**Photo with text sending slowly**
-- A photo and the text written with it now send as two separate messages: photo first, then text. This avoids a mixed media/text request that can leave Google Messages sending for minutes or deliver only the text.
-- The same change applies to videos and other attachments with text. Photo-only sends and photo/video preparation are unchanged.
-- If the photo is accepted but the separate text fails, the text is saved with its own status. Retrying it sends only the text, never another copy of the photo. If its outcome is uncertain, check Google Messages before choosing to retry; the app does not automatically resend it.
+- Clear attachment stages: preparing, uploading, submitting, waiting for the phone, sent and delivered. Upload phases are real boundaries; percentages are shown only for measured video preparation.
+- A durable photo/video/file outbox in private app files. Queued work resumes with the saved connection after an app or phone restart. Interrupted submissions whose outcome is uncertain wait for your review. Text and media retries are separate, to avoid duplicates.
+- Fast, Standard and Full photo quality, with the prepared size shown before sending. MMS still has its smaller size limit; unsupported formats may need conversion even at Full quality.
+- Photos prepare locally after selection, while you type. Nothing is uploaded until you send.
+- A Needs a reply inbox for synced conversations, independent of read/unread. Sent replies clear it; long-press a chat to mark it handled or show it later.
+- On-device picture text search using a bundled Latin-script recognition model. New downloaded pictures are indexed automatically. Settings → Scan downloaded pictures includes older cached photos. Inbox and chat searches include the extracted text; long-press a photo message to read/copy its text. Remote pictures are not downloaded solely for indexing.
 
-Regression tests cover separate requests, order, photo-only sends, partial failures and duplicate prevention. Android device checks cover saving and retrying the text separately. These checks use synthetic data; actual delivery speed still needs confirmation on a paired phone.
-
-Install over the existing app; the package and signing key are unchanged. No re-pairing is needed for this change.
+Install over the existing app. The package and signing key are unchanged; re-pairing is not required. An actual paired-phone test is still needed for delivery speed, reboot/background behavior and remote read receipts.

@@ -306,6 +306,11 @@ func (c *Client) SendText(chatJSON, text, replyID string) (string, error) {
 // mautrix/gmessages#95). The JSON result distinguishes a text failure after the
 // media was accepted, so the caller never retries the already-submitted photo.
 func (c *Client) SendMedia(chatJSON, path, fileName, mime, caption, replyID string) (string, error) {
+	return c.SendMediaTracked(chatJSON, path, fileName, mime, caption, replyID, "")
+}
+
+// SendMediaTracked reports real phase boundaries, not simulated upload percentages.
+func (c *Client) SendMediaTracked(chatJSON, path, fileName, mime, caption, replyID, job string) (string, error) {
 	data, e := os.ReadFile(path)
 	if e != nil {
 		return "", errors.New("The attachment could not be read.")
@@ -318,18 +323,36 @@ func (c *Client) SendMedia(chatJSON, path, fileName, mime, caption, replyID stri
 	}
 	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Minute)
 	defer cancel()
+	c.mediaProgress(job, "uploading", "")
 	media, e := c.gm.UploadMedia(ctx, data, fileName, mime)
 	if e != nil {
 		return "", errors.New("The attachment could not be uploaded. Check your connection and try again.")
 	}
 	result, e := sendMediaParts(media, caption, replyID, func(reply string, infos []*gmproto.MessageInfo) (string, error) {
-		return c.send(chatJSON, reply, infos)
+		image := len(infos) > 0 && infos[0].GetMediaContent() != nil
+		phase := "caption_submitting"
+		if image {
+			phase = "submitting"
+		}
+		tmp, err := c.sendTracked(chatJSON, reply, infos, func(id string) { c.mediaProgress(job, phase, id) })
+		if image && err == nil {
+			c.mediaProgress(job, "media_accepted", tmp)
+		}
+		return tmp, err
 	})
 	if e != nil {
 		return "", e
 	}
 	raw, e := json.Marshal(result)
 	return string(raw), e
+}
+
+func (c *Client) mediaProgress(job, phase, tmp string) {
+	if job == "" {
+		return
+	}
+	raw, _ := json.Marshal(map[string]string{"job": job, "phase": phase, "tmpID": tmp})
+	c.emit("MEDIA_PROGRESS", string(raw))
 }
 
 const maxUpload = 100 << 20
@@ -366,6 +389,9 @@ func sendMediaParts(media *gmproto.MediaContent, caption, replyID string, send f
 }
 
 func (c *Client) send(chatJSON, replyID string, infos []*gmproto.MessageInfo) (string, error) {
+	return c.sendTracked(chatJSON, replyID, infos, nil)
+}
+func (c *Client) sendTracked(chatJSON, replyID string, infos []*gmproto.MessageInfo, onSubmit func(string)) (string, error) {
 	conv, e := parseChat(chatJSON)
 	if e != nil {
 		return "", e
@@ -382,6 +408,9 @@ func (c *Client) send(chatJSON, replyID string, infos []*gmproto.MessageInfo) (s
 	}
 	ctx, cancel := c.requestContext()
 	defer cancel()
+	if onSubmit != nil {
+		onSubmit(tmp)
+	}
 	resp, e := c.gm.SendMessage(ctx, req)
 	if e != nil {
 		return "", errSendOutcomeUnknown

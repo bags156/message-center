@@ -24,3 +24,7 @@ modules) by The Android Open Source Project, licensed Apache-2.0: https://github
 Its dependencies (Guava, Kotlin standard library and coroutines, AndroidX annotation, core,
 collection, concurrent-futures and exifinterface) are licensed Apache-2.0; JSpecify, Checker
 Framework qualifiers and Error Prone annotations use Apache-2.0 or MIT.
+
+Picture text recognition uses Google's ML Kit Text Recognition 16.0.1 SDK and its
+bundled Latin-script model. SDK terms and notices: https://developers.google.com/ml-kit/terms
+The recognition runs on the device; the model is packaged in the APK.

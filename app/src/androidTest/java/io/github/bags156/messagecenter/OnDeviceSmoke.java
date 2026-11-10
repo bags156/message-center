@@ -228,10 +228,38 @@ public final class OnDeviceSmoke extends Instrumentation {
         PhotoPrep.Ready rcs=PhotoPrep.prepare(big,"IMG_1234.JPG","image/jpeg",false);o=new android.graphics.BitmapFactory.Options();o.inJustDecodeBounds=true;android.graphics.BitmapFactory.decodeFile(rcs.file.getPath(),o);
         check(Math.max(o.outWidth,o.outHeight)<=PhotoPrep.RCS_EDGE,"The photo for RCS is "+o.outWidth+"×"+o.outHeight);
         if(rcs.file!=big)rcs.file.delete();
+        PhotoPrep.Ready fast=PhotoPrep.prepare(big,"IMG_1234.JPG","image/jpeg",false,PhotoQuality.FAST);o=new android.graphics.BitmapFactory.Options();o.inJustDecodeBounds=true;android.graphics.BitmapFactory.decodeFile(fast.file.getPath(),o);
+        check(Math.max(o.outWidth,o.outHeight)<=1280&&fast.file.length()<=PhotoQuality.bytes(PhotoQuality.FAST,false),"Fast quality isn't a smaller, sendable picture");if(fast.file!=big)fast.file.delete();
+        check(PhotoPrep.prepare(big,"IMG_1234.JPG","image/jpeg",false,PhotoQuality.FULL).file.equals(big),"Full quality replaced a supported original unnecessarily");
         java.io.File small=new java.io.File(dir,"smoke-small.jpg");
         {android.graphics.Bitmap bm=android.graphics.Bitmap.createBitmap(800,600,android.graphics.Bitmap.Config.ARGB_8888);bm.eraseColor(0xff336699);try(java.io.FileOutputStream fo=new java.io.FileOutputStream(small)){bm.compress(android.graphics.Bitmap.CompressFormat.JPEG,90,fo);}}
         check(PhotoPrep.prepare(small,"small.jpg","image/jpeg",true).file==small,"A small photo was re-encoded for no reason");
         big.delete();small.delete();}
+    /** Real offline OCR, persistent search results, and follow-ups independent of read/unread. */
+    private void checkPictureTextAndFollowUps()throws Exception{
+        android.content.Context c=getTargetContext();PhotoText.clear(c);c.getSharedPreferences("paired",0).edit().putBoolean("photo_text",true).commit();
+        JSONObject chat=new JSONObject("{conversationID:'picture-search',type:'RCS',participants:[{ID:{participantID:'me'},isMe:true},{ID:{participantID:'other'}}]}");
+        JSONObject message=new JSONObject("{messageID:'ocr-message',conversationID:'picture-search',participantID:'other',timestamp:1800000000000000,messageStatus:{status:'INCOMING_DISPLAYED'},messageInfo:[{mediaContent:{mediaID:'ocr-fixture',mimeType:'image/png',size:10000}}]}");
+        JSONObject media=PairedProtocol.media(message).get(0);java.io.File image=MediaCache.file(c,media,false);
+        android.graphics.Bitmap bitmap=android.graphics.Bitmap.createBitmap(1200,400,android.graphics.Bitmap.Config.ARGB_8888);android.graphics.Canvas canvas=new android.graphics.Canvas(bitmap);canvas.drawColor(android.graphics.Color.WHITE);
+        android.graphics.Paint paint=new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);paint.setColor(android.graphics.Color.BLACK);paint.setTextSize(76);paint.setTypeface(android.graphics.Typeface.create(android.graphics.Typeface.SANS_SERIF,android.graphics.Typeface.BOLD));
+        canvas.drawText("RIVER PARK",55,135,paint);canvas.drawText("Reservation 8246",55,265,paint);
+        try(java.io.FileOutputStream out=new java.io.FileOutputStream(image)){bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}bitmap.recycle();
+        try(PairedStore store=new PairedStore(c)){store.chat(chat);store.message(message,0,true);}
+        java.util.concurrent.CountDownLatch scanned=new java.util.concurrent.CountDownLatch(1);String[] result={"",""};PhotoText.scan(c,media,image,true,(text,error)->{result[0]=text;result[1]=error;scanned.countDown();});
+        check(scanned.await(75,java.util.concurrent.TimeUnit.SECONDS),"Offline picture recognition timed out");
+        check(result[1].isEmpty()&&result[0].contains("8246")&&result[0].toUpperCase(java.util.Locale.ROOT).contains("RIVER"),"Offline picture text wasn't recognized: "+result[0]+" / "+result[1]);
+        try(PairedStore store=new PairedStore(c)){
+            java.util.List<JSONObject> hits=PhotoText.matches(c,store,"8246","",10);check(hits.size()==1&&hits.get(0).optString("messageID").equals("ocr-message"),"Indexed picture text isn't searchable after reopening");
+            ChatSettings settings=new ChatSettings(c);settings.markSeen("picture-search",PairedProtocol.time(message));
+            check(NeedsReply.pending(store.replyBoundary("picture-search",chat),chat,0,0,System.currentTimeMillis()),"Reading a message removed its reply follow-up");
+            settings.dismissReply("picture-search",PairedProtocol.time(message));check(!NeedsReply.pending(store.replyBoundary("picture-search",chat),chat,settings.replyDismissed("picture-search"),0,System.currentTimeMillis()),"Mark handled didn't dismiss the follow-up");
+            JSONObject sent=new JSONObject("{messageID:'answer',conversationID:'picture-search',participantID:'me',timestamp:1800000001000000,messageStatus:{status:'OUTGOING_COMPLETE'},messageInfo:[{messageContent:{content:'Synthetic answer'}}]}");store.message(sent,0,true);
+            check(!NeedsReply.pending(store.replyBoundary("picture-search",chat),chat,0,0,System.currentTimeMillis()),"A successfully sent answer didn't clear the follow-up");
+            store.deleteMessage("ocr-message");check(PhotoText.matches(c,store,"8246","",10).isEmpty(),"Deleted messages are still returned by picture search");store.deleteChat("picture-search");
+        }
+        image.delete();PhotoText.clear(c);
+    }
     /** A 2-second 1280×720 clip at 60 fps filmed sideways (rotation 90), with stereo sound and a little grain, like a phone's. */
     private java.io.File makeTestVideo(java.io.File out)throws Exception{
         int w=1280,h=720,frames=120;android.media.MediaCodec.BufferInfo info=new android.media.MediaCodec.BufferInfo();
@@ -393,6 +421,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         onMain(a,"inbox");}
     @Override public void onStart(){Bundle result=new Bundle();try {
         // Real JNI load on Android, not a mocked Java bridge.
+        new MediaOutbox(getTargetContext()).clear();PhotoText.clear(getTargetContext());
         Client client=Bridge.newClient("",(kind,payload)->{});
         check(!client.exportSession().isEmpty(),"JNI session serialization failed");client.close();
         SessionVault vault=new SessionVault(getTargetContext());
@@ -622,51 +651,37 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(linkShown,"The Links tab doesn't show the link that was sent");found.clear();
         bubble.getWindow().getDecorView().findViewsWithText(found,"Links, 1, selected",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);check(found.size()==1,"The Links tab isn't the one selected");found.clear();
         runOnMainSync(bubble::onBackPressed);waitForIdleSync();runOnMainSync(bubble::onBackPressed);waitForIdleSync();
-        // Sending a photo: it leaves the attachment strip at once and waits in the chat. Not signed in here, so it can't
-        // go, and says so with a way to try again (instead of sitting in the strip as "Sending…").
+        // A new attachment is saved outside cache even with no signed-in connection.
         java.io.File pic=new java.io.File(getTargetContext().getCacheDir(),"smoke-send.jpg");
         {android.graphics.Bitmap bm=android.graphics.Bitmap.createBitmap(64,48,android.graphics.Bitmap.Config.ARGB_8888);bm.eraseColor(0xff3366cc);
             try(java.io.FileOutputStream fo=new java.io.FileOutputStream(pic)){bm.compress(android.graphics.Bitmap.CompressFormat.JPEG,90,fo);}}
+        MediaOutbox savedMedia=new MediaOutbox(getTargetContext());savedMedia.clear();
         JSONObject smokeChat;try(PairedStore store=new PairedStore(getTargetContext())){smokeChat=store.chat("smoke");}
-        bubble.getWindow().getDecorView().findViewsWithText(found,"Not sent • Tap to retry",android.view.View.FIND_VIEWS_WITH_TEXT);int notSentBefore=found.size();found.clear();
         java.lang.reflect.Field stripF=PairedActivity.class.getDeclaredField("attachScroll"),pendingF=PairedActivity.class.getDeclaredField("pendingMedia");stripF.setAccessible(true);pendingF.setAccessible(true);
         runOnMainSync(()->{try{Class<?> oc=Class.forName(PairedActivity.class.getName()+"$Outgoing");java.lang.reflect.Constructor<?> k=oc.getDeclaredConstructor(java.io.File.class,String.class,String.class);k.setAccessible(true);
             java.lang.reflect.Field og=PairedActivity.class.getDeclaredField("outgoing");og.setAccessible(true);
             @SuppressWarnings("unchecked") java.util.List<Object> strip=(java.util.List<Object>)og.get(bubble);strip.add(k.newInstance(pic,"smoke-send.jpg","image/jpeg"));
-            java.lang.reflect.Method sa=PairedActivity.class.getDeclaredMethod("sendAttachments",JSONObject.class,String.class,String.class);sa.setAccessible(true);sa.invoke(bubble,smokeChat,"Look at this","");}
-            catch(Exception e){throw new RuntimeException(e);}});
-        waitForIdleSync();
-        boolean[] stripGone=new boolean[1];int[] waiting=new int[1];
-        runOnMainSync(()->{try{android.view.View strip=(android.view.View)stripF.get(bubble);stripGone[0]=strip==null||strip.getVisibility()!=android.view.View.VISIBLE;waiting[0]=((java.util.List<?>)pendingF.get(bubble)).size();}catch(Exception e){throw new RuntimeException(e);}});
-        check(stripGone[0],"The photo stayed in the attachment strip after tapping send");
-        check(waiting[0]==1,"The photo isn't waiting in the chat ("+waiting[0]+")");
-        bubble.getWindow().getDecorView().findViewsWithText(found,"Not sent • Tap to retry",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.size()==notSentBefore+1,"A photo that couldn't send doesn't say so in the chat");found.clear();
-        bubble.getWindow().getDecorView().findViewsWithText(found,"Look at this",android.view.View.FIND_VIEWS_WITH_TEXT);check(!found.isEmpty(),"The caption of a photo being sent isn't shown");found.clear();
-        // Media and text are submitted separately. A text echo must never claim the pending photo.
-        // The photo's own transaction links its placeholder; when its media arrives the local copy goes.
+            java.lang.reflect.Method ra=PairedActivity.class.getDeclaredMethod("renderAttachments");ra.setAccessible(true);ra.invoke(bubble);
+        }catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
+        found.clear();bubble.getWindow().getDecorView().findViewsWithText(found,"Photo quality: Standard",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);check(!found.isEmpty(),"Photo quality and prepared size are missing");found.clear();
+        runOnMainSync(()->{try{java.lang.reflect.Method sa=PairedActivity.class.getDeclaredMethod("sendAttachments",JSONObject.class,String.class,String.class);sa.setAccessible(true);sa.invoke(bubble,smokeChat,"Synthetic attachment text","");}catch(Exception e){throw new RuntimeException(e);}});
+        for(int wait=0;wait<80&&savedMedia.forChat("smoke").isEmpty();wait++){Thread.sleep(100);runOnMainSync(()->{});}waitForIdleSync();
+        java.util.List<JSONObject> persisted=new MediaOutbox(getTargetContext()).forChat("smoke");check(persisted.size()==1,"The attachment wasn't saved durably");JSONObject job=persisted.get(0);String jid=job.optString("id");
+        java.io.File durable=new java.io.File(job.optString("file"));check(durable.isFile()&&durable.getCanonicalPath().startsWith(getTargetContext().getFilesDir().getCanonicalPath()+"/"),"The queued attachment is still in evictable cache");
+        check(!pic.exists()&&MediaOutbox.WAITING.equals(job.optString("state")),"The offline attachment wasn't queued safely");
         java.lang.reflect.Method render=PairedActivity.class.getDeclaredMethod("renderMessages",boolean.class);render.setAccessible(true);
-        runOnMainSync(()->{try{Object p=((java.util.List<?>)pendingF.get(bubble)).get(0);Class<?> pc=p.getClass();
-            java.lang.reflect.Field err=pc.getDeclaredField("error"),sent=pc.getDeclaredField("sent"),tmp=pc.getDeclaredField("tmp"),handled=pc.getDeclaredField("captionHandled");
-            err.setAccessible(true);sent.setAccessible(true);tmp.setAccessible(true);handled.setAccessible(true);err.set(p,"");sent.set(p,System.currentTimeMillis());tmp.set(p,"photo-submission");handled.set(p,true);}catch(Exception e){throw new RuntimeException(e);}});
-        long nowUs=System.currentTimeMillis()*1000;
-        try(PairedStore store=new PairedStore(getTargetContext())){store.message(new JSONObject("{messageID:'echo-text',tmpID:'text-submission',conversationID:'smoke',participantID:'me',timestamp:"+nowUs+",messageStatus:{status:'OUTGOING_SENDING'},messageInfo:[{messageContent:{content:'Look at this'}}]}"),0,true);}
         runOnMainSync(()->{try{render.invoke(bubble,false);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
-        String[] echoOf=new String[1];int[] left=new int[1];
-        runOnMainSync(()->{try{java.util.List<?> l=(java.util.List<?>)pendingF.get(bubble);left[0]=l.size();if(!l.isEmpty()){java.lang.reflect.Field e=l.get(0).getClass().getDeclaredField("echo");e.setAccessible(true);echoOf[0]=(String)e.get(l.get(0));}}catch(Exception e){throw new RuntimeException(e);}});
-        check(left[0]==1&&"".equals(echoOf[0]),"The separate text claimed the pending photo ("+left[0]+", "+echoOf[0]+")");
-        try(PairedStore store=new PairedStore(getTargetContext())){store.message(new JSONObject("{messageID:'echo1',tmpID:'photo-submission',conversationID:'smoke',participantID:'me',timestamp:"+nowUs+",messageStatus:{status:'OUTGOING_SENDING'},messageInfo:[]}"),0,true);}
-        runOnMainSync(()->{try{render.invoke(bubble,false);java.util.List<?> l=(java.util.List<?>)pendingF.get(bubble);left[0]=l.size();if(!l.isEmpty()){
-            java.lang.reflect.Field e=l.get(0).getClass().getDeclaredField("echo");e.setAccessible(true);echoOf[0]=(String)e.get(l.get(0));}}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
-        check(left[0]==1&&"echo1".equals(echoOf[0]),"The photo wasn't linked to its own transaction ("+left[0]+", "+echoOf[0]+")");
-        bubble.getWindow().getDecorView().findViewsWithText(found,"Look at this",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.size()==1,"The caption shows "+found.size()+" times while the photo is on its way");found.clear();
-        bubble.getWindow().getDecorView().findViewsWithText(found,"waiting for it to go out",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.isEmpty(),"A second copy of the photo is still at the bottom");found.clear();
-        try(PairedStore store=new PairedStore(getTargetContext())){store.message(new JSONObject("{messageID:'echo1',tmpID:'photo-submission',conversationID:'smoke',participantID:'me',timestamp:"+nowUs+",messageStatus:{status:'OUTGOING_DELIVERED'},messageInfo:[{mediaContent:{mediaID:'echo1-photo',mimeType:'image/jpeg',mediaName:'smoke-send.jpg',size:4000}}]}"),0,true);}
-        runOnMainSync(()->{try{render.invoke(bubble,false);left[0]=((java.util.List<?>)pendingF.get(bubble)).size();}catch(Exception e){throw new RuntimeException(e);}});
-        check(left[0]==0,"The photo here wasn't let go once Google's copy had it");
-        check(!pic.exists(),"The photo's file wasn't cleaned up once it went");
+        bubble.getWindow().getDecorView().findViewsWithText(found,"Saved • waiting for connection",android.view.View.FIND_VIEWS_WITH_TEXT);check(!found.isEmpty(),"Offline attachment has no saved status");found.clear();
+        // Text can arrive before the image's metadata; it must remain its own message.
+        long attempt=savedMedia.begin(jid).optLong("attempt");savedMedia.finish(jid,attempt,new JSONObject("{mediaTmpID:'photo-submission',captionTmpID:'text-submission'}"));long nowUs=System.currentTimeMillis()*1000;
+        try(PairedStore store=new PairedStore(getTargetContext())){JSONObject textEcho=new JSONObject("{messageID:'echo-text',tmpID:'text-submission',conversationID:'smoke',participantID:'me',timestamp:"+nowUs+",messageStatus:{status:'OUTGOING_SENDING'},messageInfo:[{messageContent:{content:'Synthetic attachment text'}}]}");store.message(textEcho,0,true);savedMedia.reconcile(textEcho);}
+        runOnMainSync(()->{try{render.invoke(bubble,false);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
+        check(savedMedia.get(jid).optString("mediaEcho").isEmpty(),"The text claimed the photo's preview");
+        bubble.getWindow().getDecorView().findViewsWithText(found,"Synthetic attachment text",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.size()==1,"The accompanying text is duplicated ("+found.size()+")");found.clear();
+        try(PairedStore store=new PairedStore(getTargetContext())){JSONObject imageEcho=new JSONObject("{messageID:'echo1',tmpID:'photo-submission',conversationID:'smoke',participantID:'me',timestamp:"+nowUs+",messageStatus:{status:'OUTGOING_DELIVERED'},messageInfo:[{mediaContent:{mediaID:'echo1-photo',mimeType:'image/jpeg',size:4000}}]}");store.message(imageEcho,0,true);savedMedia.reconcile(imageEcho);}
+        check(MediaOutbox.DELIVERED.equals(savedMedia.get(jid).optString("state")),"Google's delivery state wasn't reflected");savedMedia.retireCompleted();check(savedMedia.get(jid)==null&&!durable.exists(),"A completed attachment's saved files weren't released");
         try(PairedStore store=new PairedStore(getTargetContext())){store.deleteMessage("echo1");store.deleteMessage("echo-text");}
-        runOnMainSync(()->{try{((java.util.List<?>)pendingF.get(bubble)).clear();render.invoke(bubble,false);}catch(Exception e){throw new RuntimeException(e);}});
-        pic.delete();
+        runOnMainSync(()->{try{render.invoke(bubble,false);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
         // Screenshots are allowed.
         check((bubble.getWindow().getAttributes().flags&android.view.WindowManager.LayoutParams.FLAG_SECURE)==0,"Screenshots are blocked in chats");
         check((activity.getWindow().getAttributes().flags&android.view.WindowManager.LayoutParams.FLAG_SECURE)==0,"Screenshots are blocked in the inbox");
@@ -680,6 +695,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkInboxKeepsItsPlace((PairedActivity)activity);
         checkNewConversationSearch((PairedActivity)activity);
         checkPhotoPrep();
+        checkPictureTextAndFollowUps();
         checkVideoPrep();
         checkMarkup((PairedActivity)activity);
         String speed=measureRedraw();

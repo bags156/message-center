@@ -106,7 +106,7 @@ final class MediaCache {
     /** Downloads (or reuses) an attachment; the callback runs on the main thread. */
     static void fetch(Context context, JSONObject media, boolean thumb, Done done) {
         File target = file(context, media, thumb);
-        if (target.isFile() && target.length() > 0) { done.done(target, ""); return; }
+        if (target.isFile() && target.length() > 0) { if(!thumb)PhotoText.downloaded(context,media,target);done.done(target, ""); return; }
         String key = target.getName();
         synchronized (waiting) {
             List<Done> list = waiting.get(key);
@@ -136,6 +136,7 @@ final class MediaCache {
             List<Done> list;
             synchronized (waiting) { list = waiting.remove(key); }
             if (list == null) return;
+            if(error.isEmpty()&&!thumb)PhotoText.downloaded(context,media,target);
             for (Done d : list) d.done(error.isEmpty() ? target : null, error);
         });
     }

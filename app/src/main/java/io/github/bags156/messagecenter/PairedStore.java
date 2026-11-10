@@ -11,7 +11,8 @@ import java.util.List;
 
 /** Separate from notification captures: only real protocol IDs/history live here. */
 final class PairedStore extends SQLiteOpenHelper {
-    PairedStore(Context context) {super(context,"paired-messages.db",null,1);setWriteAheadLoggingEnabled(true);}
+    private final Context appContext;
+    PairedStore(Context context) {super(context,"paired-messages.db",null,1);appContext=context.getApplicationContext();setWriteAheadLoggingEnabled(true);}
     @Override public void onCreate(SQLiteDatabase db) {
         // IF NOT EXISTS: two parts of the app opening the database at once on first run must not collide.
         db.execSQL("CREATE TABLE IF NOT EXISTS chats(id TEXT PRIMARY KEY, data TEXT NOT NULL, updated INTEGER NOT NULL, folder INTEGER NOT NULL)");
@@ -43,8 +44,8 @@ final class PairedStore extends SQLiteOpenHelper {
         return 1;
     }
     synchronized void deleteChat(String id) {SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
-        try{db.delete("chats","id=?",new String[]{id});db.delete("items","chat=?",new String[]{id});db.setTransactionSuccessful();}finally{db.endTransaction();}}
-    synchronized void deleteMessage(String id) {getWritableDatabase().delete("items","id=?",new String[]{id});}
+        try{db.delete("chats","id=?",new String[]{id});db.delete("items","chat=?",new String[]{id});db.setTransactionSuccessful();}finally{db.endTransaction();}PhotoText.removeChat(appContext,id);}
+    synchronized void deleteMessage(String id) {getWritableDatabase().delete("items","id=?",new String[]{id});PhotoText.removeMessage(appContext,id);}
     /** Synced messages in a chat whose text contains the query, newest first. */
     synchronized List<JSONObject> search(String chat,String query,int max) {
         List<JSONObject> out=new ArrayList<>();String q=query.trim().toLowerCase(java.util.Locale.ROOT);if(q.isEmpty())return out;
@@ -63,6 +64,11 @@ final class PairedStore extends SQLiteOpenHelper {
         }
         return out;
     }
+    /** First meaningful incoming or successfully sent outgoing message: enough to decide who owes a reply. */
+    synchronized List<JSONObject> replyBoundary(String chat,JSONObject conversation){List<JSONObject> out=new ArrayList<>();
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM items WHERE chat=? ORDER BY time DESC,id DESC",new String[]{chat})){
+            while(c.moveToNext()){JSONObject m=json(c.getString(0));if(!NeedsReply.meaningful(m))continue;
+                if(!PairedProtocol.outgoing(m,conversation)||NeedsReply.sent(m)){out.add(m);break;}}}return out;}
     /** Every synced message with an attachment in this chat, newest first. */
     /** The newest messages across all chats (optionally only since a time), for filtered search and cleanup. */
     synchronized List<JSONObject> recent(int limit,long since) {

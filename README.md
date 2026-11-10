@@ -2,7 +2,7 @@
 
 An experimental Android client for Google Messages, with the paired connection running **on the phone**. No additional server, Matrix account, or Beeper account is required. Google Messages remains the default SMS/RCS app and must stay installed and online.
 
-**Current release: 1.4.21. The paired-client architecture began in 0.2.0.** It replaces the notification-based approach in 0.1.x. Compiling and offline device tests do not verify Google sign-in, live RCS delivery, complete history, or ColorOS background reliability. Those require testing on a paired phone.
+**Current release: 1.5.0. The paired-client architecture began in 0.2.0.** It replaces the notification-based approach in 0.1.x. Compiling and offline device tests do not verify Google sign-in, live RCS delivery, complete history, or ColorOS background reliability. Those require testing on a paired phone.
 
 ## Install and connect
 
@@ -31,6 +31,16 @@ For Obtainium, use `https://github.com/bags156/message-center`. Regular releases
 - Attachments and their accompanying text are submitted as separate messages, photo first, to avoid the paired protocol's mixed media/text stall. If only the text fails, it can be retried without resending the photo; uncertain outcomes wait for you to check Google Messages.
 - Details → Shared: the chat's photos & videos, links and files, each in its own tab, newest first under month headings. Hold any item to jump to it in the chat, copy or share it.
 - Message effects: when an iPhone sends Balloons, Confetti, Slam, Invisible Ink and the rest, RCS only delivers a "(sent with …)" note. The chat plays the effect and hides the note (tap "Replay" to see it again); "Happy birthday", "Congratulations" and "Happy New Year" play theirs too. RCS can't carry an effect, so none are sent.
+
+## Sending and follow-ups
+
+Photos prepare locally while you type. Select Fast, Standard or Full quality next to the attachment strip; the prepared size appears before sending. Full keeps supported originals, while MMS limits and format conversions still apply.
+
+Attachments are saved outside cache in a private, persistent outbox. The foreground service processes them independently of the app window and resumes queued work when connected. Upload/submission interruptions with an uncertain outcome wait for review to prevent duplicates. Text accompanying an attachment is a separate request; retrying only the text never resubmits its photo. Settings → Saved attachments opens waiting work. The chat shows actual preparation, upload and phone/delivery stages.
+
+Needs a reply uses the latest meaningful incoming or successfully sent outgoing message in each synced conversation. Reading alone does not remove a follow-up. A sent answer, marking handled, or snoozing it changes the list locally; a newer incoming message can bring it back.
+
+Picture text search uses the bundled ML Kit Latin-script model on the phone. It indexes new downloaded pictures, with a lightweight backfill on launch and a manual scan of older downloaded pictures in Settings. Inbox and in-chat search merge text and picture matches. Long-press a photo message to read/copy its recognized text. Indexing does not download remote pictures, and deleting messages removes them from search. Recognition can miss or misread unclear text.
 
 ## Current limits
 

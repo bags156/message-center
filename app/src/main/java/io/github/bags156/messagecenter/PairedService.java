@@ -59,6 +59,7 @@ public final class PairedService extends Service {
     private volatile String status="Disconnected",emoji="";
     private PairedStore store; private SessionVault vault; private Outbox outbox; private boolean flushing,syncing,inactive;
     private ReadReceiptQueue receipts;private boolean readingReceipt;
+    private MediaOutbox attachmentOutbox;private boolean flushingMedia;
     private final Runnable receiptRetry=this::flushReadReceipts;
     private long lastSync;private final Runnable syncTick=()->requestSync(false);
     /** Per chat: the Google chat time already fetched up to, so the same chat isn't fetched again for nothing. */
@@ -114,12 +115,12 @@ public final class PairedService extends Service {
     }
     static void disconnect(Context context,boolean forget) {
         context.getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("enabled",false).apply();
-        if(forget) {new SessionVault(context).clear();try(PairedStore db=new PairedStore(context)){db.clear();}Avatars.clear(context);new ChatSettings(context).clear();new ReadReceiptQueue(context).clear();}
+        if(forget) {new SessionVault(context).clear();try(PairedStore db=new PairedStore(context)){db.clear();}Avatars.clear(context);new ChatSettings(context).clear();new ReadReceiptQueue(context).clear();new MediaOutbox(context).clear();PhotoText.clear(context);}
         PairedService s=current;if(s!=null){s.generation.incrementAndGet();s.ready=false;}
         context.stopService(new Intent(context,PairedService.class));
     }
     @Override public void onCreate() {
-        super.onCreate();current=this;Diagnostics.init(this);HevcSandbox.init(this);GivenNames.init(this);Nicknames.load(this);store=new PairedStore(this);vault=new SessionVault(this);outbox=new Outbox(this);receipts=new ReadReceiptQueue(this);outbox.recover();watchWakeAndNetwork();
+        super.onCreate();current=this;Diagnostics.init(this);HevcSandbox.init(this);GivenNames.init(this);Nicknames.load(this);store=new PairedStore(this);vault=new SessionVault(this);outbox=new Outbox(this);receipts=new ReadReceiptQueue(this);attachmentOutbox=new MediaOutbox(this);attachmentOutbox.recover();outbox.recover();watchWakeAndNetwork();
         NotificationManager manager=getSystemService(NotificationManager.class);
         try{manager.deleteNotificationChannel(OLD_CONNECTION);}catch(Exception ignored){}
         NotificationChannel running=new NotificationChannel(RUNNING,"Running in background",NotificationManager.IMPORTANCE_MIN);
@@ -138,6 +139,7 @@ public final class PairedService extends Service {
             if(cookies!=null)network.execute(()->open(cookies));
         } else if(client==null && vault.exists()) network.execute(()->{if(client==null)open(null);});
         else if(client==null && !vault.exists()) {update("Sign in to connect");stopSelf();}
+        if(ready)main.post(this::flushMediaOutbox);
         return vault.exists()?START_STICKY:START_NOT_STICKY;
     }
     private void open(String cookies) {
@@ -152,7 +154,7 @@ public final class PairedService extends Service {
                 fresh.pair(cookies);
                 if(generation.get()!=token)return;
                 // A newly paired phone/account must not inherit another session's IDs.
-                store.clear();receipts.clear();Avatars.clear(this);vault.save(fresh.exportSession());emoji="";
+                store.clear();receipts.clear();attachmentOutbox.clear();PhotoText.clear(this);Avatars.clear(this);vault.save(fresh.exportSession());emoji="";
                 getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("enabled",true).apply();
                 update("Paired. Connecting…");
             }
@@ -199,7 +201,7 @@ public final class PairedService extends Service {
                 case "PAIR_EMOJI" -> {emoji=new JSONObject(payload).optString("emoji");update("Approve the matching emoji in Google Messages");}
                 case "READY" -> {
                     ready=true;emoji="";stopAutoReconnect();update("Connected to Google Messages");scheduleCodeSweep();
-                    saveSession(token);main.post(this::flushOutbox);main.post(this::flushReadReceipts);
+                    saveSession(token);main.post(this::flushOutbox);main.post(this::flushReadReceipts);main.post(this::flushMediaOutbox);
                     // Catch up on anything that came in while disconnected, right away.
                     main.post(()->requestSync(false));
                     network.execute(()->{if(generation.get()==token)try{chats(client,"",1);}catch(Exception e){update("Connected • tap Refresh to load conversations");}});
@@ -213,6 +215,7 @@ public final class PairedService extends Service {
                 case "MESSAGE" -> {
                     JSONObject envelope=new JSONObject(payload),message=envelope.getJSONObject("message");
                     boolean existed=store.message(message,0,true);touch(message);fullArrived(message);
+                    if(attachmentOutbox.reconcile(message)){attachmentOutbox.retireCompleted();changed("MEDIA_OUTBOX");}
                     if(!PairedProtocol.outgoing(message) && typing.remove(message.optString("conversationID"))!=null)changed("TYPING");
                     // Answered on the phone: this chat's notification here is no longer needed.
                     if(PairedProtocol.outgoing(message)&&!envelope.optBoolean("old",true))dismiss(message.optString("conversationID"));
@@ -227,10 +230,12 @@ public final class PairedService extends Service {
                     if(t.optBoolean("typing"))people.put(number,System.currentTimeMillis()+TYPING_TIMEOUT_MS);else if(number.isEmpty())people.clear();else people.remove(number);
                     changed(kind);
                 }
+                case "MEDIA_PROGRESS" -> {JSONObject p=new JSONObject(payload);String tag=p.optString("job");int split=tag.lastIndexOf('|');if(split>0){
+                    attachmentOutbox.progress(tag.substring(0,split),Long.parseLong(tag.substring(split+1)),p.optString("phase"),-1,p.optString("tmpID"));changed("MEDIA_OUTBOX");}}
                 case "AUTH_REQUIRED" -> {ready=false;stopAutoReconnect();getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("enabled",false).apply();update("Google session expired. Sign in again.");}
                 case "DISCONNECTED" -> {ready=false;update("Connection ended • reconnecting on its own");scheduleAutoReconnect("connection ended");}
                 case "RECONNECTING" -> {ready=false;update("Waiting for Google Messages • reconnecting on its own");scheduleAutoReconnect("waiting for Google Messages");}
-                case "RECOVERED" -> {ready=true;stopAutoReconnect();update("Connected to Google Messages");scheduleCodeSweep();main.post(this::flushOutbox);main.post(this::flushReadReceipts);main.post(()->requestSync(false));}
+                case "RECOVERED" -> {ready=true;stopAutoReconnect();update("Connected to Google Messages");scheduleCodeSweep();main.post(this::flushOutbox);main.post(this::flushReadReceipts);main.post(this::flushMediaOutbox);main.post(()->requestSync(false));}
                 case "STALE" -> main.post(()->requestSync(true));
                 case "INACTIVE" -> {inactive=true;stopAutoReconnect();update("Google Messages for web is open somewhere else. Open Message Center to switch back.");}
                 default -> { }
@@ -726,6 +731,41 @@ public final class PairedService extends Service {
         long seenAt=Math.max(c==null?0:PairedProtocol.time(c),latest==null?0:PairedProtocol.time(latest));if(seenAt>0)settings.markSeen(chat,seenAt);
         if(settings.receipts(chat)&&latest!=null){viewedForReceipts(context,c,latest,false);if(s==null&&new SessionVault(context).exists())try{start(context);}catch(RuntimeException ignored){}}
         if(s!=null)s.changed("CONVERSATION");done.run();
+    }
+    /** A saved attachment keeps running independently of any Activity or bubble. */
+    static void flushAttachments(Context context){PairedService s=current;if(s!=null)s.main.post(s::flushMediaOutbox);
+        else if(new SessionVault(context).exists())try{start(context);}catch(Exception ignored){}}
+    private void flushMediaOutbox(){
+        if(flushingMedia||!ready||client==null||sending.isShutdown())return;JSONObject next=attachmentOutbox.next();if(next==null)return;
+        String id=next.optString("id"),chat=next.optString("chat");JSONObject conversation=store.chat(chat);
+        if(conversation==null){attachmentOutbox.failed(id,next.optLong("attempt"),"This conversation isn't synced. Open it, then retry.");changed("MEDIA_OUTBOX");main.post(this::flushMediaOutbox);return;}
+        JSONObject job=attachmentOutbox.begin(id);if(job==null)return;long attempt=job.optLong("attempt");flushingMedia=true;Client source=client;int token=generation.get();changed("MEDIA_OUTBOX");
+        sending.execute(()->{try{
+            if(!job.optString("mediaTmpID").isEmpty()){
+                attachmentOutbox.captionAccepted(id,attempt,source.sendText(conversation.toString(),job.optString("caption"),job.optString("reply")));
+            }else{
+                java.io.File original=new java.io.File(job.optString("file"));if(!original.isFile())throw new java.io.IOException("The saved attachment is missing. Choose it again.");
+                boolean mms=job.optBoolean("forceSmall")||!PairedProtocol.rcs(conversation);PhotoPrep.Ready prepared=null;java.io.File cached=new java.io.File(job.optString("prepared"));
+                if(cached.isFile()&&job.optBoolean("mms")==mms)prepared=new PhotoPrep.Ready(cached,job.optString("preparedName"),job.optString("preparedMime"));
+                if(prepared==null){if(job.optString("mime").startsWith("video/")){int[] bucket={-1};prepared=VideoPrep.prepare(this,original,job.optString("name"),job.optString("mime"),mms,percent->{
+                    if(percent/5!=bucket[0]){bucket[0]=percent/5;attachmentOutbox.progress(id,attempt,MediaOutbox.PREPARING,percent,"");changed("MEDIA_OUTBOX");}});
+                }else prepared=PhotoPrep.prepare(original,job.optString("name"),job.optString("mime"),mms,job.optString("quality"));
+                    if(!prepared.error.isEmpty())throw new java.io.IOException(prepared.error);attachmentOutbox.prepared(id,attempt,prepared);}
+                if(prepared.file.length()>PhotoQuality.bytes(PhotoQuality.FULL,mms))throw new java.io.IOException(mms?"This attachment is too large for MMS. Choose a smaller file or use an RCS chat.":"This attachment is over 100 MB.");
+                if(current!=this||generation.get()!=token||!ready)throw new java.io.IOException("The connection changed before submission. Retry when connected.");
+                // Persist this BEFORE entering JNI. A process death anywhere in upload/submission is reviewed, never blindly resent.
+                attachmentOutbox.bridgeStarting(id,attempt);attachmentOutbox.progress(id,attempt,MediaOutbox.UPLOADING,-1,"");changed("MEDIA_OUTBOX");
+                JSONObject result=new JSONObject(source.sendMediaTracked(conversation.toString(),prepared.file.getPath(),prepared.name,prepared.mime,
+                    MediaOutbox.sendCaption(job)?job.optString("caption"):"",job.optString("reply"),id+"|"+attempt));
+                attachmentOutbox.finish(id,attempt,result);
+            }
+            // A fast echo can precede the submit response. Reconcile exact IDs against the cached messages again.
+            for(JSONObject m:store.messages(chat,100))attachmentOutbox.reconcile(m);
+            attachmentOutbox.retireCompleted();
+            try{long version=store.snapshot();JSONObject page=new JSONObject(source.messages(chat,""));JSONArray messages=page.optJSONArray("messages");
+                if(messages!=null)for(int i=0;i<messages.length();i++){JSONObject m=messages.getJSONObject(i);store.message(m,version,false);JSONObject currentMessage=store.message(m.optString("messageID"));if(currentMessage!=null)attachmentOutbox.reconcile(currentMessage);}attachmentOutbox.retireCompleted();}catch(Exception ignored){}
+        }catch(Exception e){attachmentOutbox.failed(id,attempt,e.getMessage()==null?"This attachment couldn't be sent.":e.getMessage());}
+        finally{main.post(()->{flushingMedia=false;if(current==this){changed("MEDIA_OUTBOX");changed("MESSAGE");flushMediaOutbox();}});}});
     }
     /** Sends saved messages one at a time, oldest first, while connected. */
     private void flushOutbox() {

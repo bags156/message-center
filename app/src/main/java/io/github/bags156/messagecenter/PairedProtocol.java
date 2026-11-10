@@ -140,7 +140,7 @@ final class PairedProtocol {
         List<JSONObject> out=new ArrayList<>();JSONArray infos=m.optJSONArray("messageInfo");
         // Each attachment remembers its message and part, which are needed to ask the phone for a full-size copy.
         if(infos!=null) for(int i=0;i<infos.length();i++) {JSONObject part=infos.optJSONObject(i);JSONObject media=part==null?null:part.optJSONObject("mediaContent");
-            if(media!=null){try{media.put("_message",m.optString("messageID"));media.put("_part",part.optString("actionMessageID"));media.put("_index",i);}catch(Exception ignored){}out.add(media);}}
+            if(media!=null){try{media.put("_message",m.optString("messageID"));media.put("_chat",m.optString("conversationID"));media.put("_part",part.optString("actionMessageID"));media.put("_index",i);}catch(Exception ignored){}out.add(media);}}
         return out;
     }
     /** "image", "video", "audio" or "file", from the MIME type (or the file name when Google leaves it out). */
