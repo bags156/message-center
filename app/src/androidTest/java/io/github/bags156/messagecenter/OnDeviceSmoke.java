@@ -406,6 +406,13 @@ public final class OnDeviceSmoke extends Instrumentation {
         android.graphics.Bitmap icon=Avatars.adaptive(wide,"A",0xff000000,252),round=Avatars.circle(wide,128);
         check(icon.getWidth()==252&&icon.getHeight()==252&&icon.getPixel(126,126)==0xff336699&&round.getPixel(64,64)==0xff336699,"Bubble icon was not built from the photo");
         check(shown!=null&&shown.getWidth()>=840&&shown.getHeight()>=1260&&shown.getWidth()<=1500,"Photo decoded smaller than its box: "+(shown==null?"none":shown.getWidth()+"x"+shown.getHeight()));
+        // A 2-second recording already on the phone for the voice message you sent, so its waveform and length are worked out.
+        {short[] tone=new short[16000*2];for(int i=0;i<tone.length;i++)tone[i]=(short)Math.round(9000*Math.sin(2*Math.PI*440*i/16000.0)*(0.3+0.7*Math.abs(Math.sin(i/4000.0))));
+            java.io.ByteArrayOutputStream wav=new java.io.ByteArrayOutputStream();java.nio.ByteBuffer h=java.nio.ByteBuffer.allocate(44).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            h.put("RIFF".getBytes()).putInt(36+tone.length*2).put("WAVE".getBytes()).put("fmt ".getBytes()).putInt(16).putShort((short)1).putShort((short)1).putInt(16000).putInt(32000).putShort((short)2).putShort((short)16)
+             .put("data".getBytes()).putInt(tone.length*2);wav.write(h.array());java.nio.ByteBuffer body=java.nio.ByteBuffer.allocate(tone.length*2).order(java.nio.ByteOrder.LITTLE_ENDIAN);for(short t:tone)body.putShort(t);wav.write(body.array());
+            java.io.File voice=MediaCache.file(getTargetContext(),new JSONObject("{mediaID:'aud2',mimeType:'audio/mp4',mediaName:'Voice message.m4a',size:30000}"),false);voice.getParentFile().mkdirs();
+            java.nio.file.Files.write(voice.toPath(),wav.toByteArray());}
         Activity bubble=startActivitySync(new Intent(getTargetContext(),BubbleActivity.class).setAction(Intent.ACTION_VIEW).putExtra("chat","smoke").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         waitForIdleSync();check(bubble!=null&&!bubble.isFinishing(),"Bubble chat did not render");
         // The message box must offer attachments (⊕) and, while empty, voice recording.
@@ -438,6 +445,12 @@ public final class OnDeviceSmoke extends Instrumentation {
         bubble.getWindow().getDecorView().findViewsWithText(found,"Not on your phone",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.size()==1,"A photo the phone never sent isn't labeled as missing ("+found.size()+")");found.clear();
         // Photos that need the phone say what they're waiting for (not a blank box). Offline here, so: the connection.
         bubble.getWindow().getDecorView().findViewsWithText(found,"Waiting for the connection",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.size()>=2,"Photos waiting on the phone don't say so offline ("+found.size()+")");found.clear();
+        // Voice messages: a play button (no emoji), and once the audio is on the phone, its length from the waveform.
+        bubble.getWindow().getDecorView().findViewsWithText(found,"Play voice message",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);check(found.size()>=2,"Voice messages have no play button ("+found.size()+")");found.clear();
+        bubble.getWindow().getDecorView().findViewsWithText(found,"🎤",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.isEmpty(),"A voice message still shows a microphone emoji");found.clear();
+        boolean measured=false;for(int wait=0;wait<50&&!measured;wait++){found.clear();runOnMainSync(()->{});
+            bubble.getWindow().getDecorView().findViewsWithText(found,"Play voice message, 0:02",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);measured=!found.isEmpty();if(!measured)Thread.sleep(100);}
+        check(measured,"A voice message on the phone didn't get its length (0:02) from its waveform");found.clear();
         // Invisible ink: covered and blurred until tapped; the iPhone's note isn't shown.
         bubble.getWindow().getDecorView().findViewsWithText(found,"Invisible ink message. Double-tap to show it.",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);check(found.size()==1,"Invisible ink message isn't covered ("+found.size()+")");
         android.view.View cover=found.get(0);found.clear();android.view.View inkContent=((android.view.ViewGroup)cover.getParent()).getChildAt(0);
@@ -479,6 +492,6 @@ public final class OnDeviceSmoke extends Instrumentation {
         getTargetContext().getSharedPreferences("starred",0).edit().clear().commit();
         new ChatSettings(getTargetContext()).setBackground("smoke","");
         checkNotificationPrivacy();
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }

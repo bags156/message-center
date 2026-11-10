@@ -175,7 +175,7 @@ public class PairedActivity extends Activity {
             if(screen.equals("chat")){renderMessages(false);if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();if(!bubble())PairedService.clearNotification(this,chatId);}
             else if(screen.equals("inbox")){if(batteryCard!=null&&!showBatteryCard()){root.removeView(batteryCard);batteryCard=null;}renderInbox();refreshInbox(false);
                 if(!bubble()&&PairedService.ready()&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED)askContactPhotos();}}}
-    @Override protected void onPause(){if(resumed)PairedService.screenVisible(false);resumed=false;if(dictation!=null)stopDictation();remember();if(inline!=null)inline.pause();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&player.isPlaying()){player.pause();updatePlayLabel();}if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
+    @Override protected void onPause(){if(resumed)PairedService.screenVisible(false);resumed=false;if(dictation!=null)stopDictation();remember();if(inline!=null)inline.pause();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&!playingId.isEmpty())pauseVoice();if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
     @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);if(focused)refreshDraft();if(focused&&store!=null){markReadIfAllowed();updateReceiptStatus();}}
     /** Picks up a draft typed in the other window (bubble or full app) so you carry on where you left off. */
     private void refreshDraft(){if(composer==null||drafts==null||chatId.isEmpty()||!screen.equals("chat"))return;String stored=drafts.getOrDefault(chatId,"");
@@ -195,7 +195,7 @@ public class PairedActivity extends Activity {
         receiptStatusView=null;
         // Screenshots are always allowed (an older version could leave them blocked after signing in).
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);if(!name.equals("login"))setRecentsScreenshotEnabled(true);
-        if(recorder!=null)cancelRecording();if(dictation!=null)stopDictation();recordBar=null;composeRow=null;sendButton=null;recordClock=null;screen=name;batteryCard=null;jumpButton=null;statusView=null;statusRow=null;reconnectButton=null;receiptsMark=null;composer=null;items=null;scroll=null;searchRow=null;attachStrip=null;attachScroll=null;replyPanel=null;typingRow=null;messageViews.clear();bubbleViews.clear();playing=null;ui.removeCallbacks(typingTick);if(typingPulse!=null){typingPulse.cancel();typingPulse=null;}
+        if(recorder!=null)cancelRecording();if(dictation!=null)stopDictation();recordBar=null;composeRow=null;sendButton=null;recordClock=null;recordWave=null;recordDot=null;screen=name;batteryCard=null;jumpButton=null;statusView=null;statusRow=null;reconnectButton=null;receiptsMark=null;composer=null;items=null;scroll=null;searchRow=null;attachStrip=null;attachScroll=null;replyPanel=null;typingRow=null;messageViews.clear();bubbleViews.clear();playing=null;voiceCards.clear();voiceOrder.clear();ui.removeCallbacks(typingTick);if(typingPulse!=null){typingPulse.cancel();typingPulse=null;}
         dark=(getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;
         textScale=getSharedPreferences("paired",MODE_PRIVATE).getFloat("text_scale",1f);quickRow=null;quickScroll=null;searchChips=null;selecting=false;chosen.clear();selectionBar=null;chatFrame=null;
         int[] colors=palette(dark,dark&&"black".equals(getSharedPreferences("paired",MODE_PRIVATE).getString("theme","system")));
@@ -263,7 +263,9 @@ public class PairedActivity extends Activity {
     }
     /** A soft press ripple in the text color (the old list selector flashed yellow on some phones). */
     /** Press feedback without a highlight box: the item dims a little while your finger is on it. */
-    private static void pressable(View v){v.setBackground(null);android.animation.StateListAnimator dim=new android.animation.StateListAnimator();
+    private static void pressable(View v){v.setBackground(null);pressDim(v);}
+    /** The same dimming on press, for something that keeps its own background (a round button). */
+    private static void pressDim(View v){android.animation.StateListAnimator dim=new android.animation.StateListAnimator();
         dim.addState(new int[]{android.R.attr.state_pressed},android.animation.ObjectAnimator.ofFloat(null,"alpha",0.55f).setDuration(70));
         dim.addState(new int[0],android.animation.ObjectAnimator.ofFloat(null,"alpha",1f).setDuration(160));v.setStateListAnimator(dim);}
     private ImageView roundImage(Bitmap b){ImageView img=new ImageView(this);img.setImageBitmap(b);img.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -644,9 +646,13 @@ public class PairedActivity extends Activity {
         replyPanel.addView(replyTexts,new LinearLayout.LayoutParams(0,-2,1));replyPanel.addView(icon(R.drawable.ic_close,muted,"Cancel reply",this::cancelReply));root.addView(replyPanel);
         if(!id.equals(outgoingChat)){for(Outgoing o:outgoing)if(!o.sending)o.file.delete();outgoing.removeIf(o->!o.sending);outgoingChat=id;}
         attachStrip=row();attachScroll=new HorizontalScrollView(this);attachScroll.setHorizontalScrollBarEnabled(false);attachScroll.setPadding(dp(16),dp(4),dp(16),dp(6));attachScroll.addView(attachStrip);root.addView(attachScroll);
-        recordBar=row();recordBar.setPadding(dp(16),dp(8),dp(8),dp(4));recordBar.setVisibility(View.GONE);recordClock=text("● Recording",16,danger,true);recordBar.addView(recordClock,new LinearLayout.LayoutParams(0,-2,1));
-        TextView cancelRec=text("Cancel",16,muted,true);cancelRec.setPadding(dp(12),dp(10),dp(12),dp(10));cancelRec.setOnClickListener(v->cancelRecording());recordBar.addView(cancelRec);
-        TextView sendRec=text("Send",16,theme.onAccent(dark),true);sendRec.setPadding(dp(18),dp(10),dp(18),dp(10));sendRec.setBackground(shape(theme.accent(dark),20));sendRec.setOnClickListener(v->finishRecording(true));recordBar.addView(sendRec);root.addView(recordBar);
+        // Recording: cancel, a pulsing dot and the time, your voice as it comes in, and send.
+        recordBar=row();recordBar.setGravity(Gravity.CENTER_VERTICAL);recordBar.setPadding(dp(4),dp(6),dp(10),dp(6));recordBar.setVisibility(View.GONE);
+        recordBar.addView(icon(R.drawable.ic_close,muted,"Cancel recording",this::cancelRecording));
+        recordDot=new View(this);recordDot.setBackground(oval(danger));LinearLayout.LayoutParams rd=new LinearLayout.LayoutParams(dp(10),dp(10));rd.setMarginStart(dp(2));rd.setMarginEnd(dp(8));recordBar.addView(recordDot,rd);
+        recordClock=text("0:00",16,ink,true);recordClock.setFontFeatureSettings("tnum");recordBar.addView(recordClock);
+        recordWave=new Waveform(this);recordWave.liveMode();recordWave.setColors(danger,danger);LinearLayout.LayoutParams rw=new LinearLayout.LayoutParams(0,dp(32),1);rw.setMarginStart(dp(14));rw.setMarginEnd(dp(14));recordBar.addView(recordWave,rw);
+        ImageView sendRec=roundIcon(R.drawable.ic_send,theme.accent(dark),theme.onAccent(dark),44);pressDim(sendRec);sendRec.setContentDescription("Send voice message");sendRec.setOnClickListener(v->finishRecording(true));recordBar.addView(sendRec);root.addView(recordBar);
         quickRow=row();quickScroll=new HorizontalScrollView(this);quickScroll.setHorizontalScrollBarEnabled(false);quickScroll.setPadding(dp(12),dp(2),dp(12),dp(4));quickScroll.addView(quickRow);quickScroll.setVisibility(View.GONE);root.addView(quickScroll);
         LinearLayout compose=row();compose.setPadding(dp(4),dp(4),dp(8),0);composeRow=compose;
         compose.addView(icon(R.drawable.ic_add,ink,"Attach photos, videos, or files",this::attach));
@@ -761,7 +767,7 @@ public class PairedActivity extends Activity {
             ValueAnimator a=ValueAnimator.ofFloat(blur,0f);a.setDuration(420);a.addUpdateListener(x->{float r=(float)x.getAnimatedValue();content.setRenderEffect(r<0.5f?null:android.graphics.RenderEffect.createBlurEffect(r,r,android.graphics.Shader.TileMode.DECAL));});
             a.addListener(new android.animation.AnimatorListenerAdapter(){@Override public void onAnimationEnd(android.animation.Animator an){content.setRenderEffect(null);}});a.start();box.postDelayed(later,INK_SHOWN_MS);});
         cover.setOnLongClickListener(v->{messageSheet(m);return true;});return box;}
-    private void renderMessages(boolean bottom){if(items==null||!screen.equals("chat"))return;
+    private void renderMessages(boolean bottom){if(items==null||!screen.equals("chat"))return;voiceCards.clear();voiceOrder.clear();
         ScrollView sv=scroll;View content=sv.getChildAt(0);int y,before;boolean atBottom;Spot spot;
         // If the last redraw hasn't been laid out yet, its new views have no positions; keep aiming where it was aiming.
         if(placing!=null&&placingIn==sv){sv.getViewTreeObserver().removeOnPreDrawListener(placing);placing=null;y=placeY;before=placeBefore;atBottom=bottom||placeBottom;spot=atBottom?null:placeSpot;}
@@ -1302,19 +1308,18 @@ public class PairedActivity extends Activity {
             // A video playing here keeps playing when the chat redraws: it moves into the new tile.
             if(kind.equals("video")&&inline!=null&&screen.equals("chat")&&inline.key.equals(mediaKey(media))){inline.attach(box,badge[0]);inlineSeen=true;}
         } else if(PairedProtocol.contactCard(media)){line.addView(contactCardView(m,media,outgoing,theme));
+        } else if(kind.equals("audio")){
+            line.addView(voiceCard(m,media,outgoing,theme),new LinearLayout.LayoutParams(-2,-2));
+            LinearLayout col=vertical();col.addView(line,new LinearLayout.LayoutParams(-1,-2));col.addView(transcriptView(m,media,outgoing,theme),new LinearLayout.LayoutParams(-1,-2));return col;
         } else {
-            LinearLayout card=row();card.setPadding(dp(14),dp(12),dp(18),dp(12));card.setBackground(shape(outgoing?theme.bubble(dark):surface,22));int fg=outgoing?theme.onBubble(dark):ink;
-            card.addView(text(kind.equals("audio")?"🎤":"📄",24,fg,false));LinearLayout texts=vertical();texts.setPadding(dp(12),0,0,0);
-            String name=PairedProtocol.string(media,"mediaName");TextView title=text(name.isEmpty()?(kind.equals("audio")?"Audio message":"File"):name,15,fg,true);title.setMaxLines(2);title.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+            LinearLayout card=row();card.setGravity(Gravity.CENTER_VERTICAL);card.setPadding(dp(10),dp(10),dp(18),dp(10));card.setBackground(shape(outgoing?theme.bubble(dark):surface,22));int fg=outgoing?theme.onBubble(dark):ink;
+            card.addView(roundIcon(R.drawable.ic_file,(fg&0x00ffffff)|0x22000000,fg,40));LinearLayout texts=vertical();texts.setPadding(dp(12),0,0,0);
+            String name=PairedProtocol.string(media,"mediaName");TextView title=text(name.isEmpty()?"File":name,15,fg,true);title.setMaxLines(2);title.setEllipsize(TextUtils.TruncateAt.MIDDLE);
             title.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.55f));texts.addView(title);
-            String size=PairedProtocol.size(media.optLong("size"));boolean audio=kind.equals("audio");
-            TextView status=text(audio?"▶ Tap to play"+(size.isEmpty()?"":" • "+size):(size.isEmpty()?"":size+" • ")+"Tap to open",13,outgoing?fg:muted,false);texts.addView(status);card.addView(texts);
-            if(audio&&PairedProtocol.string(media,"mediaID").equals(playingId)){playingLabel=status;updatePlayLabel();}
-            card.setContentDescription(title.getText()+". Tap to open.");card.setOnClickListener(v->{if(audio)playAudio(media,status);else openMedia(media);});card.setOnLongClickListener(v->{messageSheet(m);return true;});
-            if(audio){TextView speed=text(speedLabel(voiceSpeed()),13,fg,true);speed.setPadding(dp(10),dp(4),dp(10),dp(4));speed.setBackground(shape((fg&0x00ffffff)|0x22000000,12));
-                speed.setContentDescription("Playback speed");speed.setOnClickListener(v->cycleVoiceSpeed(speed));LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(-2,-2);sl.setMarginStart(dp(12));sl.gravity=Gravity.CENTER_VERTICAL;card.addView(speed,sl);}
+            String size=PairedProtocol.size(media.optLong("size"));
+            texts.addView(text((size.isEmpty()?"":size+" · ")+"Tap to open",13,outgoing?fg:muted,false));card.addView(texts);
+            card.setContentDescription(title.getText()+". Tap to open.");card.setOnClickListener(v->openMedia(media));card.setOnLongClickListener(v->{messageSheet(m);return true;});
             line.addView(card,new LinearLayout.LayoutParams(-2,-2));
-            if(audio){LinearLayout col=vertical();col.addView(line,new LinearLayout.LayoutParams(-1,-2));col.addView(transcriptView(m,media,outgoing,theme),new LinearLayout.LayoutParams(-1,-2));return col;}
         }
         return line;
     }
@@ -1654,7 +1659,9 @@ public class PairedActivity extends Activity {
             boolean visual=o.mime.startsWith("image/")||o.mime.startsWith("video/");
             if(visual){ImageView img=new ImageView(this);img.setScaleType(ImageView.ScaleType.CENTER_CROP);tile.addView(img,new FrameLayout.LayoutParams(-1,-1));
                 decoder.execute(()->{Bitmap b=MediaCache.decodeToCover(o.file,dp(72),dp(72),o.mime.startsWith("video/"));if(b!=null)img.post(()->img.setImageBitmap(b));});}
-            else {TextView t=text("📄\n"+o.name,11,ink,false);t.setGravity(Gravity.CENTER);t.setMaxLines(3);t.setEllipsize(TextUtils.TruncateAt.END);t.setPadding(dp(4),dp(4),dp(4),dp(4));tile.addView(t,new FrameLayout.LayoutParams(-1,-1));}
+            else {boolean voice=o.mime.startsWith("audio/");LinearLayout box=vertical();box.setGravity(Gravity.CENTER);ImageView ic=new ImageView(this);ic.setImageResource(voice?R.drawable.ic_mic:R.drawable.ic_file);
+                ic.setImageTintList(ColorStateList.valueOf(ink));box.addView(ic,new LinearLayout.LayoutParams(dp(24),dp(24)));TextView t=text(voice?"Voice message":o.name,11,ink,false);t.setGravity(Gravity.CENTER);t.setMaxLines(2);
+                t.setEllipsize(TextUtils.TruncateAt.END);t.setPadding(dp(4),dp(4),dp(4),0);box.addView(t);tile.addView(box,new FrameLayout.LayoutParams(-1,-1));}
             if(o.sending){TextView s=text("Sending…",11,Color.WHITE,true);s.setGravity(Gravity.CENTER);s.setBackgroundColor(0x99000000);tile.addView(s,new FrameLayout.LayoutParams(-1,-1));}
             else {ImageView x=new ImageView(this);x.setImageResource(R.drawable.ic_close);x.setImageTintList(ColorStateList.valueOf(Color.WHITE));x.setBackground(oval(0x99000000));x.setPadding(dp(3),dp(3),dp(3),dp(3));
                 x.setContentDescription("Remove "+o.name);x.setOnClickListener(v->{outgoing.remove(o);o.file.delete();renderAttachments();});tile.addView(x,new FrameLayout.LayoutParams(dp(22),dp(22),Gravity.TOP|Gravity.END));
@@ -1835,7 +1842,7 @@ public class PairedActivity extends Activity {
         JSONObject ready=LinkPreviews.peek(url);if(ready!=null){if(!ready.optString("title").isEmpty())fill.done(ready);}else if(fetch)LinkPreviews.load(this,url,fill);
         r.setContentDescription(host+". "+sharedBy(it,c)+". Hold for more.");r.setOnClickListener(v->openLink(url));r.setOnLongClickListener(v->{sharedMenu(it);return true;});return r;}
     private View fileRow(SharedItem it,JSONObject c){JSONObject media=it.media;String name=PairedProtocol.string(media,"mediaName"),kind=PairedProtocol.mediaKind(media);
-        LinearLayout r=row();r.setGravity(Gravity.CENTER_VERTICAL);r.setPadding(dp(8),dp(10),dp(8),dp(10));pressable(r);r.addView(text(kind.equals("audio")?"🎤":"📄",22,ink,false));
+        LinearLayout r=row();r.setGravity(Gravity.CENTER_VERTICAL);r.setPadding(dp(8),dp(10),dp(8),dp(10));pressable(r);r.addView(roundIcon(kind.equals("audio")?R.drawable.ic_mic:R.drawable.ic_file,surface,ink,40));
         LinearLayout texts=vertical();texts.setPadding(dp(14),0,0,0);TextView n=text(name.isEmpty()?(kind.equals("audio")?"Voice message":"File"):name,15,ink,false);n.setSingleLine(true);n.setEllipsize(TextUtils.TruncateAt.MIDDLE);texts.addView(n);
         String sz=PairedProtocol.size(media.optLong("size"));texts.addView(text((sz.isEmpty()?"":sz+" · ")+sharedBy(it,c),13,muted,false));r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));
         r.setOnClickListener(v->openMedia(media));r.setOnLongClickListener(v->{sharedMenu(it);return true;});return r;}
@@ -2194,7 +2201,7 @@ public class PairedActivity extends Activity {
     /** Voice messages: 1×, 1.5×, or 2×, remembered between messages. */
     private float voiceSpeed(){return getSharedPreferences("paired",MODE_PRIVATE).getFloat("voice_speed",1f);}
     private void cycleVoiceSpeed(TextView chip){float next=voiceSpeed()==1f?1.5f:voiceSpeed()==1.5f?2f:1f;getSharedPreferences("paired",MODE_PRIVATE).edit().putFloat("voice_speed",next).apply();
-        chip.setText(speedLabel(next));if(player!=null&&player.isPlaying()){try{player.setPlaybackParams(player.getPlaybackParams().setSpeed(next));}catch(Exception ignored){}}}
+        chip.setText(speedLabel(next));if(player!=null&&!playingId.isEmpty()){try{boolean was=player.isPlaying();player.setPlaybackParams(player.getPlaybackParams().setSpeed(next));if(!was)player.pause();}catch(Exception ignored){}}}
     private static String speedLabel(float s){return s==1f?"1×":s==1.5f?"1.5×":"2×";}
     // ---- 0.8: unknown senders, snooze, mention alerts, safe sharing ----
     private boolean unknownOnly,chatTrusted=true;
@@ -2247,9 +2254,9 @@ public class PairedActivity extends Activity {
     private Outbox outbox;
     private JSONObject contacts;private boolean contactsFailed;private List<PhoneContacts.Entry> phoneContacts;private List<Person> chatPeople;private boolean groupMode;private String contactQuery="";private final Map<String,String> picked=new LinkedHashMap<>();
     private final List<Outgoing> incoming=new ArrayList<>();private String incomingText;
-    private MediaRecorder recorder;private File recording;private long recordStart;private LinearLayout recordBar,composeRow;private ImageView sendButton;private TextView recordClock;
+    private MediaRecorder recorder;private File recording;private long recordStart;private LinearLayout recordBar,composeRow;private ImageView sendButton;private TextView recordClock;private Waveform recordWave;private View recordDot;
     private final Runnable recordTick=this::updateRecordClock;
-    private MediaPlayer player;private String playingId="";private TextView playingLabel;private final Runnable playTick=this::updatePlayLabel;
+
 
     private boolean batteryRestricted(){return !getSystemService(PowerManager.class).isIgnoringBatteryOptimizations(getPackageName());}
     /** Android's own prompt to stop putting this app to sleep, so messages arrive on time. */
@@ -2472,9 +2479,13 @@ public class PairedActivity extends Activity {
             recorder.setAudioSamplingRate(44100);recorder.setAudioEncodingBitRate(64000);recorder.setAudioChannels(1);recorder.setMaxDuration(10*60*1000);recorder.setOutputFile(recording.getPath());
             recorder.setOnInfoListener((r,what,extra)->{if(what==MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED)finishRecording(true);});recorder.prepare();recorder.start();}
         catch(Exception e){if(recorder!=null){recorder.release();recorder=null;}recording.delete();error("The microphone could not be started.");return;}
-        recordStart=System.currentTimeMillis();if(recordBar!=null){recordBar.setVisibility(View.VISIBLE);composeRow.setVisibility(View.GONE);}updateRecordClock();}
-    private void updateRecordClock(){ui.removeCallbacks(recordTick);if(recorder==null||recordClock==null)return;long s=(System.currentTimeMillis()-recordStart)/1000;
-        recordClock.setText(String.format(Locale.US,"● Recording  %d:%02d",s/60,s%60));ui.postDelayed(recordTick,500);}
+        recordStart=System.currentTimeMillis();if(recordWave!=null)recordWave.liveMode();if(recordBar!=null){recordBar.setVisibility(View.VISIBLE);composeRow.setVisibility(View.GONE);}updateRecordClock();}
+    /** Every 80 ms while recording: the time, how loud you are (into the live waveform), and the dot's pulse. */
+    private void updateRecordClock(){ui.removeCallbacks(recordTick);if(recorder==null||recordClock==null)return;long ms=System.currentTimeMillis()-recordStart,s=ms/1000;
+        recordClock.setText(String.format(Locale.US,"%d:%02d",s/60,s%60));recordClock.setContentDescription("Recording, "+s+" seconds");
+        if(recordWave!=null){int amp=0;try{amp=recorder.getMaxAmplitude();}catch(Exception ignored){}recordWave.push((float)Math.sqrt(amp/32767f));}
+        if(recordDot!=null)recordDot.setAlpha(0.35f+0.65f*(float)(0.5+0.5*Math.cos(ms*2*Math.PI/1200.0)));
+        ui.postDelayed(recordTick,80);}
     /** Stops recording; keep=true adds it to the message (sent right away when send=true). */
     private void finishRecording(boolean send){if(recorder==null)return;ui.removeCallbacks(recordTick);boolean ok=System.currentTimeMillis()-recordStart>700;
         try{recorder.stop();}catch(Exception e){ok=false;}recorder.release();recorder=null;if(recordBar!=null){recordBar.setVisibility(View.GONE);composeRow.setVisibility(View.VISIBLE);}
@@ -2491,16 +2502,123 @@ public class PairedActivity extends Activity {
             if(screen.equals("inbox"))renderInbox();else if(screen.equals("settings"))settings();else if(screen.equals("newchat"))loadPhoneContacts();}
         if(request==CONTACTS_PERMISSION&&screen.equals("newchat"))renderContacts();
         if(request==78){JSONObject pending=pendingTranscription;pendingTranscription=null;if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED&&pending!=null)transcribe(pending);else if(pending!=null)toast("Transcription needs microphone access.");}}
-    /** Plays an audio attachment in place; tap again to pause. */
-    private void playAudio(JSONObject media,TextView label){String id=PairedProtocol.string(media,"mediaID");
-        if(player!=null&&id.equals(playingId)){if(player.isPlaying())player.pause();else player.start();playingLabel=label;updatePlayLabel();return;}
-        stopAudio();withFile(media,"Downloading…",file->{try{player=new MediaPlayer();player.setDataSource(file.getPath());player.prepare();player.setOnCompletionListener(mp->{stopAudio();renderMessages(false);});player.start();
-            if(voiceSpeed()!=1f){try{player.setPlaybackParams(player.getPlaybackParams().setSpeed(voiceSpeed()));}catch(Exception ignored){}}
-            playingId=id;playingLabel=label;updatePlayLabel();}catch(Exception e){stopAudio();openExternally(file,media);}});}
-    private void updatePlayLabel(){ui.removeCallbacks(playTick);if(player==null||playingLabel==null)return;
-        try{int at=player.getCurrentPosition()/1000,len=Math.max(0,player.getDuration()/1000);playingLabel.setText(String.format(Locale.US,"%s %d:%02d / %d:%02d",player.isPlaying()?"⏸":"▶",at/60,at%60,len/60,len%60));}catch(Exception ignored){}
-        if(player.isPlaying())ui.postDelayed(playTick,500);}
-    private void stopAudio(){ui.removeCallbacks(playTick);if(player!=null){try{player.release();}catch(Exception ignored){}player=null;}playingId="";playingLabel=null;}
+    // ---- Voice messages: the card, and playing them ----
+    /** The parts of a voice message card on screen, so playback can update them without redrawing the chat. */
+    private static final class VoiceCard{final JSONObject message,media;final String id;final boolean outgoing;final ImageView icon;final ProgressBar spinner;final FrameLayout button;
+        final Waveform wave;final TextView time,speed;final View dot;long ms;int iconShown;
+        VoiceCard(JSONObject message,JSONObject media,String id,boolean outgoing,FrameLayout button,ImageView icon,ProgressBar spinner,Waveform wave,TextView time,TextView speed,View dot){
+            this.message=message;this.media=media;this.id=id;this.outgoing=outgoing;this.button=button;this.icon=icon;this.spinner=spinner;this.wave=wave;this.time=time;this.speed=speed;this.dot=dot;}}
+    private final Map<String,VoiceCard> voiceCards=new HashMap<>();
+    /** Voice messages in the chat in order, as [mediaID, messageID]: when one ends, an unplayed one right after it from the same person plays next. */
+    private final List<String[]> voiceOrder=new ArrayList<>();
+    private MediaPlayer player;private String playingId="",preparingId="";private final Runnable playTick=this::voiceTick;
+    private android.media.AudioFocusRequest focusRequest;private boolean noisyOn;
+    private final android.content.BroadcastReceiver noisy=new android.content.BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){pauseVoice();}};
+    private static final android.media.AudioAttributes SPEECH=new android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_MEDIA).setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build();
+
+    private ImageView roundIcon(int drawable,int background,int tint,int sizeDp){ImageView i=new ImageView(this);i.setImageResource(drawable);i.setImageTintList(ColorStateList.valueOf(tint));
+        i.setBackground(oval(background));int pad=Math.round(sizeDp*0.24f);i.setPadding(dp(pad),dp(pad),dp(pad),dp(pad));i.setLayoutParams(new LinearLayout.LayoutParams(dp(sizeDp),dp(sizeDp)));return i;}
+
+    /**
+     * A voice message: a round play button, the waveform (drag it to move through the message),
+     * the length (or time played), a dot until you've played one sent to you, and the speed while
+     * it's playing. The waveform and length are worked out from the audio once it's on the phone.
+     */
+    private View voiceCard(JSONObject m,JSONObject media,boolean outgoing,ChatTheme theme){String id=PairedProtocol.string(media,"mediaID");
+        int fg=outgoing?theme.onBubble(dark):ink,accent=outgoing?fg:theme.accent(dark),onAccent=outgoing?theme.bubble(dark):theme.onAccent(dark);
+        LinearLayout card=row();card.setGravity(Gravity.CENTER_VERTICAL);card.setPadding(dp(8),dp(8),dp(12),dp(8));card.setBackground(shape(outgoing?theme.bubble(dark):surface,26));
+        FrameLayout button=new FrameLayout(this);button.setBackground(oval(accent));pressDim(button);
+        ImageView icon=new ImageView(this);icon.setImageResource(R.drawable.ic_play);icon.setImageTintList(ColorStateList.valueOf(onAccent));icon.setPadding(dp(10),dp(10),dp(10),dp(10));button.addView(icon,new FrameLayout.LayoutParams(-1,-1));
+        ProgressBar spinner=new ProgressBar(this,null,android.R.attr.progressBarStyleSmall);spinner.setIndeterminateTintList(ColorStateList.valueOf(onAccent));spinner.setVisibility(View.GONE);
+        button.addView(spinner,new FrameLayout.LayoutParams(dp(22),dp(22),Gravity.CENTER));card.addView(button,new LinearLayout.LayoutParams(dp(42),dp(42)));
+        LinearLayout mid=vertical();mid.setPadding(dp(10),dp(2),0,0);
+        Waveform wave=new Waveform(this);wave.setColors(fg,(fg&0x00ffffff)|(outgoing?0x66000000:0x55000000));
+        int waveW=Math.min(dp(190),Math.round(getResources().getDisplayMetrics().widthPixels*0.42f));mid.addView(wave,new LinearLayout.LayoutParams(waveW,dp(30)));
+        LinearLayout under=row();under.setGravity(Gravity.CENTER_VERTICAL);TextView time=text("",12,outgoing?fg:muted,false);time.setFontFeatureSettings("tnum");under.addView(time);
+        View dot=new View(this);dot.setBackground(oval(theme.accent(dark)));LinearLayout.LayoutParams dl=new LinearLayout.LayoutParams(dp(7),dp(7));dl.setMarginStart(dp(7));under.addView(dot,dl);
+        mid.addView(under);card.addView(mid);
+        TextView speed=text(speedLabel(voiceSpeed()),12,fg,true);speed.setPadding(dp(9),dp(4),dp(9),dp(4));speed.setBackground(shape((fg&0x00ffffff)|0x22000000,12));speed.setFontFeatureSettings("tnum");
+        speed.setContentDescription("Playback speed");speed.setOnClickListener(v->cycleVoiceSpeed(speed));LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(-2,-2);sl.setMarginStart(dp(10));sl.gravity=Gravity.CENTER_VERTICAL;card.addView(speed,sl);
+        VoiceCard vc=new VoiceCard(m,media,id,outgoing,button,icon,spinner,wave,time,speed,dot);
+        VoiceNotes.Info info=VoiceNotes.saved(this,id);if(info!=null){wave.setPeaks(info.peaks);vc.ms=info.ms;}else prepareVoiceInfo(vc);
+        if(!id.isEmpty()){voiceCards.put(id,vc);voiceOrder.add(new String[]{id,m.optString("messageID"),m.optString("participantID")});}
+        button.setOnClickListener(v->toggleVoice(media,m));card.setOnClickListener(v->toggleVoice(media,m));card.setOnLongClickListener(v->{messageSheet(m);return true;});
+        wave.setOnSeek((f,done)->seekVoice(vc,f,done));
+        bindVoice(vc);return card;}
+    /** Shows a card as it is now: playing, paused, loading or idle; where it's at; and whether you've played it. */
+    private void bindVoice(VoiceCard vc){boolean active=vc.id.equals(playingId)&&player!=null,loading=vc.id.equals(preparingId),playing=active&&player.isPlaying();
+        vc.icon.setVisibility(loading?View.INVISIBLE:View.VISIBLE);vc.spinner.setVisibility(loading?View.VISIBLE:View.GONE);
+        // Called 20 times a second while playing, so only what changed is touched.
+        int icon=playing?R.drawable.ic_pause:R.drawable.ic_play;if(vc.iconShown!=icon){vc.icon.setImageResource(icon);vc.iconShown=icon;}
+        long at=0,len=vc.ms;if(active){try{at=player.getCurrentPosition();if(player.getDuration()>0)len=player.getDuration();}catch(Exception ignored){}}
+        vc.wave.setProgress(active&&len>0?at/(float)len:0f);
+        if(!vc.wave.dragging())setIfChanged(vc.time,active?VoiceNotes.clock(at):len>0?VoiceNotes.clock(len):"Voice message");
+        setIfChanged(vc.speed,speedLabel(voiceSpeed()));vc.speed.setVisibility(active?View.VISIBLE:View.GONE);
+        vc.dot.setVisibility(!vc.outgoing&&!VoiceNotes.played(this,vc.id)&&!active?View.VISIBLE:View.GONE);
+        String what=len>0?"Voice message, "+VoiceNotes.clock(len):"Voice message";
+        vc.button.setContentDescription(loading?"Loading "+what:(playing?"Pause ":"Play ")+what.substring(0,1).toLowerCase(Locale.ROOT)+what.substring(1));}
+    private void bindVoice(String id){VoiceCard vc=voiceCards.get(id);if(vc!=null)bindVoice(vc);}
+    private static void setIfChanged(TextView t,String value){if(!t.getText().toString().equals(value))t.setText(value);}
+    /** The waveform and length, from the audio: worked out now if it's on the phone, or once it's downloaded (voice messages are small). */
+    private void prepareVoiceInfo(VoiceCard vc){File cached=MediaCache.file(this,vc.media,false);
+        VoiceNotes.Ready ready=info->{VoiceCard now=voiceCards.get(vc.id);if(now==null)return;now.ms=info.ms;now.wave.setPeaks(info.peaks);bindVoice(now);};
+        if(cached.isFile()){VoiceNotes.analyze(this,cached,vc.id,ready);return;}
+        if(!PairedService.ready()||!MediaCache.hasFull(vc.media)||MediaCache.needsPhone(vc.media))return;
+        MediaCache.fetch(this,vc.media,false,(file,error)->{if(file!=null)VoiceNotes.analyze(this,file,vc.id,ready);});}
+    /** Play or pause; a different message stops the one playing. */
+    private void toggleVoice(JSONObject media,JSONObject m){String id=PairedProtocol.string(media,"mediaID");
+        if(player!=null&&id.equals(playingId)){if(player.isPlaying())pauseVoice();else resumeVoice();return;}
+        startVoice(media,m,0f);}
+    private void startVoice(JSONObject media,JSONObject m,float fraction){String id=PairedProtocol.string(media,"mediaID");stopAudio();preparingId=id;bindVoice(id);
+        File cached=MediaCache.file(this,media,false);
+        if(cached.isFile()){playVoice(cached,media,fraction);return;}
+        // An old message only on the phone goes through the usual "getting it from your phone" wait.
+        if(MediaCache.needsPhone(media)||!PairedService.ready()){preparingId="";bindVoice(id);withFile(media,"Downloading…",file->{preparingId=id;playVoice(file,media,fraction);});return;}
+        MediaCache.fetch(this,media,false,(file,error)->{if(!id.equals(preparingId))return;
+            if(file==null){preparingId="";bindVoice(id);error(error);return;}playVoice(file,media,fraction);});}
+    /** Prepares the player off the main thread, then starts at fraction of the way through. */
+    private void playVoice(File file,JSONObject media,float fraction){String id=PairedProtocol.string(media,"mediaID");
+        MediaPlayer mp=new MediaPlayer();player=mp;playingId="";
+        try{mp.setAudioAttributes(SPEECH);mp.setDataSource(file.getPath());}catch(Exception e){releaseVoice();preparingId="";bindVoice(id);openExternally(file,media);return;}
+        mp.setOnPreparedListener(p->{if(player!=p||!id.equals(preparingId))return;preparingId="";playingId=id;
+            if(fraction>0&&p.getDuration()>0)p.seekTo(Math.round(fraction*p.getDuration()));
+            VoiceNotes.markPlayed(this,id);
+            // Its length, if the waveform isn't there yet.
+            VoiceCard vc=voiceCards.get(id);if(vc!=null&&vc.ms<=0)vc.ms=p.getDuration();if(VoiceNotes.saved(this,id)==null)VoiceNotes.analyze(this,file,id,info->{VoiceCard now=voiceCards.get(id);if(now!=null){now.ms=info.ms;now.wave.setPeaks(info.peaks);bindVoice(now);}});
+            resumeVoice();});
+        mp.setOnCompletionListener(p->{if(player==p)voiceEnded(id);});
+        mp.setOnErrorListener((p,what,extra)->{if(player!=p)return true;releaseVoice();preparingId="";bindVoice(id);toast("This voice message can't be played here. Opening it in another app.");openExternally(file,media);return true;});
+        try{mp.prepareAsync();}catch(Exception e){releaseVoice();preparingId="";bindVoice(id);openExternally(file,media);}}
+    private void resumeVoice(){if(player==null)return;
+        // Other audio (music, a podcast) pauses while it plays and picks back up after.
+        android.media.AudioManager am=getSystemService(android.media.AudioManager.class);
+        if(focusRequest==null)focusRequest=new android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT).setAudioAttributes(SPEECH)
+            .setOnAudioFocusChangeListener(change->{if(change==android.media.AudioManager.AUDIOFOCUS_LOSS||change==android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)pauseVoice();},ui).build();
+        am.requestAudioFocus(focusRequest);
+        // Headphones unplugged or disconnected: pause rather than play out loud.
+        if(!noisyOn){registerReceiver(noisy,new IntentFilter(android.media.AudioManager.ACTION_AUDIO_BECOMING_NOISY),Context.RECEIVER_NOT_EXPORTED);noisyOn=true;}
+        try{player.start();if(voiceSpeed()!=1f)player.setPlaybackParams(player.getPlaybackParams().setSpeed(voiceSpeed()));}catch(Exception ignored){}bindVoice(playingId);voiceTick();}
+    private void pauseVoice(){if(player!=null){try{if(player.isPlaying())player.pause();}catch(Exception ignored){}}letGoOfAudio();bindVoice(playingId);ui.removeCallbacks(playTick);}
+    /** Drag the waveform: the time follows your finger; letting go plays from there (or moves a paused one there). */
+    private void seekVoice(VoiceCard vc,float f,boolean done){boolean active=vc.id.equals(playingId)&&player!=null;long len=vc.ms;
+        if(active){try{if(player.getDuration()>0)len=player.getDuration();}catch(Exception ignored){}}
+        if(!done){if(len>0)vc.time.setText(VoiceNotes.clock(Math.round(f*len)));return;}
+        if(active){try{player.seekTo(Math.round(f*len));}catch(Exception ignored){}bindVoice(vc);return;}
+        startVoice(vc.media,vc.message,f);}
+    private void voiceTick(){ui.removeCallbacks(playTick);if(player==null||playingId.isEmpty())return;bindVoice(playingId);
+        boolean playing;try{playing=player.isPlaying();}catch(Exception e){playing=false;}if(playing)ui.postDelayed(playTick,50);}
+    /** One ended: back to the start, and an unplayed voice message right after it from the same person plays next. */
+    private void voiceEnded(String id){stopAudio();bindVoice(id);
+        for(int i=0;i+1<voiceOrder.size();i++){if(!voiceOrder.get(i)[0].equals(id))continue;String[] next=voiceOrder.get(i+1);VoiceCard vc=voiceCards.get(next[0]);
+            if(vc!=null&&!vc.outgoing&&next[2].equals(voiceOrder.get(i)[2])&&!VoiceNotes.played(this,next[0])&&adjacent(voiceOrder.get(i)[1],next[1]))startVoice(vc.media,vc.message,0f);break;}}
+    /** Whether two messages are next to each other in the chat (nothing said in between). */
+    private boolean adjacent(String a,String b){View va=messageViews.get(a),vb=messageViews.get(b);if(va==null||vb==null||va.getParent()!=items||vb.getParent()!=items)return false;
+        int ia=items.indexOfChild(va),ib=items.indexOfChild(vb);if(ia<0||ib<=ia)return false;
+        for(int k=ia+1;k<ib;k++)if(messageViews.containsValue(items.getChildAt(k)))return false;return true;}
+    private void letGoOfAudio(){if(focusRequest!=null)getSystemService(android.media.AudioManager.class).abandonAudioFocusRequest(focusRequest);
+        if(noisyOn){try{unregisterReceiver(noisy);}catch(Exception ignored){}noisyOn=false;}}
+    private void releaseVoice(){ui.removeCallbacks(playTick);if(player!=null){try{player.release();}catch(Exception ignored){}player=null;}letGoOfAudio();}
+    private void stopAudio(){String was=playingId;releaseVoice();playingId="";if(!was.isEmpty())bindVoice(was);}
 
     // Sharing into the app
     /** Text, photos, or files shared from another app: copied in, then a chat is chosen (or opened directly from Android's share sheet). */
