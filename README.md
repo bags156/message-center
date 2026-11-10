@@ -27,6 +27,7 @@ For Obtainium, use `https://github.com/bags156/message-center`. Regular releases
 - An independent foreground connection and incoming-message notifications, including a boot receiver for an enabled saved connection.
 - Google-reported send/delivery/read status. Request acceptance is labeled separately from delivery.
 - Authenticated encryption of the paired session with Android Keystore, private app storage for synced messages, and disabled cloud backup.
+- Photos and videos are made a sensible size before sending: videos are re-encoded to H.264 at up to 1080p and 30 frames a second for RCS (HDR is converted so colours stay right), or squeezed under 1 MB for MMS.
 - Details → Shared: the chat's photos & videos, links and files, each in its own tab, newest first under month headings. Hold any item to jump to it in the chat, copy or share it.
 - Message effects: when an iPhone sends Balloons, Confetti, Slam, Invisible Ink and the rest, RCS only delivers a "(sent with …)" note. The chat plays the effect and hides the note (tap "Replay" to see it again); "Happy birthday", "Congratulations" and "Happy New Year" play theirs too. RCS can't carry an effect, so none are sent.
 

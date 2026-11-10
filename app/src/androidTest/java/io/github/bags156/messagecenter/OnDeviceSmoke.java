@@ -232,6 +232,87 @@ public final class OnDeviceSmoke extends Instrumentation {
         {android.graphics.Bitmap bm=android.graphics.Bitmap.createBitmap(800,600,android.graphics.Bitmap.Config.ARGB_8888);bm.eraseColor(0xff336699);try(java.io.FileOutputStream fo=new java.io.FileOutputStream(small)){bm.compress(android.graphics.Bitmap.CompressFormat.JPEG,90,fo);}}
         check(PhotoPrep.prepare(small,"small.jpg","image/jpeg",true).file==small,"A small photo was re-encoded for no reason");
         big.delete();small.delete();}
+    /** A 2-second 1280×720 clip filmed sideways (rotation 90), with stereo sound, heavy enough to need shrinking. */
+    private java.io.File makeTestVideo(java.io.File out)throws Exception{
+        int w=1280,h=720,frames=60;android.media.MediaCodec.BufferInfo info=new android.media.MediaCodec.BufferInfo();
+        android.media.MediaFormat vf=android.media.MediaFormat.createVideoFormat("video/avc",w,h);
+        vf.setInteger(android.media.MediaFormat.KEY_COLOR_FORMAT,android.media.MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible);
+        vf.setInteger(android.media.MediaFormat.KEY_BIT_RATE,12_000_000);vf.setInteger(android.media.MediaFormat.KEY_FRAME_RATE,30);vf.setInteger(android.media.MediaFormat.KEY_I_FRAME_INTERVAL,1);
+        android.media.MediaCodec ve=android.media.MediaCodec.createEncoderByType("video/avc");ve.configure(vf,null,null,android.media.MediaCodec.CONFIGURE_FLAG_ENCODE);ve.start();
+        java.util.List<byte[]> vData=new java.util.ArrayList<>();java.util.List<long[]> vMeta=new java.util.ArrayList<>();android.media.MediaFormat vOut=null;
+        int frame=0;boolean inDone=false,outDone=false;
+        while(!outDone){
+            if(!inDone){int i=ve.dequeueInputBuffer(10_000);if(i>=0){long t=frame*1_000_000L/30;
+                if(frame==frames){ve.queueInputBuffer(i,0,0,t,android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM);inDone=true;}
+                else{android.media.Image img=ve.getInputImage(i);android.media.Image.Plane[] pl=img.getPlanes();
+                    // Blocky noise that changes every frame, so it can't compress to nothing.
+                    for(int c=0;c<3;c++){java.nio.ByteBuffer b=pl[c].getBuffer();int rs=pl[c].getRowStride(),ps=pl[c].getPixelStride(),pw=c==0?w:w/2,ph=c==0?h:h/2,blk=c==0?8:4;
+                        for(int y=0;y<ph;y++)for(int x=0;x<pw;x++){int v=(x/blk)*73856093^(y/blk)*19349663^(frame*83492791)^c*2654435;v=(v^(v>>>13))*0x5bd1e995;b.put(y*rs+x*ps,(byte)(c==0?(v>>>8)&0xff:96+((v>>>16)&63)));}}
+                    ve.queueInputBuffer(i,0,w*h*3/2,t,0);frame++;}}}
+            int o=ve.dequeueOutputBuffer(info,10_000);
+            if(o==android.media.MediaCodec.INFO_OUTPUT_FORMAT_CHANGED)vOut=ve.getOutputFormat();
+            else if(o>=0){java.nio.ByteBuffer b=ve.getOutputBuffer(o);
+                if((info.flags&android.media.MediaCodec.BUFFER_FLAG_CODEC_CONFIG)==0&&info.size>0){byte[] d=new byte[info.size];b.position(info.offset);b.get(d);vData.add(d);vMeta.add(new long[]{info.presentationTimeUs,info.flags});}
+                if((info.flags&android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM)!=0)outDone=true;ve.releaseOutputBuffer(o,false);}}
+        ve.stop();ve.release();
+        android.media.MediaFormat af=android.media.MediaFormat.createAudioFormat("audio/mp4a-latm",48000,2);af.setInteger(android.media.MediaFormat.KEY_BIT_RATE,128_000);
+        af.setInteger(android.media.MediaFormat.KEY_AAC_PROFILE,android.media.MediaCodecInfo.CodecProfileLevel.AACObjectLC);
+        android.media.MediaCodec ae=android.media.MediaCodec.createEncoderByType("audio/mp4a-latm");ae.configure(af,null,null,android.media.MediaCodec.CONFIGURE_FLAG_ENCODE);ae.start();
+        java.util.List<byte[]> aData=new java.util.ArrayList<>();java.util.List<long[]> aMeta=new java.util.ArrayList<>();android.media.MediaFormat aOut=null;
+        long sample=0,total=48000L*2;inDone=false;outDone=false;
+        while(!outDone){
+            if(!inDone){int i=ae.dequeueInputBuffer(10_000);if(i>=0){java.nio.ByteBuffer b=ae.getInputBuffer(i);long t=sample*1_000_000L/48000;
+                if(sample>=total){ae.queueInputBuffer(i,0,0,t,android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM);inDone=true;}
+                else{int n=(int)Math.min(b.capacity()/4,total-sample);b.clear();b.order(java.nio.ByteOrder.nativeOrder());
+                    for(int k=0;k<n;k++){short v=(short)(Math.sin(2*Math.PI*440*(sample+k)/48000.0)*8000);b.putShort(v);b.putShort(v);}
+                    ae.queueInputBuffer(i,0,n*4,t,0);sample+=n;}}}
+            int o=ae.dequeueOutputBuffer(info,10_000);
+            if(o==android.media.MediaCodec.INFO_OUTPUT_FORMAT_CHANGED)aOut=ae.getOutputFormat();
+            else if(o>=0){java.nio.ByteBuffer b=ae.getOutputBuffer(o);
+                if((info.flags&android.media.MediaCodec.BUFFER_FLAG_CODEC_CONFIG)==0&&info.size>0){byte[] d=new byte[info.size];b.position(info.offset);b.get(d);aData.add(d);aMeta.add(new long[]{info.presentationTimeUs,info.flags});}
+                if((info.flags&android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM)!=0)outDone=true;ae.releaseOutputBuffer(o,false);}}
+        ae.stop();ae.release();
+        check(vOut!=null&&aOut!=null&&vData.size()>=frames-2,"The test video couldn't be made ("+vData.size()+" frames)");
+        android.media.MediaMuxer mux=new android.media.MediaMuxer(out.getPath(),android.media.MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);mux.setOrientationHint(90);
+        int vt=mux.addTrack(vOut),at=mux.addTrack(aOut);mux.start();
+        java.util.function.BiConsumer<Integer,Object[]> write=(track,lists)->{@SuppressWarnings("unchecked") java.util.List<byte[]> d=(java.util.List<byte[]>)lists[0];@SuppressWarnings("unchecked") java.util.List<long[]> m=(java.util.List<long[]>)lists[1];
+            for(int k=0;k<d.size();k++){android.media.MediaCodec.BufferInfo bi=new android.media.MediaCodec.BufferInfo();bi.set(0,d.get(k).length,m.get(k)[0],(int)(m.get(k)[1]&android.media.MediaCodec.BUFFER_FLAG_KEY_FRAME));mux.writeSampleData(track,java.nio.ByteBuffer.wrap(d.get(k)),bi);}};
+        write.accept(vt,new Object[]{vData,vMeta});write.accept(at,new Object[]{aData,aMeta});mux.stop();mux.release();
+        return out;}
+    /** Display size (rotation applied), duration and sound of a video file. */
+    private int[] videoFacts(java.io.File f)throws Exception{android.media.MediaMetadataRetriever r=new android.media.MediaMetadataRetriever();
+        try{r.setDataSource(f.getPath());int w=Integer.parseInt(r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)),h=Integer.parseInt(r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
+            String rot=r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);int deg=rot==null?0:Integer.parseInt(rot);if(deg==90||deg==270){int t=w;w=h;h=t;}
+            int ms=Integer.parseInt(r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION));int channels=0;
+            android.media.MediaExtractor x=new android.media.MediaExtractor();x.setDataSource(f.getPath());
+            for(int i=0;i<x.getTrackCount();i++){android.media.MediaFormat fm=x.getTrackFormat(i);if(fm.getString(android.media.MediaFormat.KEY_MIME).startsWith("audio/"))channels=fm.getInteger(android.media.MediaFormat.KEY_CHANNEL_COUNT);}
+            x.release();return new int[]{w,h,ms,channels};}finally{r.release();}}
+    /** Videos are shrunk to send: kept upright, about the right size, with their sound; mono and under 1 MB for MMS. */
+    private void checkVideoPrep()throws Exception{
+        java.io.File dir=new java.io.File(getTargetContext().getCacheDir(),"outgoing");dir.mkdirs();
+        java.io.File src=makeTestVideo(new java.io.File(dir,"smoke-video.mp4"));int[] in=videoFacts(src);
+        check(in[0]==720&&in[1]==1280&&in[3]==2,"The test video is "+in[0]+"×"+in[1]+" with "+in[3]+" channels");
+        VideoPlan.Source s=VideoPrep.read(src,"video/mp4");
+        check(s!=null&&s.video.equals("video/avc")&&s.audio.equals("audio/mp4a-latm")&&!s.hdr&&Math.abs(s.durationMs-2000)<200,"The video wasn't read right ("+(s==null?"null":s.video+" "+s.audio+" "+s.durationMs+" ms")+")");
+        int[] seen={-1};long t0=System.currentTimeMillis();
+        PhotoPrep.Ready rcs=VideoPrep.prepare(getTargetContext(),src,"VID_2026.MP4","video/mp4",false,p->seen[0]=Math.max(seen[0],p));long rcsMs=System.currentTimeMillis()-t0;
+        check(rcs.file!=src&&rcs.file.isFile(),"A heavy video wasn't re-encoded for RCS");
+        check(rcs.file.length()<src.length(),"The RCS video came out "+rcs.file.length()+" bytes, from "+src.length());
+        check(rcs.mime.equals("video/mp4")&&rcs.name.equals("VID_2026.mp4"),"The prepared video is named "+rcs.name+" ("+rcs.mime+")");
+        int[] r=videoFacts(rcs.file);
+        check(r[0]<r[1]&&Math.abs(r[0]-720)<=16&&Math.abs(r[1]-1280)<=16,"The RCS video is "+r[0]+"×"+r[1]+" (should stay 720×1280, upright)");
+        check(Math.abs(r[2]-2000)<=300&&r[3]==2,"The RCS video is "+r[2]+" ms with "+r[3]+" channels");
+        rcs.file.delete();
+        PhotoPrep.Ready mms=VideoPrep.prepare(getTargetContext(),src,"VID_2026.MP4","video/mp4",true,null);
+        check(mms.file!=src&&mms.file.length()<=VideoPlan.MMS_BYTES,"The MMS video is "+mms.file.length()+" bytes");
+        int[] m=videoFacts(mms.file);
+        check(m[0]<m[1]&&Math.abs(m[0]-480)<=16&&Math.abs(m[0]*16-m[1]*9)<=32*16,"The MMS video is "+m[0]+"×"+m[1]+" (should be about 480×854, upright)");
+        check(Math.abs(m[2]-2000)<=300&&m[3]==1,"The MMS video is "+m[2]+" ms with "+m[3]+" channels (should be mono)");
+        mms.file.delete();
+        // Not a video: left alone.
+        check(VideoPrep.prepare(getTargetContext(),src,"notes.pdf","application/pdf",false,null).file==src,"A file that isn't a video was touched");
+        src.delete();
+        android.util.Log.i("OnDeviceSmoke","Video prep: RCS took "+rcsMs+" ms, progress seen "+seen[0]);}
     /** New conversation: finds people in the phone's contacts and in your chats, not just Google's partial list. */
     private void checkNewConversationSearch(PairedActivity a)throws Exception{
         try(PairedStore store=new PairedStore(getTargetContext())){store.chat(new JSONObject("{conversationID:'riley',name:'Riley Chatfield',type:'RCS',lastMessageTimestamp:1794000000000000,participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'r1',number:'+15550104444'},fullName:'Riley Chatfield'}]}"));}
@@ -569,6 +650,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkInboxKeepsItsPlace((PairedActivity)activity);
         checkNewConversationSearch((PairedActivity)activity);
         checkPhotoPrep();
+        checkVideoPrep();
         checkMarkup((PairedActivity)activity);
         String speed=measureRedraw();
         try(PairedStore store=new PairedStore(getTargetContext())){store.clear();}
@@ -579,6 +661,6 @@ public final class OnDeviceSmoke extends Instrumentation {
         getTargetContext().getSharedPreferences("starred",0).edit().clear().commit();
         new ChatSettings(getTargetContext()).setBackground("smoke","");
         checkNotificationPrivacy();
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }

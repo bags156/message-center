@@ -13,6 +13,8 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Exact timing for message reminders, scheduled sends, and unread reminders (granted automatically; Android 13+). -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <!-- Keeps a video compressing for sending if the screen goes off (only while it compresses). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />

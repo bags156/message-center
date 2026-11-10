@@ -19,3 +19,8 @@ libde265 1.0.16 by struktur AG, licensed LGPL-3.0-or-later, in an isolated
 process. Its source and license are in bridge/heic/libde265 and in the
 dependency-source release archive. https://github.com/strukturag/libde265
 Some interface icon shapes follow Material Design icons by Google, licensed Apache-2.0.
+Videos are re-encoded for sending with AndroidX Media3 1.9.3 (Transformer, Effect and their
+modules) by The Android Open Source Project, licensed Apache-2.0: https://github.com/androidx/media
+Its dependencies (Guava, Kotlin standard library and coroutines, AndroidX annotation, core,
+collection, concurrent-futures and exifinterface) are licensed Apache-2.0; JSpecify, Checker
+Framework qualifiers and Error Prone annotations use Apache-2.0 or MIT.

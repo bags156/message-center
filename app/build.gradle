@@ -22,8 +22,15 @@ android {
     }
 }
 
+// Media3's effect library pulls in Lottie (animated overlays) and with it AppCompat; nothing here uses them.
+configurations.configureEach { exclude group: 'com.airbnb.android', module: 'lottie' }
+
 dependencies {
     implementation files('libs/messagebridge.aar')
+    // Re-encodes videos to a sendable size with the phone's own encoder (see VideoPrep). Apache-2.0.
+    implementation 'androidx.media3:media3-transformer:1.9.3'
+    implementation 'androidx.media3:media3-effect:1.9.3'
+    implementation 'androidx.media3:media3-common:1.9.3'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20240303'
 }

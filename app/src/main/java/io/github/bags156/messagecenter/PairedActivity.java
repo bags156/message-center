@@ -1307,7 +1307,7 @@ public class PairedActivity extends Activity {
             ()->getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Number",number)),()->setNickname(p)));}
     // ---- Attachments ----
     private static final int PICK_MEDIA=41,PICK_FILES=42;
-    private static final long MAX_ATTACHMENT=100L<<20;
+    private static final long MAX_ATTACHMENT=100L<<20,MAX_VIDEO=4L<<30;
     private final java.util.concurrent.ExecutorService decoder=java.util.concurrent.Executors.newFixedThreadPool(2);
     private final List<Outgoing> outgoing=new ArrayList<>();private String outgoingChat="";
     private LinearLayout attachStrip;private HorizontalScrollView attachScroll;
@@ -1674,11 +1674,14 @@ public class PairedActivity extends Activity {
     private Outgoing copyIn(Uri uri) throws Exception{String name="attachment";long size=-1;
         try(android.database.Cursor q=getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME,OpenableColumns.SIZE},null,null,null)){
             if(q!=null&&q.moveToFirst()){if(!q.isNull(0))name=q.getString(0);if(!q.isNull(1))size=q.getLong(1);}}
-        if(size>MAX_ATTACHMENT)throw new Exception(name+" is over 100 MB, the most Google Messages sends.");
         String mime=getContentResolver().getType(uri);if(mime==null)mime="application/octet-stream";
+        // Videos are compressed before sending (see VideoPrep), so a long 4K one is fine; other files go as they are.
+        boolean video=mime.startsWith("video/");long most=video?MAX_VIDEO:MAX_ATTACHMENT;String tooBig=video?name+" is over 4 GB, too big to send.":name+" is over 100 MB, the most Google Messages sends.";
+        if(size>most)throw new Exception(tooBig);
         File dir=new File(getCacheDir(),"outgoing");if(!dir.isDirectory())dir.mkdirs();File target=new File(dir,java.util.UUID.randomUUID()+"-"+name.replaceAll("[^A-Za-z0-9._-]","_"));
         long copied;try(java.io.InputStream in=getContentResolver().openInputStream(uri);java.io.OutputStream out=new java.io.FileOutputStream(target)){if(in==null)throw new Exception("That file can't be read.");copied=in.transferTo(out);}
-        if(copied>MAX_ATTACHMENT){target.delete();throw new Exception(name+" is over 100 MB, the most Google Messages sends.");}
+        catch(java.io.IOException e){target.delete();throw new Exception(dir.getUsableSpace()<(64L<<20)?"There isn't room on this phone to add "+name+". Free up some space and try again.":name+" couldn't be added.");}
+        if(copied>most){target.delete();throw new Exception(tooBig);}
         return new Outgoing(target,name,mime);}
     /** The row of picked attachments above the message box, each removable until sent. */
     private void renderAttachments(){if(attachStrip==null)return;attachStrip.removeAllViews();attachScroll.setVisibility(outgoing.isEmpty()?View.GONE:View.VISIBLE);
@@ -1714,14 +1717,17 @@ public class PairedActivity extends Activity {
     private void sendNext(JSONObject c,List<PendingMedia> sends,int index){
         if(index>=sends.size()){busy=false;if(screen.equals("chat")&&chatId.equals(sends.get(0).chat))loadMessages(false);return;}
         PendingMedia p=sends.get(index);Outgoing o=p.item;
-        // A picture message (MMS) carries about 1 MB, so photos are made to fit; RCS gets a sensible size. See PhotoPrep.
+        // A picture message (MMS) carries about 1 MB, so photos and videos are made to fit; RCS gets a sensible size. See PhotoPrep and VideoPlan.
         boolean mms=p.small||!PairedProtocol.rcs(c);
-        long queued=System.currentTimeMillis();
-        PairedService.executeSend(client->{long start=System.currentTimeMillis();PhotoPrep.Ready ready=PhotoPrep.prepare(o.file,o.name,o.mime,mms);long prepared=System.currentTimeMillis();
+        long queued=System.currentTimeMillis();android.content.Context app=getApplicationContext();boolean video=o.mime.startsWith("video/");
+        PairedService.executeSend(client->{long start=System.currentTimeMillis();
+            PhotoPrep.Ready ready=video?VideoPrep.prepare(app,o.file,o.name,o.mime,mms,percent->ui.post(()->{p.prep=percent;showPendingStatus(p);}))
+                :PhotoPrep.prepare(o.file,o.name,o.mime,mms);
+            long prepared=System.currentTimeMillis();if(video)ui.post(()->{p.prep=-1;showPendingStatus(p);});
             try{return client.sendMedia(c.toString(),ready.file.getPath(),ready.name,ready.mime,p.caption,p.reply);}
             finally{// For "Report a problem": how long each step took (sizes and times only).
-                Diagnostics.note("Sent "+(ready.mime.startsWith("image/")?"photo":"attachment")+" "+(ready.file.length()/1024)+" KB"+(ready.file!=o.file?" (from "+(o.file.length()/1024)+" KB)":"")+": waited "+(start-queued)+" ms, prepared "+(prepared-start)+" ms, uploaded and sent "+(System.currentTimeMillis()-prepared)+" ms");
-                if(ready.file!=o.file)ready.file.delete();}},(value,e)->{
+                Diagnostics.note("Sent "+(ready.mime.startsWith("image/")?"photo":ready.mime.startsWith("video/")?"video":"attachment")+" "+(ready.file.length()/1024)+" KB"+(ready.file!=o.file?" (from "+(o.file.length()/1024)+" KB)":"")+": waited "+(start-queued)+" ms, prepared "+(prepared-start)+" ms, uploaded and sent "+(System.currentTimeMillis()-prepared)+" ms");
+                if(ready.file!=o.file)ready.file.delete();}},(value,e)->{p.prep=-1;
             if(!e.isEmpty()){
                 // This one and the rest stay in the chat as "Not sent"; tap to send again or remove.
                 for(int k=index;k<sends.size();k++){sends.get(k).error=k==index?e:"Not sent because an earlier attachment failed.";}
@@ -1733,7 +1739,8 @@ public class PairedActivity extends Activity {
             if(screen.equals("chat"))renderMessages(false);sendNext(c,sends,index+1);});}
     // ---- Attachments on their way: shown at the bottom of the chat until Google shows the real message ----
     /** echo: Google's copy of this message before your phone has attached the photo (often just the caption, "Sending…"). */
-    private static final class PendingMedia{final String chat,caption,reply;final Outgoing item;final long started;long sent;String error="",replaces="",echo="";boolean small;Bitmap thumb;
+    /** prep: how far along a video is being compressed (0-100), or -1. status: its label while it's on screen. */
+    private static final class PendingMedia{final String chat,caption,reply;final Outgoing item;final long started;long sent;String error="",replaces="",echo="";boolean small;Bitmap thumb;int prep=-1;TextView status;
         PendingMedia(String chat,Outgoing item,String caption,String reply,long started){this.chat=chat;this.item=item;this.caption=caption;this.reply=reply;this.started=started;}}
     private final List<PendingMedia> pendingMedia=new ArrayList<>();
     private void thumbFor(PendingMedia p){Outgoing o=p.item;boolean visual=o.mime.startsWith("image/")||o.mime.startsWith("video/");if(!visual)return;
@@ -1788,9 +1795,13 @@ public class PairedActivity extends Activity {
             cap.setAlpha(0.7f);cap.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));capLine.addView(cap);items.addView(capLine,new LinearLayout.LayoutParams(-1,-2));}
         motion(line,"pm:"+System.identityHashCode(p),LIFT,motionPending.add(p)&&motionReady);
         boolean failed=!p.error.isEmpty()||echo!=null&&PairedProtocol.failed(echo),stuck=p.sent>0&&echo==null&&System.currentTimeMillis()-p.sent>180_000;
-        String label=failed?"Not sent • Tap to retry":p.sent==0?"Sending…":echo!=null?"Sending from your phone…":stuck?"Your phone hasn't sent this • Tap for options":"Sent to your phone • waiting for it to go out";
-        TextView st=text(label,12,failed?danger:muted,failed);st.setGravity(Gravity.END);st.setPadding(0,dp(4),dp(6),0);items.addView(st,new LinearLayout.LayoutParams(-1,-2));
+        TextView st=text(pendingLabel(p,echo,failed,stuck),12,failed?danger:muted,failed);st.setGravity(Gravity.END);st.setPadding(0,dp(4),dp(6),0);items.addView(st,new LinearLayout.LayoutParams(-1,-2));p.status=st;
         if(failed||stuck)st.setOnClickListener(v->pendingOptions(p));}}
+    private static String pendingLabel(PendingMedia p,JSONObject echo,boolean failed,boolean stuck){
+        return failed?"Not sent • Tap to retry":p.sent==0?(p.prep>=0?"Compressing video • "+p.prep+"%":"Sending…"):echo!=null?"Sending from your phone…":stuck?"Your phone hasn't sent this • Tap for options":"Sent to your phone • waiting for it to go out";}
+    /** Updates just the label under an attachment on its way (a video's compression), without redrawing the chat. */
+    private void showPendingStatus(PendingMedia p){TextView st=p.status;if(st==null||st.getParent()==null||!p.error.isEmpty()||p.sent>0)return;
+        String label=pendingLabel(p,null,false,false);if(!label.contentEquals(st.getText()))st.setText(label);}
     private final Set<PendingMedia> motionPending=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
     private void retryPending(PendingMedia p){if(!PairedService.ready()){toast("Connect to Google Messages first.");return;}JSONObject c=store.chat(p.chat);if(c==null)return;
         if(!p.item.file.isFile()){toast("That attachment is no longer on this phone. Send it again with +.");pendingMedia.remove(p);renderMessages(false);return;}
