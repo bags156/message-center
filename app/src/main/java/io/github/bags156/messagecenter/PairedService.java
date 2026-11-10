@@ -60,6 +60,7 @@ public final class PairedService extends Service {
     private PairedStore store; private SessionVault vault; private Outbox outbox; private boolean flushing,syncing,inactive;
     private ReadReceiptQueue receipts;private boolean readingReceipt;
     private MediaOutbox attachmentOutbox;private boolean flushingMedia;
+    private final java.util.Set<String> mediaRefreshes=new java.util.HashSet<>();
     private final Runnable receiptRetry=this::flushReadReceipts;
     private long lastSync;private final Runnable syncTick=()->requestSync(false);
     /** Per chat: the Google chat time already fetched up to, so the same chat isn't fetched again for nothing. */
@@ -331,7 +332,7 @@ public final class PairedService extends Service {
     }
     static void loadMessages(String id,String cursor,Result done) {
         execute(c->{PairedService s=current;long version=s.store.snapshot();JSONObject response=new JSONObject(c.messages(id,cursor));
-            JSONArray messages=response.optJSONArray("messages");if(messages!=null)for(int i=0;i<messages.length();i++){JSONObject m=messages.getJSONObject(i);s.store.message(m,version,false);s.store.page("source-page:"+m.optString("messageID"),cursor,"known");}
+            JSONArray messages=response.optJSONArray("messages");if(messages!=null)for(int i=0;i<messages.length();i++){JSONObject m=messages.getJSONObject(i);s.store.message(m,version,false);JSONObject saved=s.store.message(m.optString("messageID"));if(saved!=null)s.attachmentOutbox.reconcile(saved);s.store.page("source-page:"+m.optString("messageID"),cursor,"known");}s.attachmentOutbox.retireCompleted();
             String next=PairedProtocol.cursor(response),note="";
             if(!next.isEmpty() && next.equals(cursor)){next="";note="Google repeated a history cursor; stopped to prevent a loop.";}
             if(next.isEmpty() && note.isEmpty())note=response.optString("someBytes","").isEmpty()?"End of the history pages Google supplied. This does not prove the full phone archive was shared.":"Google returned a history format this version cannot page. More messages may exist in Google Messages.";
@@ -762,10 +763,11 @@ public final class PairedService extends Service {
             // A fast echo can precede the submit response. Reconcile exact IDs against the cached messages again.
             for(JSONObject m:store.messages(chat,100))attachmentOutbox.reconcile(m);
             attachmentOutbox.retireCompleted();
-            try{long version=store.snapshot();JSONObject page=new JSONObject(source.messages(chat,""));JSONArray messages=page.optJSONArray("messages");
-                if(messages!=null)for(int i=0;i<messages.length();i++){JSONObject m=messages.getJSONObject(i);store.message(m,version,false);JSONObject currentMessage=store.message(m.optString("messageID"));if(currentMessage!=null)attachmentOutbox.reconcile(currentMessage);}attachmentOutbox.retireCompleted();}catch(Exception ignored){}
         }catch(Exception e){attachmentOutbox.failed(id,attempt,e.getMessage()==null?"This attachment couldn't be sent.":e.getMessage());}
-        finally{main.post(()->{flushingMedia=false;if(current==this){changed("MEDIA_OUTBOX");changed("MESSAGE");flushMediaOutbox();}});}});
+        finally{main.post(()->{flushingMedia=false;if(current==this){changed("MEDIA_OUTBOX");changed("MESSAGE");
+            // History checks use the normal network lane, never hold the next attachment behind them.
+            if(mediaRefreshes.add(chat))main.postDelayed(()->{mediaRefreshes.remove(chat);if(current==this&&ready)loadMessages(chat,"",(v,e)->{});},1000);
+            flushMediaOutbox();}});}});
     }
     /** Sends saved messages one at a time, oldest first, while connected. */
     private void flushOutbox() {
