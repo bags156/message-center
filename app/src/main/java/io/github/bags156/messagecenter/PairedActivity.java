@@ -663,6 +663,12 @@ public class PairedActivity extends Activity {
         composer.setOnFocusChangeListener((v,focused)->updateQuickRow());
         composer.setOnReceiveContentListener(new String[]{"image/*","video/*"},keyboardContent);
         compose.addView(composer,new LinearLayout.LayoutParams(0,-2,1));
+        // A long message grows the box, up to about 40% of the space the chat has (less with the keyboard up),
+        // and never under 5 lines; past that it scrolls inside.
+        EditText box=composer;LinearLayout screenRoot=root;
+        screenRoot.addOnLayoutChangeListener((vw,l0,t0,r0,b0,ol0,ot0,or0,ob0)->{int tall=b0-t0;if(tall<=0||tall==ob0-ot0)return;
+            int most=Math.max(box.getLineHeight()*5+box.getPaddingTop()+box.getPaddingBottom(),Math.round(tall*0.4f));
+            if(box.getMaxHeight()!=most)box.post(()->box.setMaxHeight(most));});
         sendButton=new ImageView(this);sendButton.setImageResource(R.drawable.ic_send);sendButton.setImageTintList(ColorStateList.valueOf(theme.onAccent(dark)));sendButton.setBackground(oval(theme.accent(dark)));
         sendButton.setPadding(dp(14),dp(14),dp(14),dp(14));sendButton.setContentDescription("Send");sendButton.setOnClickListener(v->sendOrRecord());sendButton.setOnLongClickListener(v->{if(micShowing())startRecording();else if(dictation==null)scheduleMessage();return true;});
         LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(dp(52),dp(52));sl.setMarginStart(dp(8));compose.addView(sendButton,sl);root.addView(compose);renderAttachments();updateComposeButton();applyIncoming();

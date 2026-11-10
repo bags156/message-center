@@ -185,6 +185,16 @@ public final class OnDeviceSmoke extends Instrumentation {
         reader.getWindow().getDecorView().findViewsWithText(fx,"(sent with",android.view.View.FIND_VIEWS_WITH_TEXT);check(fx.isEmpty(),"The iPhone's \"(sent with Confetti)\" note is still shown");
         reader.getWindow().getDecorView().findViewsWithText(fx,"We got the house!!",android.view.View.FIND_VIEWS_WITH_TEXT);check(!fx.isEmpty(),"The message sent with Confetti is missing");fx.clear();
         reader.getWindow().getDecorView().findViewsWithText(fx,"Sent with Confetti. Tap to replay it.",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);check(fx.size()==1,"No \"Sent with Confetti\" line to replay it ("+fx.size()+")");
+        // A long message grows the message box past 5 lines, but only to about 40% of the screen.
+        java.lang.reflect.Field compF=PairedActivity.class.getDeclaredField("composer"),rootF=PairedActivity.class.getDeclaredField("root");compF.setAccessible(true);rootF.setAccessible(true);
+        StringBuilder longText=new StringBuilder();for(int i=0;i<40;i++)longText.append("This is line ").append(i+1).append(" of a long message\n");
+        runOnMainSync(()->{try{((android.widget.EditText)compF.get(reader)).setText(longText.toString().trim());}catch(Exception e){throw new RuntimeException(e);}});
+        waitForIdleSync();runOnMainSync(()->{});waitForIdleSync();
+        int[] box=new int[3];
+        runOnMainSync(()->{try{android.widget.EditText e=(android.widget.EditText)compF.get(reader);box[0]=e.getHeight();box[1]=e.getLineHeight();box[2]=((android.view.View)rootF.get(reader)).getHeight();}catch(Exception e){throw new RuntimeException(e);}});
+        check(box[0]>box[1]*6,"A long message didn't grow the message box ("+box[0]+" px, lines are "+box[1]+" px)");
+        check(box[0]<=box[2]*0.42f,"The message box grew past 40% of the screen ("+box[0]+" of "+box[2]+" px)");
+        runOnMainSync(()->{try{((android.widget.EditText)compF.get(reader)).setText("");}catch(Exception e){throw new RuntimeException(e);}});
         reader.finish();waitForIdleSync();}
     /** New conversation: finds people in the phone's contacts and in your chats, not just Google's partial list. */
     private void checkNewConversationSearch(PairedActivity a)throws Exception{
