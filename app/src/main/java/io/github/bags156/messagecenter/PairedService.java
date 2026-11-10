@@ -447,7 +447,7 @@ public final class PairedService extends Service {
             try{context.startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,context.getPackageName()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}catch(Exception ignored){}
             return "Turn on bubbles for Message Center (and in your phone's notification settings), then try again.";}
         PairedService s=current;if(s==null)return "Connect to Google Messages first, then try again.";
-        if(!NotificationPrivacy.showName(context))return "Bubbles show the chat's name and photo, so they're off while notifications show nothing. Change it in Settings → Notifications → What notifications show.";
+        if(!NotificationPrivacy.showName(context,id))return "Bubbles show the chat's name and photo, so they're off while this chat's notifications show nothing. Change it in this chat's Details, or in Settings → Notifications.";
         s.postConversation(id,null,true,true);return "";
     }
     /**
@@ -567,8 +567,8 @@ public final class PairedService extends Service {
         List<JSONObject> recent;
         synchronized(notified){List<JSONObject> list=notified.computeIfAbsent(id,k->new ArrayList<>());if(m!=null)list.add(m);while(list.size()>6)list.remove(0);recent=new ArrayList<>(list);}
         if(recent.isEmpty()){List<JSONObject> saved=store.messages(id,3);for(JSONObject r:saved)if(!PairedProtocol.body(r).isEmpty())recent.add(r);}
-        // Settings → What notifications show: "Name only" swaps what was said for a count; "Nothing" hides who it's from too.
-        boolean showText=NotificationPrivacy.showText(this),showName=NotificationPrivacy.showName(this)||bubbleNow;
+        // What notifications show (this chat's own choice, or Settings): "Name only" swaps what was said for a count; "Nothing" hides who it's from too.
+        boolean showText=NotificationPrivacy.showText(this,id),showName=NotificationPrivacy.showName(this,id)||bubbleNow;
         int incoming=0;JSONObject lastIn=null;for(JSONObject r:recent)if(!PairedProtocol.outgoing(r,chat)){incoming++;lastIn=r;}
         boolean replied=!recent.isEmpty()&&PairedProtocol.outgoing(recent.get(recent.size()-1),chat);
         String hidden=replied?"You replied":NotificationPrivacy.count(incoming);

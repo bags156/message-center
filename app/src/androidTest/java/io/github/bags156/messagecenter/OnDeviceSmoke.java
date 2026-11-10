@@ -34,6 +34,19 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(shown.contains("Secret plans")==mode.equals(NotificationPrivacy.ALL),"Message text "+(mode.equals(NotificationPrivacy.ALL)?"missing":"shown")+" with '"+mode+"': "+shown);
             check(shown.contains("Daniel")!=mode.equals(NotificationPrivacy.NONE),"Name "+(mode.equals(NotificationPrivacy.NONE)?"shown":"missing")+" with '"+mode+"': "+shown);
             nm.cancel("reminder:"+rid,2);Thread.sleep(300);}
+        // One chat set to "Nothing" while all chats show the name only: that chat says just "New message"-style text, the other shows who.
+        NotificationPrivacy.set(ctx,NotificationPrivacy.NAME);NotificationPrivacy.setOwn(ctx,"privacy-chat",NotificationPrivacy.NONE);
+        for(String chat:new String[]{"privacy-chat","privacy-other"}){
+            Reminders.add(ctx,chat,"privacy-"+chat,"Daniel Example","Secret plans for Friday",System.currentTimeMillis()+3_600_000L);
+            String rid=Reminders.forMessage(ctx,"privacy-"+chat).optString("id");fire.invoke(null,ctx,rid);
+            android.app.Notification n=null;for(int wait=0;wait<30&&n==null;wait++){for(android.service.notification.StatusBarNotification sbn:nm.getActiveNotifications())if(("reminder:"+rid).equals(sbn.getTag()))n=sbn.getNotification();if(n==null)Thread.sleep(100);}
+            check(n!=null,"Reminder notification wasn't posted ("+chat+")");
+            String shown=n.extras.getCharSequence(android.app.Notification.EXTRA_TITLE)+" | "+n.extras.getCharSequence(android.app.Notification.EXTRA_TEXT)+" | "+n.extras.getCharSequence(android.app.Notification.EXTRA_BIG_TEXT);
+            boolean hidden=chat.equals("privacy-chat");
+            check(!shown.contains("Secret plans"),"Message text shown for "+chat+": "+shown);
+            check(shown.contains("Daniel")!=hidden,"Name "+(hidden?"shown for a chat set to Nothing":"missing for a chat following Name only")+": "+shown);
+            nm.cancel("reminder:"+rid,2);Thread.sleep(300);}
+        NotificationPrivacy.setOwn(ctx,"privacy-chat","");check(NotificationPrivacy.own(ctx,"privacy-chat").isEmpty(),"A chat's own notification setting didn't clear");
         NotificationPrivacy.set(ctx,NotificationPrivacy.ALL);}
     /**
      * Pinned chats open only from the round photo, with no highlight box; a tap on its corner

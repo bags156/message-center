@@ -1287,6 +1287,8 @@ public class PairedActivity extends Activity {
             PairedService.refreshReceiptSettings();updateReceiptStatus();});}
         sheetAction(content,chatSettings.muted(id)?"Notifications: muted (tap to unmute)":"Notifications: on (tap to mute)",()->toggleMute(id));
         sheetAction(content,chatSettings.snoozed(id)?"Snoozed until "+snoozeLabel(id)+" (tap to change)":"Snooze notifications…",()->snoozeMenu(id));
+        String ownShows=NotificationPrivacy.own(this,id);
+        sheetAction(content,"Notifications show: "+(ownShows.isEmpty()?"same as all chats ("+NotificationPrivacy.label(NotificationPrivacy.mode(this)).toLowerCase(Locale.ROOT)+")":NotificationPrivacy.label(ownShows).toLowerCase(Locale.ROOT)),()->chatNotificationContent(id));
         sheetAction(content,"Search in chat",()->{thread(id);searchChat();});
         if(!group&&!people.isEmpty()){JSONObject p0=people.get(0);String nick=Nicknames.get(PairedProtocol.number(p0));sheetAction(content,nick.isEmpty()?"Set a nickname…":"Nickname: "+nick+" (change)",()->setNickname(p0));}
         sheetAction(content,"Export chat to a file",()->exportChat(id));
@@ -2397,6 +2399,14 @@ public class PairedActivity extends Activity {
                         if(--left[0]==0&&!sends.isEmpty()){busy=true;renderMessages(true);sendNext(c,sends,0);}});}})
             .setNegativeButton("Cancel",null).show();}
 
+    /** What this chat's notifications show, apart from the setting for all chats: e.g. just "New message" for one chat. */
+    private void chatNotificationContent(String id){String all=NotificationPrivacy.label(NotificationPrivacy.mode(this)).toLowerCase(Locale.ROOT);
+        List<String> labels=java.util.Arrays.asList("Same as all chats ("+all+")","Name and message","Name only","Nothing (just “New message”)");String[] values={"",NotificationPrivacy.ALL,NotificationPrivacy.NAME,NotificationPrivacy.NONE};
+        List<Runnable> actions=new ArrayList<>();
+        for(String v:values)actions.add(()->{NotificationPrivacy.setOwn(this,id,v);PairedService.refreshChatNotifications(this);
+            if(v.equals(NotificationPrivacy.NONE))toast("Notifications from this chat will just say “New message”.");if(screen.equals("details"))details();});
+        menuSheet("This chat's notifications show",labels,actions);}
+
     // Contacts and new conversations
     private void newMessage(){if(!PairedService.ready()){toast("Connect first, then start a chat.");return;}picked.clear();groupMode=false;contactQuery="";chatPeople=null;newChat();
         loadPhoneContacts();if(contacts==null)loadContacts();}
@@ -2791,7 +2801,8 @@ public class PairedActivity extends Activity {
         boolean allowed=checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED;
         settingRow(alerts,"Notifications",allowed?"Sound, vibration and per-chat options":"Turn on to hear about new messages",allowed?"On":"Off",()->{if(!allowed)requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},101);else startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()));});
         String shows=NotificationPrivacy.mode(this);
-        settingRow(alerts,"What notifications show",shows.equals(NotificationPrivacy.ALL)?"Who it's from and what they said":shows.equals(NotificationPrivacy.NAME)?"Who it's from, not what they said":"Just “New message”. Bubbles are off, since they show who it is.",NotificationPrivacy.label(shows),()->{
+        int ownChats=NotificationPrivacy.ownCount(this);String ownNote=ownChats==0?" Change it for one chat in its Details.":" "+ownChats+(ownChats==1?" chat has":" chats have")+" its own (in Details).";
+        settingRow(alerts,"What notifications show",(shows.equals(NotificationPrivacy.ALL)?"Who it's from and what they said.":shows.equals(NotificationPrivacy.NAME)?"Who it's from, not what they said.":"Just “New message”. Bubbles are off, since they show who it is.")+ownNote,NotificationPrivacy.label(shows),()->{
             List<String> labels=java.util.Arrays.asList("Name and message","Name only","Nothing (just “New message”)");String[] values={NotificationPrivacy.ALL,NotificationPrivacy.NAME,NotificationPrivacy.NONE};List<Runnable> actions=new ArrayList<>();
             for(String v:values)actions.add(()->{NotificationPrivacy.set(this,v);PairedService.refreshChatNotifications(this);if(screen.equals("settings"))settings();});
             menuSheet("What notifications show",labels,actions);});

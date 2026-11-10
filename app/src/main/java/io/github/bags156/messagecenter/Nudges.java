@@ -140,8 +140,8 @@ public final class Nudges extends BroadcastReceiver {
         PendingIntent later = PendingIntent.getBroadcast(context, code ^ 0x2727, new Intent(context, Nudges.class).setAction(DISMISS)
             .setData(Uri.parse("messagecenter://nudge-dismiss/" + id)).putExtra("chat", id).putExtra("message", mid), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         // Settings → What notifications show applies here too.
-        if (!NotificationPrivacy.showText(context)) body = "You have an unread message";
-        String heading = NotificationPrivacy.showName(context) ? "Still unread: " + title : "Still unread";
+        if (!NotificationPrivacy.showText(context, id)) body = "You have an unread message";
+        String heading = NotificationPrivacy.showName(context, id) ? "Still unread: " + title : "Still unread";
         Notification n = new Notification.Builder(context, CHANNEL).setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(heading).setContentText(body).setStyle(new Notification.BigTextStyle().bigText(body))
             .setCategory(Notification.CATEGORY_REMINDER).setVisibility(Notification.VISIBILITY_PRIVATE).setContentIntent(tap).setAutoCancel(true)
