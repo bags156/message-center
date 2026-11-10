@@ -70,23 +70,24 @@ final class MediaOutbox {
         if(j.optString("mediaTmpID").isEmpty()){put(j,"state",state);put(j,"error",error);}else{put(j,"captionState",state);put(j,"captionError",error);}});}
     /** Process death while submitting may have sent it. Never turn that into an automatic duplicate. */
     void recover(){synchronized(LOCK){List<JSONObject> items=read();for(JSONObject j:items){String s=j.optString("state");
-        if(j.optBoolean("bridgeStarted")&&j.optString("mediaTmpID").isEmpty()||s.equals(SUBMITTING)){put(j,"state",UNSURE);put(j,"error","The app stopped during the upload or submission. Check Google Messages before retrying.");}
+        if(j.optBoolean("bridgeStarted")&&!j.optBoolean("finished")&&j.optString("mediaTmpID").isEmpty()||s.equals(SUBMITTING)){put(j,"state",UNSURE);put(j,"error","The app stopped during the upload or submission. Check Google Messages before retrying.");}
         else if(s.equals(PREPARING)||s.equals(UPLOADING))put(j,"state",WAITING);
         if(!j.optString("mediaTmpID").isEmpty()&&(j.optString("captionState").equals(SUBMITTING)||j.optString("captionState").equals("pending"))){put(j,"captionState",UNSURE);put(j,"captionError","The photo was accepted but the text's outcome is unconfirmed. Check Google Messages before retrying.");}
         put(j,"attempt",j.optLong("attempt")+1);put(j,"finished",true);}
         save(items);}}
     void retry(String id,boolean caption){change(id,-1,j->{put(j,"attempt",j.optLong("attempt")+1);put(j,"finished",true);
-        if(caption){put(j,"captionState",WAITING);put(j,"captionError","");}
-        else{put(j,"state",WAITING);put(j,"mediaTmpID","");put(j,"mediaEcho","");put(j,"mediaPresent",false);put(j,"error","");}});}
+        if(caption){put(j,"captionState",WAITING);put(j,"captionSubmitTmpID","");put(j,"captionError","");}
+        else{put(j,"state",WAITING);put(j,"mediaTmpID","");put(j,"submitTmpID","");put(j,"mediaEcho","");put(j,"mediaPresent",false);put(j,"error","");}});}
     static boolean sendCaption(JSONObject j){return !j.optString("caption").isEmpty()&&j.optString("captionState").equals("pending");}
     /** Exact protocol identities only; another photo or a matching caption cannot claim this job. */
     boolean reconcile(JSONObject message){String tmp=message.optString("tmpID"),mid=message.optString("messageID"),chat=message.optString("conversationID");if(tmp.isEmpty()&&mid.isEmpty())return false;
+        List<String> identities=ReplyReferences.identities(message);
         synchronized(LOCK){List<JSONObject> items=read();boolean changed=false;for(JSONObject j:items){if(!chat.equals(j.optString("chat")))continue;
-            String media=j.optString("mediaTmpID",j.optString("submitTmpID")),caption=j.optString("captionTmpID",j.optString("captionSubmitTmpID")),status=PairedProtocol.status(message);
-            if(!media.isEmpty()&&(media.equals(tmp)||media.equals(mid))){put(j,"mediaTmpID",media);put(j,"mediaEcho",mid);put(j,"mediaPresent",!PairedProtocol.media(message).isEmpty());changed=true;
+            String media=j.optString("mediaTmpID"),caption=j.optString("captionTmpID"),status=PairedProtocol.status(message);if(media.isEmpty())media=j.optString("submitTmpID");if(caption.isEmpty())caption=j.optString("captionSubmitTmpID");
+            if(!media.isEmpty()&&identities.contains(media)){put(j,"mediaTmpID",media);put(j,"mediaEcho",mid);put(j,"mediaPresent",!PairedProtocol.media(message).isEmpty());changed=true;
                 if(PairedProtocol.failed(message)){put(j,"state",FAILED);put(j,"error","Google Messages reports that the attachment failed. Tap for options.");}
                 else if(status.equals("OUTGOING_DELIVERED")||status.equals("OUTGOING_DISPLAYED"))put(j,"state",DELIVERED);else if(status.equals("OUTGOING_COMPLETE"))put(j,"state",SENT);}
-            if(!caption.isEmpty()&&(caption.equals(tmp)||caption.equals(mid))){put(j,"captionEcho",mid);changed=true;if(PairedProtocol.failed(message)){put(j,"captionState",FAILED);put(j,"captionError","Google Messages reports that this text failed.");}}
+            if(!caption.isEmpty()&&identities.contains(caption)){put(j,"captionEcho",mid);changed=true;if(PairedProtocol.failed(message)){put(j,"captionState",FAILED);put(j,"captionError","Google Messages reports that this text failed.");}}
         }if(changed)save(items);return changed;}}
     void remove(String id){synchronized(LOCK){List<JSONObject> items=read();items.removeIf(j->id.equals(j.optString("id")));save(items);if(directory!=null)erase(new File(directory,id));}}
     void clear(){synchronized(LOCK){save(new ArrayList<>());if(directory!=null){File[] files=directory.listFiles();if(files!=null)for(File f:files)if(f.isDirectory())erase(f);}}}

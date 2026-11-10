@@ -42,6 +42,8 @@ Needs a reply uses the latest meaningful incoming or successfully sent outgoing 
 
 Picture text search uses the bundled ML Kit Latin-script model on the phone. It indexes new downloaded pictures, with a lightweight backfill on launch and a manual scan of older downloaded pictures in Settings. Inbox and in-chat search merge text and picture matches. Long-press a photo message to read/copy its recognized text. Indexing does not download remote pictures, and deleting messages removes them from search. Recognition can miss or misread unclear text.
 
+Group chats use a stable collage of participant photos or initials, a group marker and an additional-member count. The group design appears in the inbox and in Android bubble/shortcut icons, with every face inside the adaptive icon’s visible area. Your own and hidden participants are excluded.
+
 ## Current limits
 
 This is an unofficial integration using an undocumented Google protocol. Sign-in can be rejected and protocol changes can require an update or re-pairing. Pairing and sustained background operation have not yet been verified on the user's OnePlus 15 / ColorOS 17.

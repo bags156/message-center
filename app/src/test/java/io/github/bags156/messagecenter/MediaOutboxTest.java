@@ -31,4 +31,13 @@ public class MediaOutboxTest {
     @Test public void clearingQueueRejectsAnOldCompletion()throws Exception{
         MediaOutbox q=new MediaOutbox(new Memory());q.record(job());long a=q.begin("job").optLong("attempt");q.clear();q.finish("job",a,new JSONObject("{mediaTmpID:'late'}"));assertTrue(q.all().isEmpty());
     }
+    @Test public void aKnownUploadFailureRemainsFailedAfterRestart()throws Exception{
+        MediaOutbox q=new MediaOutbox(new Memory());q.record(job());long a=q.begin("job").optLong("attempt");q.bridgeStarting("job",a);q.failed("job",a,"The attachment could not be uploaded.");q.recover();
+        assertEquals(MediaOutbox.FAILED,q.get("job").optString("state"));assertNull(q.next());
+    }
+    @Test public void aReidentifiedEchoCanUseAnExactProviderAlias()throws Exception{
+        MediaOutbox q=new MediaOutbox(new Memory());q.record(job());long a=q.begin("job").optLong("attempt");q.progress("job",a,MediaOutbox.SUBMITTING,-1,"submit-id");
+        assertTrue(q.reconcile(new JSONObject("{messageID:'real-id',conversationID:'chat',anotherMessageID:{messageID:'submit-id'},messageStatus:{status:'OUTGOING_COMPLETE'}}")));
+        assertEquals("real-id",q.get("job").optString("mediaEcho"));
+    }
 }

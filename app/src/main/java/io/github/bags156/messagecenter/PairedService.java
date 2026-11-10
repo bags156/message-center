@@ -61,6 +61,7 @@ public final class PairedService extends Service {
     private ReadReceiptQueue receipts;private boolean readingReceipt;
     private MediaOutbox attachmentOutbox;private boolean flushingMedia;
     private final java.util.Set<String> mediaRefreshes=new java.util.HashSet<>();
+    private final java.util.concurrent.atomic.AtomicBoolean refreshingIcons=new java.util.concurrent.atomic.AtomicBoolean();
     private final Runnable receiptRetry=this::flushReadReceipts;
     private long lastSync;private final Runnable syncTick=()->requestSync(false);
     /** Per chat: the Google chat time already fetched up to, so the same chat isn't fetched again for nothing. */
@@ -205,7 +206,7 @@ public final class PairedService extends Service {
                     saveSession(token);main.post(this::flushOutbox);main.post(this::flushReadReceipts);main.post(this::flushMediaOutbox);
                     // Catch up on anything that came in while disconnected, right away.
                     main.post(()->requestSync(false));
-                    network.execute(()->{if(generation.get()==token)try{chats(client,"",1);}catch(Exception e){update("Connected • tap Refresh to load conversations");}});
+                    network.execute(()->{if(generation.get()==token)try{chats(client,"",1);refreshConversationIcons();}catch(Exception e){update("Connected • tap Refresh to load conversations");}});
                 }
                 case "SAVE_SESSION" -> saveSession(token);
                 case "SETTINGS" -> {JSONObject rcs=new JSONObject(payload);ChatSettings settings=new ChatSettings(this);int previous=settings.receiptAvailability();
@@ -618,12 +619,26 @@ public final class PairedService extends Service {
         getSystemService(NotificationManager.class).notify("chat:"+id,1,builder.build());
     }
     private Bitmap chatIcon(JSONObject chat,String title) {
+        int size=Math.max(216,Math.min(288,Math.round(72*getResources().getDisplayMetrics().density)));
+        if(Avatars.isGroup(chat)){List<JSONObject> people=Avatars.groupMembers(chat);for(int i=0;i<Math.min(3,people.size());i++){JSONObject p=people.get(i);Avatars.fromPhone(this,PairedProtocol.participantID(p),PairedProtocol.number(p));}
+            Bitmap group=Avatars.group(this,chat,size);return Avatars.adaptive(group,"",0xff334766,size);}
         JSONObject other=PairedProtocol.other(chat);String pid=PairedProtocol.participantID(other);Bitmap photo=null;
         if(!pid.isEmpty()){Avatars.fromPhone(this,pid,PairedProtocol.number(other));java.io.File f=Avatars.best(this,pid);if(f.isFile())photo=BitmapFactory.decodeFile(f.getPath());}
         String hex=other!=null?other.optString("avatarHexColor",""):chat==null?"":chat.optString("avatarHexColor","");
         // Android keeps conversation icons at up to 72dp (adaptive), so match that for the sharpest bubble.
-        int size=Math.max(216,Math.min(288,Math.round(72*getResources().getDisplayMetrics().density)));
         return Avatars.adaptive(photo,PairedProtocol.initial(title),PairedProtocol.color(hex,Avatars.fallbackColor(title)),size);
+    }
+    static void refreshConversationIcons(){PairedService s=current;if(s==null||s.media.isShutdown()||!s.refreshingIcons.compareAndSet(false,true))return;
+        try{s.media.execute(()->{try{s.refreshGroupBubbles();}finally{s.refreshingIcons.set(false);}});}catch(java.util.concurrent.RejectedExecutionException ignored){s.refreshingIcons.set(false);}}
+    private void refreshGroupBubbles(){NotificationManager manager=getSystemService(NotificationManager.class);
+        for(StatusBarNotification sbn:manager.getActiveNotifications()){String tag=sbn.getTag();if(tag==null||!tag.startsWith("chat:"))continue;String id=tag.substring(5);JSONObject chat=store.chat(id);
+            Notification old=sbn.getNotification();Notification.BubbleMetadata meta=old.getBubbleMetadata();if(meta==null||!Avatars.isGroup(chat)||!NotificationPrivacy.showName(this,id))continue;
+            try{Bitmap icon=chatIcon(chat,PairedProtocol.title(chat));publishShortcut(id,PairedProtocol.title(chat),icon);
+                Notification.BubbleMetadata.Builder bubble=meta.getShortcutId()!=null?new Notification.BubbleMetadata.Builder(meta.getShortcutId()):new Notification.BubbleMetadata.Builder(meta.getIntent(),Icon.createWithAdaptiveBitmap(icon));
+                if(meta.getDesiredHeight()>0)bubble.setDesiredHeight(meta.getDesiredHeight());else if(meta.getDesiredHeightResId()!=0)bubble.setDesiredHeightResId(meta.getDesiredHeightResId());
+                if(meta.getDeleteIntent()!=null)bubble.setDeleteIntent(meta.getDeleteIntent());bubble.setAutoExpandBubble(false).setSuppressNotification(meta.isNotificationSuppressed());
+                manager.notify(tag,sbn.getId(),Notification.Builder.recoverBuilder(this,old).setBubbleMetadata(bubble.build()).setOnlyAlertOnce(true).build());
+            }catch(Exception ignored){}}
     }
     private String publishShortcut(String id,String title,Bitmap icon) {
         try {

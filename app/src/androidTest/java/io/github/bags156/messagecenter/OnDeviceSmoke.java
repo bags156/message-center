@@ -586,6 +586,16 @@ public final class OnDeviceSmoke extends Instrumentation {
         android.graphics.Bitmap wide=android.graphics.Bitmap.createBitmap(400,200,android.graphics.Bitmap.Config.ARGB_8888);wide.eraseColor(0xff336699);
         android.graphics.Bitmap icon=Avatars.adaptive(wide,"A",0xff000000,252),round=Avatars.circle(wide,128);
         check(icon.getWidth()==252&&icon.getHeight()==252&&icon.getPixel(126,126)==0xff336699&&round.getPixel(64,64)==0xff336699,"Bubble icon was not built from the photo");
+        // Group bubbles show actual members, never your own face; the collage survives Android's adaptive mask.
+        JSONObject groupIdentity=new JSONObject("{conversationID:'avatar-check',isGroupChat:true,participants:[{ID:{participantID:'owner'},isMe:true},{ID:{participantID:'c'},fullName:'Example Three'},{ID:{participantID:'a'},fullName:'Example One'},{ID:{participantID:'b'},fullName:'Example Two'},{ID:{participantID:'hidden'},isVisible:false}]}");
+        check(Avatars.isGroup(groupIdentity)&&Avatars.groupMembers(groupIdentity).size()==3&&PairedProtocol.participantID(Avatars.groupMembers(groupIdentity).get(0)).equals("a"),"Group identity includes you/hidden members or changes ordering");
+        java.util.List<android.graphics.Bitmap> faceColors=new java.util.ArrayList<>();for(int color:new int[]{0xffff0000,0xff00ff00,0xff0000ff}){android.graphics.Bitmap face=android.graphics.Bitmap.createBitmap(80,80,android.graphics.Bitmap.Config.ARGB_8888);face.eraseColor(color);faceColors.add(face);}
+        android.graphics.Bitmap collage=Avatars.group(faceColors,java.util.Arrays.asList("A","B","C"),java.util.Arrays.asList(0xffff0000,0xff00ff00,0xff0000ff),5,0xff334766,252);
+        android.graphics.Bitmap adaptiveGroup=Avatars.adaptive(collage,"",0xff334766,252);int visible=Math.round(252*.68f),inset=(252-visible)/2;
+        check(adaptiveGroup.getPixel(126,inset+Math.round(visible*.28f))==0xffff0000
+            &&adaptiveGroup.getPixel(inset+Math.round(visible*.28f),inset+Math.round(visible*.61f))==0xff00ff00
+            &&adaptiveGroup.getPixel(inset+Math.round(visible*.72f),inset+Math.round(visible*.61f))==0xff0000ff,"A group bubble lost or stretched a participant photo inside its safe area");
+        try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getCacheDir(),"group-bubble-preview.png"))){adaptiveGroup.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
         check(shown!=null&&shown.getWidth()>=840&&shown.getHeight()>=1260&&shown.getWidth()<=1500,"Photo decoded smaller than its box: "+(shown==null?"none":shown.getWidth()+"x"+shown.getHeight()));
         // A 2-second recording already on the phone for the voice message you sent, so its waveform and length are worked out.
         {short[] tone=new short[16000*2];for(int i=0;i<tone.length;i++)tone[i]=(short)Math.round(9000*Math.sin(2*Math.PI*440*i/16000.0)*(0.3+0.7*Math.abs(Math.sin(i/4000.0))));

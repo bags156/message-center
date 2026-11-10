@@ -7,4 +7,6 @@ Message Center 1.5.0.
 - A Needs a reply inbox for synced conversations, independent of read/unread. Sent replies clear it; long-press a chat to mark it handled or show it later.
 - On-device picture text search using a bundled Latin-script recognition model. New downloaded pictures are indexed automatically. Settings → Scan downloaded pictures includes older cached photos. Inbox and chat searches include the extracted text; long-press a photo message to read/copy its text. Remote pictures are not downloaded solely for indexing.
 
+- Clear group bubbles: a stable collage of up to three members’ photos or initials, a group marker away from Android’s app badge, and +N for additional members. Your own photo and hidden participants are excluded. Existing bubbles refresh quietly as contact photos load.
+
 Install over the existing app. The package and signing key are unchanged; re-pairing is not required. An actual paired-phone test is still needed for delivery speed, reboot/background behavior and remote read receipts.

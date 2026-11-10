@@ -254,6 +254,7 @@ public class PairedActivity extends Activity {
     }
     private View avatar(JSONObject chat,int size){
         FrameLayout box=new FrameLayout(this);box.setLayoutParams(new LinearLayout.LayoutParams(dp(size),dp(size)));
+        if(Avatars.isGroup(chat)){box.addView(roundImage(Avatars.group(this,chat,dp(size))),new FrameLayout.LayoutParams(-1,-1));box.setContentDescription(Avatars.groupLabel(chat));return box;}
         Bitmap b=photo(chat);
         if(b!=null){box.addView(roundImage(b),new FrameLayout.LayoutParams(-1,-1));return box;}
         box.setBackground(oval(avatarColor(chat)));
@@ -290,7 +291,7 @@ public class PairedActivity extends Activity {
         for(JSONObject c:chats)for(JSONObject p:PairedProtocol.members(c)){String id=PairedProtocol.participantID(p),n=PairedProtocol.number(p);if(!id.isEmpty()&&!n.isEmpty()&&phoneChecked.add(id))todo.add(new String[]{id,n});}
         if(todo.isEmpty())return;
         decoder.execute(()->{boolean changed=false;for(String[] t:todo)changed|=Avatars.fromPhone(this,t[0],t[1]);if(!changed)return;
-            ui.post(()->{photos.clear();if(screen.equals("inbox"))renderInbox();else if(screen.equals("chat"))renderMessages(false);});});}
+            ui.post(()->{photos.clear();PairedService.refreshConversationIcons();if(screen.equals("inbox"))renderInbox();else if(screen.equals("chat"))renderMessages(false);});});}
     private void askContactPhotos(){android.content.SharedPreferences prefs=getSharedPreferences("paired",MODE_PRIVATE);
         if(Avatars.canUsePhonePhotos(this)||prefs.getBoolean("asked_contacts",false))return;prefs.edit().putBoolean("asked_contacts",true).apply();
         new AlertDialog.Builder(this).setTitle("Sharper contact photos?").setMessage("Google only sends small photos. Message Center can use the full-size photos from your phone's contacts for chats, bubbles, notifications, and the widget. They stay on this phone.")
@@ -299,10 +300,11 @@ public class PairedActivity extends Activity {
     private void requestPhotos(List<JSONObject> chats){
         phonePhotos(chats);
         if(!PairedService.ready())return;List<String> ids=new ArrayList<>();
-        for(JSONObject c:chats){String id=PairedProtocol.participantID(PairedProtocol.other(c));
-            if(id.isEmpty()||photosRequested.contains(id)||Avatars.file(this,id).isFile())continue;photosRequested.add(id);ids.add(id);if(ids.size()==25)break;}
+        outer:for(JSONObject c:chats){List<JSONObject> people=Avatars.isGroup(c)?Avatars.groupMembers(c):java.util.Collections.singletonList(PairedProtocol.other(c));
+            for(int i=0;i<Math.min(3,people.size());i++){String id=PairedProtocol.participantID(people.get(i));
+                if(id.isEmpty()||photosRequested.contains(id)||Avatars.file(this,id).isFile())continue;photosRequested.add(id);ids.add(id);if(ids.size()==25)break outer;}}
         if(ids.isEmpty())return;
-        PairedService.loadPhotos(ids,(v,e)->{if(!e.isEmpty())return;if(screen.equals("inbox"))renderInbox();else if(screen.equals("chat"))renderMessages(false);});
+        PairedService.loadPhotos(ids,(v,e)->{if(!e.isEmpty())return;PairedService.refreshConversationIcons();if(screen.equals("inbox"))renderInbox();else if(screen.equals("chat"))renderMessages(false);});
     }
 
     // ---- Time labels ----
