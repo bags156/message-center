@@ -168,7 +168,7 @@ final class VideoPrep {
             try {
                 List<Effect> picture = new ArrayList<>();
                 if (plan.frameRate > 0) picture.add(FrameDropEffect.createDefaultFrameDropEffect(plan.frameRate));
-                if (plan.shortSide > 0) picture.add(Presentation.createForShortSide(plan.shortSide));
+                if (plan.shortSide > 0) picture.add(Presentation.createForShortSide(plan.shortSide).copyWithUnsetSideRoundedTo(2)); // encoders want even sizes
                 List<AudioProcessor> sound = new ArrayList<>();
                 if (plan.mono) {
                     ChannelMixingAudioProcessor mix = new ChannelMixingAudioProcessor();
@@ -188,7 +188,8 @@ final class VideoPrep {
                                 finished.countDown();
                             }
                             @Override public void onError(Composition c, ExportResult r, ExportException e) {
-                                result.error = e.getErrorCodeName(); finished.countDown();
+                                android.util.Log.w("VideoPrep", "Export failed", e);
+                                result.error = e.getErrorCodeName() + causes(e); finished.countDown();
                             }
                         }).build();
                 running[0] = transformer;
@@ -202,7 +203,8 @@ final class VideoPrep {
                     }
                 }, 400);
             } catch (Exception e) {
-                result.error = e.getClass().getSimpleName();
+                android.util.Log.w("VideoPrep", "Export couldn't start", e);
+                result.error = e.getClass().getSimpleName() + causes(e);
                 finished.countDown();
             }
         });
@@ -216,6 +218,14 @@ final class VideoPrep {
             thread.quitSafely();
         }
         return result;
+    }
+
+    /** What went wrong underneath, for "Report a problem" (codec and format names; no message content). */
+    private static String causes(Throwable e) {
+        StringBuilder b = new StringBuilder();
+        for (Throwable t = e.getCause(); t != null && b.length() < 400; t = t.getCause())
+            b.append(" ← ").append(t.getClass().getSimpleName()).append(t.getMessage() == null ? "" : ": " + t.getMessage());
+        return b.length() > 400 ? b.substring(0, 400) : b.toString();
     }
 
     private VideoPrep() {}

@@ -287,6 +287,9 @@ public final class OnDeviceSmoke extends Instrumentation {
             android.media.MediaExtractor x=new android.media.MediaExtractor();x.setDataSource(f.getPath());
             for(int i=0;i<x.getTrackCount();i++){android.media.MediaFormat fm=x.getTrackFormat(i);if(fm.getString(android.media.MediaFormat.KEY_MIME).startsWith("audio/"))channels=fm.getInteger(android.media.MediaFormat.KEY_CHANNEL_COUNT);}
             x.release();return new int[]{w,h,ms,channels};}finally{r.release();}}
+    /** The journal's lines about videos, to say why a check failed. */
+    private String videoJournal(){try{java.util.List<String> all=java.nio.file.Files.readAllLines(new java.io.File(getTargetContext().getFilesDir(),"diagnostics.txt").toPath());
+        StringBuilder b=new StringBuilder();for(String l:all)if(l.contains("Video"))b.append(l).append(" || ");return b.toString();}catch(Exception e){return "(no journal: "+e+")";}}
     /** Videos are shrunk to send: kept upright, about the right size, with their sound; mono and under 1 MB for MMS. */
     private void checkVideoPrep()throws Exception{
         java.io.File dir=new java.io.File(getTargetContext().getCacheDir(),"outgoing");dir.mkdirs();
@@ -296,6 +299,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(s!=null&&s.video.equals("video/avc")&&s.audio.equals("audio/mp4a-latm")&&!s.hdr&&Math.abs(s.durationMs-2000)<200,"The video wasn't read right ("+(s==null?"null":s.video+" "+s.audio+" "+s.durationMs+" ms")+")");
         int[] seen={-1};long t0=System.currentTimeMillis();
         PhotoPrep.Ready rcs=VideoPrep.prepare(getTargetContext(),src,"VID_2026.MP4","video/mp4",false,p->seen[0]=Math.max(seen[0],p));long rcsMs=System.currentTimeMillis()-t0;
+        check(rcs.file!=src,"A heavy video wasn't re-encoded for RCS: "+videoJournal());
         check(rcs.file!=src&&rcs.file.isFile(),"A heavy video wasn't re-encoded for RCS");
         check(rcs.file.length()<src.length(),"The RCS video came out "+rcs.file.length()+" bytes, from "+src.length());
         check(rcs.mime.equals("video/mp4")&&rcs.name.equals("VID_2026.mp4"),"The prepared video is named "+rcs.name+" ("+rcs.mime+")");
@@ -303,7 +307,8 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(r[0]<r[1]&&Math.abs(r[0]-720)<=16&&Math.abs(r[1]-1280)<=16,"The RCS video is "+r[0]+"×"+r[1]+" (should stay 720×1280, upright)");
         check(Math.abs(r[2]-2000)<=300&&r[3]==2,"The RCS video is "+r[2]+" ms with "+r[3]+" channels");
         rcs.file.delete();
-        PhotoPrep.Ready mms=VideoPrep.prepare(getTargetContext(),src,"VID_2026.MP4","video/mp4",true,null);
+        PhotoPrep.Ready mms;try{mms=VideoPrep.prepare(getTargetContext(),src,"VID_2026.MP4","video/mp4",true,null);}
+        catch(java.io.IOException e){throw new AssertionError(e.getMessage()+" | "+videoJournal());}
         check(mms.file!=src&&mms.file.length()<=VideoPlan.MMS_BYTES,"The MMS video is "+mms.file.length()+" bytes");
         int[] m=videoFacts(mms.file);
         check(m[0]<m[1]&&Math.abs(m[0]-480)<=16&&Math.abs(m[0]*16-m[1]*9)<=32*16,"The MMS video is "+m[0]+"×"+m[1]+" (should be about 480×854, upright)");

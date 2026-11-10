@@ -1712,10 +1712,11 @@ public class PairedActivity extends Activity {
     private void sendAttachments(JSONObject c,String caption,String reply){String id=chatId;List<Outgoing> batch=new ArrayList<>();for(Outgoing o:outgoing)if(!o.sending)batch.add(o);
         if(batch.isEmpty())return;long now=System.currentTimeMillis();List<PendingMedia> sends=new ArrayList<>();
         for(int i=0;i<batch.size();i++){Outgoing o=batch.get(i);o.sending=true;outgoing.remove(o);PendingMedia p=new PendingMedia(id,o,i==0?caption:"",i==0?reply:"",now);pendingMedia.add(p);sends.add(p);thumbFor(p);}
-        renderAttachments();busy=true;
+        // Not busy: you can keep chatting (and new messages keep coming in) while a video compresses and uploads.
+        renderAttachments();
         if(composer!=null){composer.setText("");}drafts.remove(id);cancelReply();repliedSinceInbox=true;renderMessages(true);sendNext(c,sends,0);}
     private void sendNext(JSONObject c,List<PendingMedia> sends,int index){
-        if(index>=sends.size()){busy=false;if(screen.equals("chat")&&chatId.equals(sends.get(0).chat))loadMessages(false);return;}
+        if(index>=sends.size()){if(screen.equals("chat")&&chatId.equals(sends.get(0).chat))loadMessages(false);return;}
         PendingMedia p=sends.get(index);Outgoing o=p.item;
         // A picture message (MMS) carries about 1 MB, so photos and videos are made to fit; RCS gets a sensible size. See PhotoPrep and VideoPlan.
         boolean mms=p.small||!PairedProtocol.rcs(c);
@@ -1731,7 +1732,7 @@ public class PairedActivity extends Activity {
             if(!e.isEmpty()){
                 // This one and the rest stay in the chat as "Not sent"; tap to send again or remove.
                 for(int k=index;k<sends.size();k++){sends.get(k).error=k==index?e:"Not sent because an earlier attachment failed.";}
-                busy=false;if(screen.equals("chat"))renderMessages(false);toast(e);return;}
+                if(screen.equals("chat"))renderMessages(false);toast(e);return;}
             // The file is kept until Google shows the photo, so "Send again" can still send it.
             p.sent=System.currentTimeMillis();
             // Sent again in place of a failed one: the failed copy goes.
@@ -1805,7 +1806,7 @@ public class PairedActivity extends Activity {
     private final Set<PendingMedia> motionPending=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
     private void retryPending(PendingMedia p){if(!PairedService.ready()){toast("Connect to Google Messages first.");return;}JSONObject c=store.chat(p.chat);if(c==null)return;
         if(!p.item.file.isFile()){toast("That attachment is no longer on this phone. Send it again with +.");pendingMedia.remove(p);renderMessages(false);return;}
-        if(!p.echo.isEmpty())p.replaces=p.echo;p.echo="";p.error="";p.sent=0;busy=true;renderMessages(false);List<PendingMedia> one=new ArrayList<>();one.add(p);sendNext(c,one,0);}
+        if(!p.echo.isEmpty())p.replaces=p.echo;p.echo="";p.error="";p.sent=0;renderMessages(false);List<PendingMedia> one=new ArrayList<>();one.add(p);sendNext(c,one,0);}
     // ---- 0.7: swipes, jump to latest, codes, jumbo emoji, details, starred, media, search, scheduling ----
     private Starred starred;private TextView jumpButton;private int newWhileAway;private long newestSeenTime;
     private String searchedFor="";private List<JSONObject> searchHits=new ArrayList<>();private int searchGeneration;
@@ -2444,7 +2445,7 @@ public class PairedActivity extends Activity {
                             java.nio.file.Files.copy(file.toPath(),copy.toPath());String mime=PairedProtocol.string(part,"mimeType");
                             PendingMedia p=new PendingMedia(id,new Outgoing(copy,name,mime.isEmpty()?"application/octet-stream":mime),at==0?caption:"","",now);p.small=tooBig;if(at==0)p.replaces=m.optString("messageID");
                             sends.add(p);pendingMedia.add(p);thumbFor(p);}catch(Exception e){error("That attachment couldn't be read to send again.");}
-                        if(--left[0]==0&&!sends.isEmpty()){busy=true;renderMessages(true);sendNext(c,sends,0);}});}})
+                        if(--left[0]==0&&!sends.isEmpty()){renderMessages(true);sendNext(c,sends,0);}});}})
             .setNegativeButton("Cancel",null).show();}
 
     /** What this chat's notifications show, apart from the setting for all chats: e.g. just "New message" for one chat. */
