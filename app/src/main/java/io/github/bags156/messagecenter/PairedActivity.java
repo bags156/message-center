@@ -2219,12 +2219,14 @@ public class PairedActivity extends Activity {
             .setPositiveButton("Save",(d,w)->{getSharedPreferences("paired",MODE_PRIVATE).edit().putString("mention_name",e.getText().toString().trim()).apply();settings();}).setNegativeButton("Cancel",null).show();}
     // ---- Voice message transcripts ----
     private final Set<String> transcribing=new HashSet<>();private JSONObject pendingTranscription;
+    /** "Transcribing… 40%" labels on screen, updated without redrawing the chat. */
+    private final Map<String,TextView> transcribingLabels=new HashMap<>();private final Map<String,String> transcribeProgress=new HashMap<>();
     /** Under a voice message: a Transcribe link, "Transcribing…", or the saved transcript. */
     private View transcriptView(JSONObject m,JSONObject media,boolean outgoing,ChatTheme theme){String id=PairedProtocol.string(media,"mediaID"),saved=Transcriber.saved(this,id);
         LinearLayout line=row();line.setGravity(outgoing?Gravity.END:Gravity.START);line.setPadding(dp(14),dp(5),dp(14),0);TextView t;
         if(saved!=null){t=text(saved,14,ink,false);t.setTypeface(Typeface.create(Typeface.DEFAULT,Typeface.ITALIC));t.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));
             t.setGravity(outgoing?Gravity.END:Gravity.START);t.setContentDescription("Transcript: "+saved);t.setOnLongClickListener(v->{messageSheet(m);return true;});}
-        else if(transcribing.contains(id))t=text("Transcribing…",13,muted,false);
+        else if(transcribing.contains(id)){t=text("Transcribing…"+transcribeProgress.getOrDefault(id,""),13,muted,false);transcribingLabels.put(id,t);}
         else if(id.isEmpty())return line;
         else {t=text("Transcribe",14,theme.accent(dark),true);t.setPadding(0,dp(2),0,dp(2));t.setContentDescription("Transcribe this voice message");t.setOnClickListener(v->transcribe(media));}
         line.addView(t);return line;}
@@ -2237,7 +2239,9 @@ public class PairedActivity extends Activity {
         if(c!=null)for(JSONObject p:PairedProtocol.members(c)){String n=PairedProtocol.name(p);if(!n.isEmpty()&&!n.startsWith("+")){names.add(n);String first=n.split("\\s+")[0];if(!names.contains(first))names.add(first);}
             String nick=Nicknames.get(PairedProtocol.number(p));if(!nick.isEmpty()&&!names.contains(nick))names.add(nick);}
         withFile(media,"Downloading…",file->{transcribing.add(id);renderMessages(false);
-            Transcriber.transcribe(this,file,id,names,(text,err)->{transcribing.remove(id);renderMessages(false);if(!err.isEmpty())error(err);});});}
+            Transcriber.transcribe(this,file,id,names,(done,total)->{String at=total>1?" "+Math.round(100f*done/total)+"%":"";transcribeProgress.put(id,at);
+                TextView l=transcribingLabels.get(id);if(l!=null&&l.isAttachedToWindow())l.setText("Transcribing…"+at);},
+                (text,err)->{transcribing.remove(id);transcribeProgress.remove(id);transcribingLabels.remove(id);renderMessages(false);if(!err.isEmpty())error(err);});});}
 
     // ---- 0.6: reliability, outbox, contacts, management, search, voice, sharing, links ----
     private Outbox outbox;

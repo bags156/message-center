@@ -27,8 +27,8 @@ import java.util.concurrent.Executors;
 
 /**
  * Turns a voice message into text with Android's on-device speech recognizer. The audio is
- * decoded on the phone and handed to the recognizer as a file; nothing is uploaded by this
- * app. Results are saved per message so each one is transcribed once.
+ * decoded on the phone, cut at its pauses, and handed to the recognizer a piece at a time;
+ * nothing is uploaded by this app. Results are saved per message so each one is transcribed once.
  */
 final class Transcriber {
     private Transcriber() {}
@@ -38,7 +38,6 @@ final class Transcriber {
     private static final ExecutorService decoder = Executors.newSingleThreadExecutor();
     private static final Handler main = new Handler(Looper.getMainLooper());
     private static boolean running;
-    private static final long TIMEOUT_MS = 3 * 60 * 1000;
 
     private static SharedPreferences prefs(Context c) { return c.getSharedPreferences("transcripts", Context.MODE_PRIVATE); }
 
@@ -50,11 +49,14 @@ final class Transcriber {
 
     static boolean available(Context context) { return SpeechRecognizer.isOnDeviceRecognitionAvailable(context); }
 
+    /** How far along a transcription is: done of total pieces. Runs on the main thread. */
+    interface Progress { void at(int done, int total); }
+
     /**
-     * Transcribes one audio file; the callback runs on the main thread. One transcription runs at
+     * Transcribes one audio file; the callbacks run on the main thread. One transcription runs at
      * a time. names (people in the chat) are words the recognizer should expect.
      */
-    static void transcribe(Context context, File audio, String mediaID, List<String> names, Done done) {
+    static void transcribe(Context context, File audio, String mediaID, List<String> names, Progress progress, Done done) {
         String cached = saved(context, mediaID);
         if (cached != null) { done.done(cached, ""); return; }
         if (!available(context)) {
@@ -63,14 +65,19 @@ final class Transcriber {
         }
         if (running) { done.done("", "Another voice message is being transcribed. Try again in a moment."); return; }
         running = true;
-        File pcm = new File(new File(context.getCacheDir(), "outgoing"), MediaCache.hash(mediaID + audio.getName()) + ".pcm");
+        File dir = new File(context.getCacheDir(), "outgoing"), pcm = new File(dir, MediaCache.hash(mediaID + audio.getName()) + ".pcm");
         decoder.execute(() -> {
             String problem = null;
-            try { decode(audio, pcm); } catch (Exception e) { problem = e.getMessage() == null ? "This audio could not be read for transcription." : e.getMessage(); }
+            List<File> parts = new ArrayList<>();
+            try { decode(audio, pcm); parts = Pcm.split(pcm, dir, pcm.getName()); }
+            catch (Exception e) { problem = e.getMessage() == null ? "This audio could not be read for transcription." : e.getMessage(); }
+            finally { pcm.delete(); }
             String p = problem;
+            List<File> pieces = parts;
             main.post(() -> {
-                if (p != null) { running = false; pcm.delete(); done.done("", p); return; }
-                recognize(context.getApplicationContext(), pcm, mediaID, names, true, done);
+                if (p != null) { running = false; for (File f : pieces) f.delete(); done.done("", p); return; }
+                if (pieces.isEmpty()) { running = false; done.done("", "No speech was found in this voice message."); return; }
+                new Job(context.getApplicationContext(), pieces, mediaID, names, progress, done).next();
             });
         });
     }
@@ -142,14 +149,64 @@ final class Transcriber {
     }
 
     /**
-     * Runs the recognizer over the decoded file. The first try asks for punctuation and
-     * capitalization, unmasked words, and the chat's names; if the phone's recognizer rejects
-     * any of that, it tries once more without them.
+     * Recognizes a voice message piece by piece (it's cut at pauses; see Pcm.speech), since a
+     * phone's recognizer often stops listening at the first long pause. The first piece asks for
+     * punctuation and capitalization, unmasked words, and the chat's names; if the recognizer
+     * rejects any of that, the rest go without.
      */
-    private static void recognize(Context context, File pcm, String mediaID, List<String> names, boolean extras, Done done) {
+    private static final class Job {
+        private final Context context;
+        private final List<File> parts;
+        private final String mediaID;
+        private final List<String> names;
+        private final Progress progress;
+        private final Done done;
+        private final List<String> pieces = new ArrayList<>();
+        private final boolean english = Locale.getDefault().getLanguage().equals("en");
+        private boolean extras = true;
+        private int at;
+
+        Job(Context context, List<File> parts, String mediaID, List<String> names, Progress progress, Done done) {
+            this.context = context; this.parts = parts; this.mediaID = mediaID; this.names = names; this.progress = progress; this.done = done;
+        }
+
+        void next() {
+            if (at >= parts.size()) { finish(""); return; }
+            if (progress != null) progress.at(at, parts.size());
+            File part = parts.get(at);
+            recognize(context, part, names, extras, (heard, error) -> {
+                if (heard.isEmpty() && error >= 0) {
+                    if (extras && retryable(error)) { extras = false; next(); return; }
+                    if (fatal(error) || error != SpeechRecognizer.ERROR_NO_MATCH && error != SpeechRecognizer.ERROR_SPEECH_TIMEOUT && pieces.isEmpty() && at == parts.size() - 1) {
+                        finish(message(error)); return;
+                    }
+                    // Otherwise this piece was a cough or a mumble; carry on with the rest.
+                }
+                pieces.addAll(heard);
+                part.delete();
+                at++;
+                next();
+            });
+        }
+
+        private void finish(String error) {
+            running = false;
+            for (File f : parts) f.delete();
+            String text = TranscriptText.join(pieces, english);
+            if (!error.isEmpty() && text.isEmpty()) { done.done("", error); return; }
+            if (text.isEmpty()) { done.done("", "No speech was found in this voice message."); return; }
+            prefs(context).edit().putString(mediaID, text).apply();
+            done.done(text, "");
+        }
+    }
+
+    private interface Heard { void heard(List<String> pieces, int error); }
+
+    /** Runs the recognizer over one piece of audio. Every result it gives for the piece is collected; error is -1 if none. */
+    private static void recognize(Context context, File pcm, List<String> names, boolean extras, Heard then) {
         ParcelFileDescriptor fd;
         try { fd = ParcelFileDescriptor.open(pcm, ParcelFileDescriptor.MODE_READ_ONLY); }
-        catch (Exception e) { running = false; pcm.delete(); done.done("", "This audio could not be read for transcription."); return; }
+        catch (Exception e) { then.heard(new ArrayList<>(), SpeechRecognizer.ERROR_CLIENT); return; }
         SpeechRecognizer recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(context);
         Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -159,63 +216,66 @@ final class Transcriber {
             .putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)
             .putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
             .putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, Pcm.RATE)
-            // Keep listening through pauses until the whole file has been read.
-            .putExtra(RecognizerIntent.EXTRA_SEGMENTED_SESSION, RecognizerIntent.EXTRA_AUDIO_SOURCE);
+            // Where the recognizer supports it, keep listening through any pause left in the piece.
+            .putExtra(RecognizerIntent.EXTRA_SEGMENTED_SESSION, RecognizerIntent.EXTRA_AUDIO_SOURCE)
+            .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
         if (extras) {
             intent.putExtra(RecognizerIntent.EXTRA_ENABLE_FORMATTING, RecognizerIntent.FORMATTING_OPTIMIZE_QUALITY)
                 // A friend's voice message should read the way they said it, not with words starred out.
                 .putExtra(RecognizerIntent.EXTRA_MASK_OFFENSIVE_WORDS, false);
             if (names != null && !names.isEmpty()) intent.putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, new ArrayList<>(names));
         }
-        List<String> pieces = new ArrayList<>();
-        boolean english = Locale.getDefault().getLanguage().equals("en");
+        List<String> heard = new ArrayList<>();
+        // The latest guess for speech not finished yet: used if the recognizer stops without a final result.
+        String[] partial = {""};
         boolean[] finished = {false};
-        int[] failed = {-1};
         Runnable[] timeout = new Runnable[1];
-        java.util.function.BiConsumer<String, String> finish = (result, error) -> {
+        java.util.function.IntConsumer finish = error -> {
             if (finished[0]) return;
             finished[0] = true; main.removeCallbacks(timeout[0]);
             try { recognizer.destroy(); } catch (Exception ignored) {}
             try { fd.close(); } catch (Exception ignored) {}
-            if (extras && result.isEmpty() && retryable(failed[0])) {
-                // Maybe this recognizer can't format or take names; the plain request may still work.
-                main.post(() -> recognize(context, pcm, mediaID, names, false, done));
-                return;
-            }
-            running = false;
-            pcm.delete();
-            if (error.isEmpty()) prefs(context).edit().putString(mediaID, result).apply();
-            done.done(result, error);
+            if (!partial[0].isEmpty()) heard.add(partial[0]);
+            then.heard(heard, heard.isEmpty() ? error : -1);
         };
-        timeout[0] = () -> finish.accept(TranscriptText.join(pieces, english), pieces.isEmpty() ? "Transcription took too long. Try again." : "");
+        timeout[0] = () -> finish.accept(SpeechRecognizer.ERROR_SPEECH_TIMEOUT);
         recognizer.setRecognitionListener(new RecognitionListener() {
             private void add(Bundle results) {
                 ArrayList<String> best = results == null ? null : results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
-                if (best != null && !best.isEmpty() && !best.get(0).trim().isEmpty()) pieces.add(best.get(0).trim());
+                if (best != null && !best.isEmpty() && !best.get(0).trim().isEmpty()) heard.add(best.get(0).trim());
+                partial[0] = "";
             }
-            private void done() { finish.accept(TranscriptText.join(pieces, english), pieces.isEmpty() ? "No speech was found in this voice message." : ""); }
             @Override public void onSegmentResults(Bundle segment) { add(segment); }
-            @Override public void onEndOfSegmentedSession() { done(); }
-            @Override public void onResults(Bundle results) { add(results); done(); }
+            @Override public void onEndOfSegmentedSession() { finish.accept(SpeechRecognizer.ERROR_NO_MATCH); }
+            @Override public void onResults(Bundle results) { add(results); finish.accept(SpeechRecognizer.ERROR_NO_MATCH); }
             @Override public void onError(int error) {
-                if (!pieces.isEmpty()) { finish.accept(TranscriptText.join(pieces, english), ""); return; }
-                failed[0] = error;
                 if (error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE || error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED) {
                     try { recognizer.triggerModelDownload(intent); } catch (Exception ignored) {}
                 }
-                finish.accept("", message(error));
+                finish.accept(error);
             }
             @Override public void onReadyForSpeech(Bundle params) {}
             @Override public void onBeginningOfSpeech() {}
             @Override public void onRmsChanged(float rms) {}
             @Override public void onBufferReceived(byte[] buffer) {}
             @Override public void onEndOfSpeech() {}
-            @Override public void onPartialResults(Bundle partial) {}
+            @Override public void onPartialResults(Bundle results) {
+                ArrayList<String> best = results == null ? null : results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                if (best != null && !best.isEmpty() && !best.get(0).trim().isEmpty()) partial[0] = best.get(0).trim();
+            }
             @Override public void onEvent(int type, Bundle params) {}
         });
-        main.postDelayed(timeout[0], TIMEOUT_MS);
+        // A piece is at most about 16 seconds; the recognizer gets several times that.
+        main.postDelayed(timeout[0], Math.max(20_000, pcm.length() / (Pcm.RATE * 2) * 4000));
         try { recognizer.startListening(intent); }
-        catch (Exception e) { finish.accept("", "Speech recognition could not start on this phone."); }
+        catch (Exception e) { finish.accept(SpeechRecognizer.ERROR_CLIENT); }
+    }
+
+    /** Errors that end the whole transcription: nothing more will work until something on the phone changes. */
+    private static boolean fatal(int error) {
+        return error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS || error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE
+            || error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
+            || error == SpeechRecognizer.ERROR_TOO_MANY_REQUESTS;
     }
 
     /** Errors that might come from the extra requests (formatting, names) rather than the audio or the phone's setup. */

@@ -89,6 +89,68 @@ public class PcmTest {
         } finally { f.delete(); }
     }
 
+    // ---- Cutting at pauses: levels are 20 ms frames, speech at -20 dB, quiet at -70 dB ----
+    private static float[] levels(String pattern) {
+        // "s300" = 300 frames of speech, "q40" = 40 frames of quiet
+        java.util.List<Float> out = new java.util.ArrayList<>();
+        for (String part : pattern.split(" ")) {
+            float v = part.charAt(0) == 's' ? -20f : -70f;
+            for (int i = 0; i < Integer.parseInt(part.substring(1)); i++) out.add(v);
+        }
+        float[] a = new float[out.size()];
+        for (int i = 0; i < a.length; i++) a[i] = out.get(i);
+        return a;
+    }
+
+    @Test public void cutsAtLongPausesAndLeavesSilenceOut() {
+        java.util.List<int[]> parts = Pcm.speech(levels("q50 s100 q40 s150 q100"));
+        assertEquals(2, parts.size());
+        assertArrayEquals(new int[]{40, 160}, parts.get(0));   // 200 ms before and after the speech
+        assertArrayEquals(new int[]{180, 350}, parts.get(1));
+    }
+
+    @Test public void shortPausesDontCutTheFirstTwoSeconds() {
+        assertEquals(1, Pcm.speech(levels("s50 q20 s60 q100")).size());     // a 400 ms breath 1 s in
+        assertEquals(2, Pcm.speech(levels("s120 q20 s60 q100")).size());    // the same pause 2.4 s in
+        assertEquals(1, Pcm.speech(levels("s120 q10 s60 q100")).size());    // 200 ms isn't a pause
+    }
+
+    @Test public void longSpeechWithoutPausesIsCutAtItsQuietestMoment() {
+        float[] db = levels("s2000");                                       // 40 s without a pause
+        db[700] = -40f;                                                    // a dip 14 s in
+        java.util.List<int[]> parts = Pcm.speech(db);
+        assertTrue(parts.size() >= 3);
+        assertEquals(700, parts.get(0)[1]);
+        assertEquals(700, parts.get(1)[0]);
+        for (int[] p : parts) assertTrue("piece of " + (p[1] - p[0]) + " frames", p[1] - p[0] <= 750);
+        assertEquals(2000, parts.get(parts.size() - 1)[1]);
+    }
+
+    @Test public void silenceAndEmptyRecordingsHaveNoSpeech() {
+        assertEquals(0, Pcm.speech(new float[0]).size());
+        float[] hush = new float[500]; java.util.Arrays.fill(hush, -80f);
+        assertEquals(0, Pcm.speech(hush).size());
+    }
+
+    @Test public void aMinuteWithPausesComesOutWhole() throws Exception {
+        // A minute of "speech" (a tone) in 6-second bursts with 800 ms gaps: every burst ends up in a piece.
+        java.io.File dir = java.nio.file.Files.createTempDirectory("pcm").toFile(), f = new java.io.File(dir, "m.pcm");
+        short[] s = new short[Pcm.RATE * 60];
+        int speech = 0;
+        for (int i = 0; i < s.length; i++) {
+            boolean on = (i % (Pcm.RATE * 68 / 10)) < Pcm.RATE * 6;
+            if (on) { s[i] = (short) Math.round(8000 * Math.sin(i / 7.0)); speech++; }
+        }
+        java.nio.file.Files.write(f.toPath(), Pcm.bytes(s));
+        java.util.List<java.io.File> parts = Pcm.split(f, dir, "m");
+        assertEquals(9, parts.size());
+        long bytes = 0;
+        for (java.io.File p : parts) bytes += p.length() - (Pcm.RATE / 5 * 2) - Pcm.RATE * 2;
+        assertTrue("kept " + bytes / 2 + " of " + speech + " speech samples", bytes / 2 >= speech);
+        for (java.io.File p : parts) p.delete();
+        f.delete(); dir.delete();
+    }
+
     @Test public void bytesAreLittleEndian() {
         assertArrayEquals(new byte[]{0x34, 0x12, (byte) 0xFF, (byte) 0xFF}, Pcm.bytes(new short[]{0x1234, -1}));
     }

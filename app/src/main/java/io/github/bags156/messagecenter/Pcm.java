@@ -3,7 +3,9 @@ package io.github.bags156.messagecenter;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 /** Audio sample conversion for speech recognition. Pure Java so it can be unit tested. */
 final class Pcm {
@@ -161,6 +163,89 @@ final class Pcm {
                 f.seek(at); f.write(buf, 0, n); at += n;
             }
         }
+    }
+
+    // ---- Cutting a recording at pauses ----
+    /** Level frames are 20 ms. */
+    static final int FRAME = RATE / 50;
+    private static final int LEAD = 10, TAIL = 10;          // frames of audio kept before and after speech (200 ms)
+    private static final int PAUSE = 15, LONG_PAUSE = 30;  // 300 ms, 600 ms
+    private static final int SETTLED = 100, LONGEST = 750; // 2 s, 15 s
+    private static final int LOOK_BACK = 200;              // 4 s
+
+    /**
+     * The stretches of speech in a recording, as [first frame, end frame) from 20 ms levels in
+     * dB. Phones' speech recognizers often stop at the first long pause, so each stretch is cut
+     * at the pauses: always at a long one (600 ms), and at a shorter one (300 ms) once a stretch
+     * is 2 seconds long. A stretch with no pause is cut at its quietest moment after 15 seconds.
+     * Silence (relative to the recording's own quiet and loud parts) isn't included.
+     */
+    static List<int[]> speech(float[] db) {
+        List<int[]> out = new ArrayList<>();
+        int n = db.length;
+        if (n == 0) return out;
+        float[] sorted = db.clone();
+        Arrays.sort(sorted);
+        float low = sorted[n / 10], high = sorted[Math.min(n - 1, n * 95 / 100)];
+        float loud = high - low < 6 ? (high < -55 ? Float.MAX_VALUE : -Float.MAX_VALUE) : Math.max(low + 6, low + 0.25f * (high - low));
+        int start = -1, lastLoud = -1, quiet = 0;
+        for (int i = 0; i < n; i++) {
+            if (db[i] >= loud) { if (start < 0) start = Math.max(0, i - LEAD); lastLoud = i; quiet = 0; }
+            else quiet++;
+            if (start < 0) continue;
+            if (quiet >= LONG_PAUSE || quiet >= PAUSE && lastLoud - start >= SETTLED) {
+                out.add(new int[]{start, Math.min(n, lastLoud + 1 + TAIL)}); start = -1; continue;
+            }
+            if (i - start + 1 >= LONGEST) {
+                int cut = i;
+                for (int k = Math.max(start + 1, i - LOOK_BACK); k <= i; k++) if (db[k] < db[cut]) cut = k;
+                out.add(new int[]{start, cut}); start = cut;
+            }
+        }
+        if (start >= 0 && lastLoud >= start) out.add(new int[]{start, Math.min(n, lastLoud + 1 + TAIL)});
+        return out;
+    }
+
+    /** 20 ms levels of a 16-bit PCM file, in dB below full scale. */
+    static float[] levels(File pcm) throws IOException {
+        long samples = pcm.length() / 2;
+        float[] db = new float[(int) ((samples + FRAME - 1) / FRAME)];
+        byte[] buf = new byte[FRAME * 2 * 64];
+        double sum = 0; int inFrame = 0, frame = 0;
+        try (java.io.InputStream in = new java.io.BufferedInputStream(new java.io.FileInputStream(pcm))) {
+            int got;
+            while ((got = in.read(buf)) > 0) {
+                for (int i = 0; i + 1 < got; i += 2) {
+                    double v = (short) ((buf[i] & 0xff) | (buf[i + 1] << 8)) / 32768.0;
+                    sum += v * v;
+                    if (++inFrame == FRAME) { db[frame++] = (float) (10 * Math.log10(sum / FRAME + 1e-12)); sum = 0; inFrame = 0; }
+                }
+            }
+        }
+        if (inFrame > 0 && frame < db.length) db[frame] = (float) (10 * Math.log10(sum / inFrame + 1e-12));
+        return db;
+    }
+
+    /**
+     * Splits a recording into one file per stretch of speech (see speech), each with a little
+     * silence before it and more after, so the recognizer hears it end.
+     */
+    static List<File> split(File pcm, File dir, String name) throws IOException {
+        List<File> out = new ArrayList<>();
+        List<int[]> parts = speech(levels(pcm));
+        byte[] before = new byte[RATE / 5 * 2], after = new byte[RATE * 2];
+        try (RandomAccessFile f = new RandomAccessFile(pcm, "r")) {
+            for (int[] p : parts) {
+                long from = (long) p[0] * FRAME * 2, to = Math.min(f.length(), (long) p[1] * FRAME * 2);
+                if (to <= from) continue;
+                byte[] data = new byte[(int) (to - from)];
+                f.seek(from); f.readFully(data);
+                File part = new File(dir, name + "-" + out.size() + ".pcm");
+                try (java.io.OutputStream os = new java.io.BufferedOutputStream(new java.io.FileOutputStream(part))) { os.write(before); os.write(data); os.write(after); }
+                out.add(part);
+            }
+        }
+        return out;
     }
 
     /** Little-endian bytes, the layout the recognizer reads from a file. */
