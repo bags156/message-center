@@ -1118,7 +1118,7 @@ public class PairedActivity extends Activity {
         .setNegativeButton("OK",null).show();}
     private View statusRow(JSONObject m,ChatTheme theme){
         LinearLayout r=row();r.setGravity(Gravity.END|Gravity.CENTER_VERTICAL);r.setPadding(0,dp(4),dp(6),0);String s=PairedProtocol.status(m);
-        if(PairedProtocol.failed(m)){TextView t=text("Not sent • Tap to retry",12,danger,true);t.setOnClickListener(v->retryFailed(m));r.addView(t);return r;}
+        if(PairedProtocol.failed(m)){TextView t=text(s.equals("OUTGOING_FAILED_TOO_LARGE")?"Not sent: too large • Tap to send smaller":"Not sent • Tap to retry",12,danger,true);t.setOnClickListener(v->retryFailed(m));r.addView(t);return r;}
         switch(s){
             case "OUTGOING_DISPLAYED","OUTGOING_DELIVERED"->{ImageView ticks=new ImageView(this);ticks.setImageResource(R.drawable.ic_ticks);
                 boolean read=s.equals("OUTGOING_DISPLAYED");ticks.setImageTintList(ColorStateList.valueOf(read?theme.onAccent(dark):muted));if(read)ticks.setBackground(oval(theme.accent(dark)));
@@ -1708,17 +1708,22 @@ public class PairedActivity extends Activity {
     private void sendNext(JSONObject c,List<PendingMedia> sends,int index){
         if(index>=sends.size()){busy=false;if(screen.equals("chat")&&chatId.equals(sends.get(0).chat))loadMessages(false);return;}
         PendingMedia p=sends.get(index);Outgoing o=p.item;
-        PairedService.executeMedia(client->client.sendMedia(c.toString(),o.file.getPath(),o.name,o.mime,p.caption,p.reply),(value,e)->{
+        // A picture message (MMS) carries about 1 MB, so photos are made to fit; RCS gets a sensible size. See PhotoPrep.
+        boolean mms=p.small||!PairedProtocol.rcs(c);
+        PairedService.executeMedia(client->{PhotoPrep.Ready ready=PhotoPrep.prepare(o.file,o.name,o.mime,mms);
+            try{return client.sendMedia(c.toString(),ready.file.getPath(),ready.name,ready.mime,p.caption,p.reply);}finally{if(ready.file!=o.file)ready.file.delete();}},(value,e)->{
             if(!e.isEmpty()){
                 // This one and the rest stay in the chat as "Not sent"; tap to send again or remove.
                 for(int k=index;k<sends.size();k++){sends.get(k).error=k==index?e:"Not sent because an earlier attachment failed.";}
                 busy=false;if(screen.equals("chat"))renderMessages(false);toast(e);return;}
             p.sent=System.currentTimeMillis();o.file.delete();
+            // Sent again in place of a failed one: the failed copy goes.
+            if(!p.replaces.isEmpty()){String gone=p.replaces;PairedService.execute(cl->{cl.deleteMessage(gone);return "";},(x,err)->{if(err.isEmpty()){store.deleteMessage(gone);if(screen.equals("chat"))renderMessages(false);}});}
             // If Google never shows it back (it may be stuck on your phone), stop waiting here after a while.
             ui.postDelayed(()->{if(pendingMedia.remove(p)&&screen.equals("chat"))renderMessages(false);},45_000);
             if(screen.equals("chat"))renderMessages(false);sendNext(c,sends,index+1);});}
     // ---- Attachments on their way: shown at the bottom of the chat until Google shows the real message ----
-    private static final class PendingMedia{final String chat,caption,reply;final Outgoing item;final long started;long sent;String error="";Bitmap thumb;
+    private static final class PendingMedia{final String chat,caption,reply;final Outgoing item;final long started;long sent;String error="",replaces="";boolean small;Bitmap thumb;
         PendingMedia(String chat,Outgoing item,String caption,String reply,long started){this.chat=chat;this.item=item;this.caption=caption;this.reply=reply;this.started=started;}}
     private final List<PendingMedia> pendingMedia=new ArrayList<>();
     private void thumbFor(PendingMedia p){Outgoing o=p.item;boolean visual=o.mime.startsWith("image/")||o.mime.startsWith("video/");if(!visual)return;
@@ -2362,12 +2367,35 @@ public class PairedActivity extends Activity {
         new AlertDialog.Builder(this).setMessage(msg.isEmpty()?"This message hasn't been sent yet.":msg).setPositiveButton(state.equals(Outbox.WAITING)?"Send now":"Send again",(d,w)->PairedService.retryOutbox(this,id))
             .setNegativeButton("Delete",(d,w)->{outbox.remove(id);renderMessages(false);}).setNeutralButton("Cancel",null).show();}
     /** A message Google reports as failed: send its text again, then remove the failed copy. */
-    private void retryFailed(JSONObject m){String text=PairedProtocol.text(m);
-        if(text.isEmpty()){error("Attachments can't be resent automatically. Send them again with the + button.");return;}
+    /** Why Google Messages says a message didn't send, in a sentence. */
+    private static String whyNotSent(JSONObject m){return switch(PairedProtocol.status(m)){
+        case "OUTGOING_FAILED_TOO_LARGE"->"It was too large to send.";
+        case "OUTGOING_FAILED_RECIPIENT_LOST_RCS"->"They can't get RCS messages right now.";
+        case "OUTGOING_FAILED_EMERGENCY_NUMBER"->"Messages to emergency numbers can't be sent from here.";
+        case "OUTGOING_CANCELED"->"It was canceled.";
+        default->"Google Messages on your phone couldn't send it.";};}
+    private void retryFailed(JSONObject m){String text=PairedProtocol.text(m);List<JSONObject> media=PairedProtocol.media(m);
+        if(!media.isEmpty()){retryFailedMedia(m,media,text);return;}
         new AlertDialog.Builder(this).setMessage("Send this message again?").setPositiveButton("Send again",(d,w)->{
             PairedService.sendOrQueue(this,chatId,text,"",(v,e)->{if(!e.isEmpty()){error(e);return;}
                 String mid=m.optString("messageID");if(!mid.isEmpty()&&!"queued".equals(v))PairedService.execute(c->{c.deleteMessage(mid);return "";},(x,err)->{if(err.isEmpty())store.deleteMessage(mid);loadMessages(false);});
                 else loadMessages(false);});}).setNegativeButton("Cancel",null).show();}
+
+    /**
+     * Sends a failed photo (or file) again: it's fetched back, made to fit a picture message if it
+     * was too large (or the chat is SMS/MMS), sent like a new one, and the failed copy removed.
+     */
+    private void retryFailedMedia(JSONObject m,List<JSONObject> media,String caption){boolean tooBig=PairedProtocol.status(m).equals("OUTGOING_FAILED_TOO_LARGE");String id=chatId;
+        new AlertDialog.Builder(this).setTitle("Not sent").setMessage(whyNotSent(m)+(tooBig?" It will be sent again smaller.":""))
+            .setPositiveButton("Send again",(d,w)->{JSONObject c=store.chat(id);if(c==null)return;List<PendingMedia> sends=new ArrayList<>();int[] left={media.size()};long now=System.currentTimeMillis();
+                for(int i=0;i<media.size();i++){JSONObject part=media.get(i);int at=i;
+                    withFile(part,"Getting it ready…",file->{try{File dir=new File(getCacheDir(),"outgoing");if(!dir.isDirectory())dir.mkdirs();
+                            String name=PairedProtocol.string(part,"mediaName");if(name.isEmpty())name="attachment";File copy=new File(dir,java.util.UUID.randomUUID()+"-"+name.replaceAll("[^A-Za-z0-9._-]","_"));
+                            java.nio.file.Files.copy(file.toPath(),copy.toPath());String mime=PairedProtocol.string(part,"mimeType");
+                            PendingMedia p=new PendingMedia(id,new Outgoing(copy,name,mime.isEmpty()?"application/octet-stream":mime),at==0?caption:"","",now);p.small=tooBig;if(at==0)p.replaces=m.optString("messageID");
+                            sends.add(p);pendingMedia.add(p);thumbFor(p);}catch(Exception e){error("That attachment couldn't be read to send again.");}
+                        if(--left[0]==0&&!sends.isEmpty()){busy=true;renderMessages(true);sendNext(c,sends,0);}});}})
+            .setNegativeButton("Cancel",null).show();}
 
     // Contacts and new conversations
     private void newMessage(){if(!PairedService.ready()){toast("Connect first, then start a chat.");return;}picked.clear();groupMode=false;contactQuery="";chatPeople=null;newChat();

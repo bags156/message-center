@@ -196,6 +196,29 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(box[0]<=box[2]*0.42f,"The message box grew past 40% of the screen ("+box[0]+" of "+box[2]+" px)");
         runOnMainSync(()->{try{((android.widget.EditText)compF.get(reader)).setText("");}catch(Exception e){throw new RuntimeException(e);}});
         reader.finish();waitForIdleSync();}
+    /** Photos are made to fit before sending: under 1 MB for a picture message (MMS), a sensible size for RCS; small ones left alone. */
+    private void checkPhotoPrep()throws Exception{
+        java.io.File dir=new java.io.File(getTargetContext().getCacheDir(),"outgoing");dir.mkdirs();
+        java.io.File big=new java.io.File(dir,"smoke-big.jpg");
+        {// Blocky noise, like a busy photo, so it doesn't compress to nothing (12 MP, a few MB).
+            android.graphics.Bitmap noise=android.graphics.Bitmap.createBitmap(1000,750,android.graphics.Bitmap.Config.ARGB_8888);int[] px=new int[1000*750];java.util.Random r=new java.util.Random(7);
+            for(int i=0;i<px.length;i++)px[i]=0xff000000|r.nextInt(0xffffff);noise.setPixels(px,0,1000,0,0,1000,750);
+            android.graphics.Bitmap bm=android.graphics.Bitmap.createScaledBitmap(noise,4000,3000,false);noise.recycle();
+            try(java.io.FileOutputStream fo=new java.io.FileOutputStream(big)){bm.compress(android.graphics.Bitmap.CompressFormat.JPEG,95,fo);}bm.recycle();}
+        check(big.length()>950_000,"The test photo isn't big enough to test with ("+big.length()+" bytes)");
+        PhotoPrep.Ready mms=PhotoPrep.prepare(big,"IMG_1234.JPG","image/jpeg",true);
+        android.graphics.BitmapFactory.Options o=new android.graphics.BitmapFactory.Options();o.inJustDecodeBounds=true;android.graphics.BitmapFactory.decodeFile(mms.file.getPath(),o);
+        check(mms.file!=big&&mms.file.length()<=PhotoPrep.MMS_BYTES,"A big photo wasn't made to fit a picture message ("+mms.file.length()+" bytes)");
+        check(Math.max(o.outWidth,o.outHeight)<=PhotoPrep.MMS_EDGE&&Math.abs(o.outWidth*3-o.outHeight*4)<=6,"The photo for MMS is "+o.outWidth+"×"+o.outHeight);
+        check(mms.mime.equals("image/jpeg")&&mms.name.equals("IMG_1234.jpg"),"The prepared photo is named "+mms.name+" ("+mms.mime+")");
+        mms.file.delete();
+        PhotoPrep.Ready rcs=PhotoPrep.prepare(big,"IMG_1234.JPG","image/jpeg",false);o=new android.graphics.BitmapFactory.Options();o.inJustDecodeBounds=true;android.graphics.BitmapFactory.decodeFile(rcs.file.getPath(),o);
+        check(Math.max(o.outWidth,o.outHeight)<=PhotoPrep.RCS_EDGE,"The photo for RCS is "+o.outWidth+"×"+o.outHeight);
+        if(rcs.file!=big)rcs.file.delete();
+        java.io.File small=new java.io.File(dir,"smoke-small.jpg");
+        {android.graphics.Bitmap bm=android.graphics.Bitmap.createBitmap(800,600,android.graphics.Bitmap.Config.ARGB_8888);bm.eraseColor(0xff336699);try(java.io.FileOutputStream fo=new java.io.FileOutputStream(small)){bm.compress(android.graphics.Bitmap.CompressFormat.JPEG,90,fo);}}
+        check(PhotoPrep.prepare(small,"small.jpg","image/jpeg",true).file==small,"A small photo was re-encoded for no reason");
+        big.delete();small.delete();}
     /** New conversation: finds people in the phone's contacts and in your chats, not just Google's partial list. */
     private void checkNewConversationSearch(PairedActivity a)throws Exception{
         try(PairedStore store=new PairedStore(getTargetContext())){store.chat(new JSONObject("{conversationID:'riley',name:'Riley Chatfield',type:'RCS',lastMessageTimestamp:1794000000000000,participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'r1',number:'+15550104444'},fullName:'Riley Chatfield'}]}"));}
@@ -514,6 +537,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkPinnedTap((PairedActivity)activity);
         checkInboxKeepsItsPlace((PairedActivity)activity);
         checkNewConversationSearch((PairedActivity)activity);
+        checkPhotoPrep();
         checkMarkup((PairedActivity)activity);
         String speed=measureRedraw();
         try(PairedStore store=new PairedStore(getTargetContext())){store.clear();}
@@ -524,6 +548,6 @@ public final class OnDeviceSmoke extends Instrumentation {
         getTargetContext().getSharedPreferences("starred",0).edit().clear().commit();
         new ChatSettings(getTargetContext()).setBackground("smoke","");
         checkNotificationPrivacy();
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos, iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }
