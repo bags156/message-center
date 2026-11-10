@@ -1,6 +1,8 @@
 package bridge
 
 import (
+	"encoding/json"
+	"errors"
 	"go.mau.fi/mautrix-gmessages/pkg/libgm/gmproto"
 	"os"
 	"path/filepath"
@@ -101,14 +103,70 @@ func TestMediaKeyAcceptsJSONBase64(t *testing.T) {
 	}
 }
 
-func TestMediaInfosAddCaptionOnlyWhenPresent(t *testing.T) {
+func TestPhotoAndTextUseIndependentSubmissions(t *testing.T) {
 	media := &gmproto.MediaContent{MediaID: "m1", MimeType: "image/jpeg"}
-	if got := mediaInfos(media, "  "); len(got) != 1 || got[0].GetMediaContent().GetMediaID() != "m1" {
-		t.Fatalf("unexpected infos without caption: %v", got)
+	for _, caption := range []string{"", "  ", "Synthetic caption\nwith another line"} {
+		t.Run(caption, func(t *testing.T) {
+			calls := 0
+			result, err := sendMediaParts(media, caption, "original-id", func(reply string, parts []*gmproto.MessageInfo) (string, error) {
+				calls++
+				if reply != "original-id" || len(parts) != 1 {
+					t.Fatalf("reply changed or a mixed request was sent: %v", parts)
+				}
+				if calls == 1 {
+					if parts[0].GetMediaContent().GetMediaID() != "m1" {
+						t.Fatal("photo was not submitted first")
+					}
+					return "photo-tmp", nil
+				}
+				if parts[0].GetMessageContent().GetContent() != caption {
+					t.Fatal("caption changed")
+				}
+				return "text-tmp", nil
+			})
+			want := 1
+			if strings.TrimSpace(caption) != "" {
+				want = 2
+			}
+			if err != nil || calls != want || result.MediaTmpID != "photo-tmp" || result.CaptionError != "" {
+				t.Fatalf("unexpected submission: %+v %v (%d calls)", result, err, calls)
+			}
+			if want == 2 && result.CaptionTmpID != "text-tmp" {
+				t.Fatal("text transaction identity missing")
+			}
+		})
 	}
-	got := mediaInfos(media, "Look")
-	if len(got) != 2 || got[1].GetMessageContent().GetContent() != "Look" {
-		t.Fatalf("unexpected infos with caption: %v", got)
+}
+
+func TestMediaFailureDoesNotSubmitTextOrRetryPhoto(t *testing.T) {
+	calls := 0
+	_, err := sendMediaParts(&gmproto.MediaContent{}, "Synthetic caption", "", func(string, []*gmproto.MessageInfo) (string, error) { calls++; return "", errSendOutcomeUnknown })
+	if !errors.Is(err, errSendOutcomeUnknown) || calls != 1 {
+		t.Fatalf("ambiguous photo was retried or text sent: %v, %d calls", err, calls)
+	}
+}
+
+func TestCaptionFailureRetainsAcceptedPhotoAndIsNeverRetried(t *testing.T) {
+	for _, failure := range []error{errors.New("Google did not accept this message"), errSendOutcomeUnknown} {
+		calls := 0
+		result, err := sendMediaParts(&gmproto.MediaContent{}, "Synthetic caption", "", func(_ string, parts []*gmproto.MessageInfo) (string, error) {
+			calls++
+			if calls == 1 {
+				return "accepted-photo", nil
+			}
+			if len(parts) != 1 || parts[0].GetMessageContent() == nil {
+				t.Fatal("retry contains photo")
+			}
+			return "", failure
+		})
+		if err != nil || calls != 2 || result.MediaTmpID != "accepted-photo" || result.CaptionError != failure.Error() || result.CaptionUncertain != errors.Is(failure, errSendOutcomeUnknown) {
+			t.Fatalf("partial acceptance was lost: %+v %v (%d calls)", result, err, calls)
+		}
+		raw, _ := json.Marshal(result)
+		var android map[string]any
+		if json.Unmarshal(raw, &android) != nil || android["mediaTmpID"] != "accepted-photo" || android["captionError"] != failure.Error() {
+			t.Fatalf("Android cannot recover partial result: %s", raw)
+		}
 	}
 }
 

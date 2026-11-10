@@ -301,8 +301,10 @@ func (c *Client) SendText(chatJSON, text, replyID string) (string, error) {
 	return c.send(chatJSON, replyID, []*gmproto.MessageInfo{textInfo(text)})
 }
 
-// SendMedia uploads one file and sends it, with optional caption text in the
-// same message (as Google Messages does for RCS; MMS carries both parts).
+// SendMedia uploads one file, sends it alone, then sends optional text separately.
+// Mixed media/text requests can stall on the phone or lose the media (upstream
+// mautrix/gmessages#95). The JSON result distinguishes a text failure after the
+// media was accepted, so the caller never retries the already-submitted photo.
 func (c *Client) SendMedia(chatJSON, path, fileName, mime, caption, replyID string) (string, error) {
 	data, e := os.ReadFile(path)
 	if e != nil {
@@ -320,7 +322,14 @@ func (c *Client) SendMedia(chatJSON, path, fileName, mime, caption, replyID stri
 	if e != nil {
 		return "", errors.New("The attachment could not be uploaded. Check your connection and try again.")
 	}
-	return c.send(chatJSON, replyID, mediaInfos(media, caption))
+	result, e := sendMediaParts(media, caption, replyID, func(reply string, infos []*gmproto.MessageInfo) (string, error) {
+		return c.send(chatJSON, reply, infos)
+	})
+	if e != nil {
+		return "", e
+	}
+	raw, e := json.Marshal(result)
+	return string(raw), e
 }
 
 const maxUpload = 100 << 20
@@ -330,12 +339,30 @@ func textInfo(text string) *gmproto.MessageInfo {
 	return &gmproto.MessageInfo{Data: &gmproto.MessageInfo_MessageContent{MessageContent: &gmproto.MessageContent{Content: text}}}
 }
 
-func mediaInfos(media *gmproto.MediaContent, caption string) []*gmproto.MessageInfo {
-	infos := []*gmproto.MessageInfo{{Data: &gmproto.MessageInfo_MediaContent{MediaContent: media}}}
-	if strings.TrimSpace(caption) != "" {
-		infos = append(infos, textInfo(caption))
+type mediaSubmission struct {
+	MediaTmpID       string `json:"mediaTmpID"`
+	CaptionTmpID     string `json:"captionTmpID,omitempty"`
+	CaptionError     string `json:"captionError,omitempty"`
+	CaptionUncertain bool   `json:"captionUncertain,omitempty"`
+}
+
+var errSendOutcomeUnknown = errors.New("Send outcome unknown. Check the conversation in Google Messages before retrying.")
+
+func sendMediaParts(media *gmproto.MediaContent, caption, replyID string, send func(string, []*gmproto.MessageInfo) (string, error)) (mediaSubmission, error) {
+	result := mediaSubmission{}
+	var err error
+	result.MediaTmpID, err = send(replyID, []*gmproto.MessageInfo{{Data: &gmproto.MessageInfo_MediaContent{MediaContent: media}}})
+	if err != nil {
+		return result, err // No caption was attempted. Never retry an ambiguous media send here.
 	}
-	return infos
+	if strings.TrimSpace(caption) != "" {
+		result.CaptionTmpID, err = send(replyID, []*gmproto.MessageInfo{textInfo(caption)})
+		if err != nil {
+			result.CaptionError = err.Error()
+			result.CaptionUncertain = errors.Is(err, errSendOutcomeUnknown)
+		}
+	}
+	return result, nil // Media accepted, even if the separate text could not be confirmed.
 }
 
 func (c *Client) send(chatJSON, replyID string, infos []*gmproto.MessageInfo) (string, error) {
@@ -357,7 +384,7 @@ func (c *Client) send(chatJSON, replyID string, infos []*gmproto.MessageInfo) (s
 	defer cancel()
 	resp, e := c.gm.SendMessage(ctx, req)
 	if e != nil {
-		return "", errors.New("Send outcome unknown. Check the conversation in Google Messages before retrying.")
+		return "", errSendOutcomeUnknown
 	}
 	if resp.GetStatus() != gmproto.SendMessageResponse_SUCCESS {
 		return "", errors.New("Google did not accept this message. Check Google Messages for details.")

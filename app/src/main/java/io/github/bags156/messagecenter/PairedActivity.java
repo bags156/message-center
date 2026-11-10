@@ -1703,7 +1703,7 @@ public class PairedActivity extends Activity {
     /** Opens an attached photo to draw on, add text to, or crop; the edited copy takes its place. */
     private void markUp(Outgoing o){if(o.sending)return;MarkupEditor.open(this,o.file,edited->{int i=outgoing.indexOf(o);if(i<0||o.sending){edited.delete();return;}
         String name=o.name.replaceAll("\\.[A-Za-z0-9]+$","")+".jpg";outgoing.set(i,new Outgoing(edited,name,"image/jpeg"));o.file.delete();renderAttachments();});}
-    /** Sends the picked attachments one message each; the typed text goes with the first as its caption. */
+    /** Sends each attachment on its own, followed by the typed text after the first one. */
     /**
      * Sends what's in the attachment strip. Each one moves into the chat right away as a "Sending…"
      * bubble (so the strip doesn't hang around and then drop the chat down when it empties), and is
@@ -1735,13 +1735,21 @@ public class PairedActivity extends Activity {
                 if(screen.equals("chat"))renderMessages(false);toast(e);return;}
             // The file is kept until Google shows the photo, so "Send again" can still send it.
             p.sent=System.currentTimeMillis();
+            // The bridge submits media and text separately: a combined request can stall on the phone.
+            // A text-only failure must never turn into a retry of the already-accepted photo.
+            try{JSONObject submitted=new JSONObject(value);p.tmp=submitted.optString("mediaTmpID");p.captionHandled=true;
+                String textError=submitted.optString("captionError");if(!p.caption.isEmpty()&&!textError.isEmpty()){
+                    outbox.addStoppedCaption(p.chat,p.caption,p.reply,"The attachment was accepted. This text needs attention: "+textError,submitted.optBoolean("captionUncertain"));
+                    toast("Photo submitted. Tap the separate text for details.");}}
+            catch(Exception ignored){p.captionHandled=true;if(!p.caption.isEmpty())outbox.addStoppedCaption(p.chat,p.caption,p.reply,
+                "The attachment was accepted, but the text outcome couldn't be read. Check Google Messages before retrying.",true);}
             // Sent again in place of a failed one: the failed copy goes.
             if(!p.replaces.isEmpty()){String gone=p.replaces;PairedService.execute(cl->{cl.deleteMessage(gone);return "";},(x,err)->{if(err.isEmpty()){store.deleteMessage(gone);if(screen.equals("chat"))renderMessages(false);}});}
             if(screen.equals("chat"))renderMessages(false);sendNext(c,sends,index+1);});}
     // ---- Attachments on their way: shown at the bottom of the chat until Google shows the real message ----
     /** echo: Google's copy of this message before your phone has attached the photo (often just the caption, "Sending…"). */
     /** prep: how far along a video is being compressed (0-100), or -1. status: its label while it's on screen. */
-    private static final class PendingMedia{final String chat,caption,reply;final Outgoing item;final long started;long sent;String error="",replaces="",echo="";boolean small;Bitmap thumb;int prep=-1;TextView status;
+    private static final class PendingMedia{final String chat,caption,reply;final Outgoing item;final long started;long sent;String error="",replaces="",echo="",tmp="";boolean small,captionHandled;Bitmap thumb;int prep=-1;TextView status;
         PendingMedia(String chat,Outgoing item,String caption,String reply,long started){this.chat=chat;this.item=item;this.caption=caption;this.reply=reply;this.started=started;}}
     private final List<PendingMedia> pendingMedia=new ArrayList<>();
     private void thumbFor(PendingMedia p){Outgoing o=p.item;boolean visual=o.mime.startsWith("image/")||o.mime.startsWith("video/");if(!visual)return;
@@ -1756,6 +1764,8 @@ public class PairedActivity extends Activity {
         for(PendingMedia p:pendingMedia)if(p.chat.equals(chatId)&&!p.echo.isEmpty())claimed.add(p.echo);
         for(java.util.Iterator<PendingMedia> it=pendingMedia.iterator();it.hasNext();){PendingMedia p=it.next();if(!p.chat.equals(chatId)||p.sent==0)continue;
             boolean done=false;
+            if(p.echo.isEmpty()&&!p.tmp.isEmpty())for(JSONObject m:recent){String mid=m.optString("messageID");
+                if(!claimed.contains(mid)&&PairedProtocol.outgoing(m,c)&&(p.tmp.equals(m.optString("tmpID"))||p.tmp.equals(mid))){p.echo=mid;claimed.add(mid);break;}}
             if(!p.echo.isEmpty()){JSONObject e=null;for(JSONObject m:recent)if(p.echo.equals(m.optString("messageID")))e=m;
                 if(e!=null&&!PairedProtocol.media(e).isEmpty())done=true;
                 // Gone (replaced under its real ID): look again below.
@@ -1766,7 +1776,7 @@ public class PairedActivity extends Activity {
             if(done){if(!p.echo.isEmpty())claimed.add(p.echo);it.remove();p.item.file.delete();continue;}
             if(p.echo.isEmpty())for(JSONObject m:recent){String mid=m.optString("messageID");
                 if(claimed.contains(mid)||!PairedProtocol.outgoing(m,c)||PairedProtocol.time(m)<p.started-5_000)continue;
-                String text=PairedProtocol.text(m).trim();if(p.caption.isEmpty()?text.isEmpty():text.equals(p.caption.trim())){p.echo=mid;claimed.add(mid);break;}}}}
+                String text=PairedProtocol.text(m).trim();if(text.isEmpty()){p.echo=mid;claimed.add(mid);break;}}}}
     /** The attachment on its way shown inside Google's caption-only copy of it, if any. */
     private PendingMedia echoFor(String messageID){for(PendingMedia p:pendingMedia)if(!messageID.isEmpty()&&messageID.equals(p.echo))return p;return null;}
     /** The photo (or file card) of an attachment on its way, at the right like any message you send. */
@@ -1792,7 +1802,7 @@ public class PairedActivity extends Activity {
         // Shown inside Google's copy of it instead (see bubbleBody).
         JSONObject echo=p.echo.isEmpty()?null:store.message(p.echo);if(echo!=null&&!PairedProtocol.body(echo).isEmpty())continue;gap(items,8);
         View line=pendingThumb(p,theme);items.addView(line,new LinearLayout.LayoutParams(-1,-2));int fg=theme.onBubble(dark);
-        if(!p.caption.isEmpty()){LinearLayout capLine=row();capLine.setGravity(Gravity.END);TextView cap=text(p.caption,17,fg,false);cap.setPadding(dp(16),dp(11),dp(16),dp(11));cap.setBackground(shape(theme.bubble(dark),22));
+        if(!p.captionHandled&&!p.caption.isEmpty()){LinearLayout capLine=row();capLine.setGravity(Gravity.END);TextView cap=text(p.caption,17,fg,false);cap.setPadding(dp(16),dp(11),dp(16),dp(11));cap.setBackground(shape(theme.bubble(dark),22));
             cap.setAlpha(0.7f);cap.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));capLine.addView(cap);items.addView(capLine,new LinearLayout.LayoutParams(-1,-2));}
         motion(line,"pm:"+System.identityHashCode(p),LIFT,motionPending.add(p)&&motionReady);
         boolean failed=!p.error.isEmpty()||echo!=null&&PairedProtocol.failed(echo),stuck=p.sent>0&&echo==null&&System.currentTimeMillis()-p.sent>180_000;

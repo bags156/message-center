@@ -1,13 +1,10 @@
-Message Center 1.2.0.
+Message Center 1.4.21.
 
-**Swipe through photos**
-- In the full-screen viewer, swipe left or right to go through every photo and video in the chat ("3 of 12" at the top). Pinch to zoom still works; swiping only moves on when you're not zoomed in. Videos show their picture with a play button.
+**Photo with text sending slowly**
+- A photo and the text written with it now send as two separate messages: photo first, then text. This avoids a mixed media/text request that can leave Google Messages sending for minutes or deliver only the text.
+- The same change applies to videos and other attachments with text. Photo-only sends and photo/video preparation are unchanged.
+- If the photo is accepted but the separate text fails, the text is saved with its own status. Retrying it sends only the text, never another copy of the photo. If its outcome is uncertain, check Google Messages before choosing to retry; the app does not automatically resend it.
 
-**Photo albums**
-- Several photos or videos sent together show as one tidy grid (two side by side, one big plus two, or a 2×2 with "+N" for the rest) instead of a tall stack.
+Regression tests cover separate requests, order, photo-only sends, partial failures and duplicate prevention. Android device checks cover saving and retrying the text separately. These checks use synthetic data; actual delivery speed still needs confirmation on a paired phone.
 
-**Fixes**
-- Screenshots and other photos with a few see-through pixels no longer show tiny and frameless (they were mistaken for stickers).
-- A short chat now sits at the bottom, just above the message box, instead of leaving a gap below the last message.
-
-Install over 1.1.1; the package and signing key are unchanged.
+Install over the existing app; the package and signing key are unchanged. No re-pairing is needed for this change.

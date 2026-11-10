@@ -38,8 +38,17 @@ final class Outbox {
 
     /** With holdMillis > 0 the message waits that long (and can be undone) before it is sent. */
     synchronized JSONObject add(String chat, String text, String reply, long holdMillis) {
+        return add(chat,text,reply,holdMillis,holdMillis > 0 ? HOLD : WAITING,"");
+    }
+
+    /** Text whose photo was accepted already. It waits for a person; retrying sends text only. */
+    synchronized JSONObject addStoppedCaption(String chat,String text,String reply,String error,boolean uncertain) {
+        return add(chat,text,reply,0,uncertain ? UNSURE : FAILED,error);
+    }
+
+    private JSONObject add(String chat,String text,String reply,long holdMillis,String state,String error) {
         JSONObject o = new JSONObject(); long now = System.currentTimeMillis();
-        try { o.put("id", UUID.randomUUID().toString()).put("chat", chat).put("text", text).put("reply", reply).put("created", now).put("state", holdMillis > 0 ? HOLD : WAITING).put("due", now + holdMillis); }
+        try { o.put("id", UUID.randomUUID().toString()).put("chat", chat).put("text", text).put("reply", reply).put("created", now).put("state", state).put("due", now + holdMillis).put("error",error); }
         catch (Exception ignored) {}
         List<JSONObject> list = all(); list.add(o); save(list);
         return o;

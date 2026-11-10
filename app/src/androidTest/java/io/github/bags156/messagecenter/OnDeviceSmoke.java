@@ -423,6 +423,18 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(queued!=null&&"fallback".equals(queued.optString("messageID")),"Offline notification read was lost instead of queued");
             settings.setReceipts("c1",false);receipts.clear();store.clear();
         }
+        // A caption failure after its photo was accepted must persist as TEXT ONLY and never auto-send.
+        Outbox captions=new Outbox(getTargetContext());
+        JSONObject failedCaption=captions.addStoppedCaption("caption-check","Synthetic caption","original","Text rejected",false);
+        JSONObject unsureCaption=captions.addStoppedCaption("caption-check","Another synthetic caption","","Check Google Messages",true);
+        Outbox reopened=new Outbox(getTargetContext());
+        check(Outbox.FAILED.equals(reopened.get(failedCaption.optString("id")).optString("state"))
+            &&Outbox.UNSURE.equals(reopened.get(unsureCaption.optString("id")).optString("state")),"Caption failure was not saved separately");
+        check(reopened.next()==null,"A failed/uncertain caption is being resent automatically");
+        reopened.setState(failedCaption.optString("id"),Outbox.WAITING,"");JSONObject retryCaption=reopened.next();
+        check(retryCaption!=null&&retryCaption.optString("text").equals("Synthetic caption")&&retryCaption.optString("reply").equals("original")
+            &&!retryCaption.has("media")&&!retryCaption.has("file"),"Retrying a caption would resend its photo");
+        reopened.remove(failedCaption.optString("id"));reopened.remove(unsureCaption.optString("id"));
         Activity activity=startActivitySync(new Intent(getTargetContext(),PairedActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         waitForIdleSync();check(activity!=null,"Activity did not launch");
         // Render a synthetic chat in the bubble window: replies, several people's reactions, iPhone fallback text.

@@ -2,7 +2,7 @@
 
 An experimental Android client for Google Messages, with the paired connection running **on the phone**. No additional server, Matrix account, or Beeper account is required. Google Messages remains the default SMS/RCS app and must stay installed and online.
 
-**Current release: 0.8.4. The paired-client architecture began in 0.2.0.** It replaces the notification-based approach in 0.1.x. Compiling and offline device tests do not verify Google sign-in, live RCS delivery, complete history, or ColorOS background reliability. Those require testing on a paired phone.
+**Current release: 1.4.21. The paired-client architecture began in 0.2.0.** It replaces the notification-based approach in 0.1.x. Compiling and offline device tests do not verify Google sign-in, live RCS delivery, complete history, or ColorOS background reliability. Those require testing on a paired phone.
 
 ## Install and connect
 
@@ -28,6 +28,7 @@ For Obtainium, use `https://github.com/bags156/message-center`. Regular releases
 - Google-reported send/delivery/read status. Request acceptance is labeled separately from delivery.
 - Authenticated encryption of the paired session with Android Keystore, private app storage for synced messages, and disabled cloud backup.
 - Photos and videos are made a sensible size before sending: videos are re-encoded to H.264 at up to 1080p and 30 frames a second for RCS (HDR is converted so colours stay right), or squeezed under 1 MB for MMS.
+- Attachments and their accompanying text are submitted as separate messages, photo first, to avoid the paired protocol's mixed media/text stall. If only the text fails, it can be retried without resending the photo; uncertain outcomes wait for you to check Google Messages.
 - Details → Shared: the chat's photos & videos, links and files, each in its own tab, newest first under month headings. Hold any item to jump to it in the chat, copy or share it.
 - Message effects: when an iPhone sends Balloons, Confetti, Slam, Invisible Ink and the rest, RCS only delivers a "(sent with …)" note. The chat plays the effect and hides the note (tap "Replay" to see it again); "Happy birthday", "Congratulations" and "Happy New Year" play theirs too. RCS can't carry an effect, so none are sent.
 
