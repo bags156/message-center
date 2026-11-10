@@ -784,7 +784,7 @@ public class PairedActivity extends Activity {
         items.removeAllViews();unreadDivider=null;inlineSeen=false;
         JSONObject c=store.chat(chatId);ChatTheme theme=chatSettings.theme(chatId);boolean group=c!=null&&PairedProtocol.other(c)==null;
         List<JSONObject> messages=new ArrayList<>();for(JSONObject m:store.messages(chatId,limit))if(!PairedProtocol.body(m).isEmpty()||!PairedProtocol.event(m,c).isEmpty()||!PairedProtocol.effect(m).isEmpty())messages.add(m);
-        settlePendingMedia(messages,c);
+        settlePendingMedia(c);
         moreSaved=messages.size()>=limit-5;if(moreSaved)items.addView(button("Show more saved messages",false,()->{limit+=WINDOW;renderMessages(false);}));
         // iPhone reactions sent as text ("Laughed at an image") go on the message they're about, like any other reaction.
         tapbacks=new HashMap<>();messages=placeTapbacks(messages,tapbacks);
@@ -897,6 +897,8 @@ public class PairedActivity extends Activity {
         View v=bubbleBody(m,c,theme,outgoing,joinPrev,joinNext);return Effects.INK.equals(PairedProtocol.effect(m))&&effectsOn()?invisibleInk(v,m):v;}
     private View bubbleBody(JSONObject m,JSONObject c,ChatTheme theme,boolean outgoing,boolean joinPrev,boolean joinNext){
         LinearLayout wrap=vertical();bubbleViews.put(m.optString("messageID"),wrap);String body=PairedProtocol.text(m),fallback=ChatText.replyFallbackBody(body);List<JSONObject> media=PairedProtocol.media(m);
+        // Google's copy has only the caption so far: the photo you sent is shown here until your phone adds it.
+        PendingMedia waiting=media.isEmpty()?echoFor(m.optString("messageID")):null;if(waiting!=null)wrap.addView(pendingThumb(waiting,theme),new LinearLayout.LayoutParams(-1,-2));
         String target=store.replyTarget(m);
         if(ReplyReferences.isReply(m))addReplyContext(wrap,m,c,theme,outgoing,target);
         // Several photos or videos sent together become one album grid; anything else is shown on its own.
@@ -1110,6 +1112,8 @@ public class PairedActivity extends Activity {
     /** While a message you sent shows "Sending…", check with Google every 20 seconds (for up to 10 minutes), in case an update was missed. */
     private final Runnable recheckSending=()->{if(screen.equals("chat")&&PairedService.ready()&&!busy)loadMessages(false);};
     private void watchSending(List<JSONObject> messages,JSONObject c){ui.removeCallbacks(recheckSending);long now=System.currentTimeMillis();
+        // A photo sent to your phone but not shown back by Google yet: keep checking too.
+        for(PendingMedia p:pendingMedia)if(p.chat.equals(chatId)&&p.sent>0&&now-p.sent<10*60_000){ui.postDelayed(recheckSending,20_000);return;}
         for(int i=messages.size()-1;i>=0&&i>=messages.size()-30;i--){JSONObject m=messages.get(i);
             if(PairedProtocol.outgoing(m,c)&&sending(PairedProtocol.status(m))&&now-PairedProtocol.time(m)<10*60_000){ui.postDelayed(recheckSending,20_000);return;}}}
     private void stuckSendingHelp(){new AlertDialog.Builder(this).setTitle("Still sending")
@@ -1718,25 +1722,43 @@ public class PairedActivity extends Activity {
                 // This one and the rest stay in the chat as "Not sent"; tap to send again or remove.
                 for(int k=index;k<sends.size();k++){sends.get(k).error=k==index?e:"Not sent because an earlier attachment failed.";}
                 busy=false;if(screen.equals("chat"))renderMessages(false);toast(e);return;}
-            p.sent=System.currentTimeMillis();o.file.delete();
+            // The file is kept until Google shows the photo, so "Send again" can still send it.
+            p.sent=System.currentTimeMillis();
             // Sent again in place of a failed one: the failed copy goes.
             if(!p.replaces.isEmpty()){String gone=p.replaces;PairedService.execute(cl->{cl.deleteMessage(gone);return "";},(x,err)->{if(err.isEmpty()){store.deleteMessage(gone);if(screen.equals("chat"))renderMessages(false);}});}
-            // If Google never shows it back (it may be stuck on your phone), stop waiting here after a while.
-            ui.postDelayed(()->{if(pendingMedia.remove(p)&&screen.equals("chat"))renderMessages(false);},45_000);
             if(screen.equals("chat"))renderMessages(false);sendNext(c,sends,index+1);});}
     // ---- Attachments on their way: shown at the bottom of the chat until Google shows the real message ----
-    private static final class PendingMedia{final String chat,caption,reply;final Outgoing item;final long started;long sent;String error="",replaces="";boolean small;Bitmap thumb;
+    /** echo: Google's copy of this message before your phone has attached the photo (often just the caption, "Sending…"). */
+    private static final class PendingMedia{final String chat,caption,reply;final Outgoing item;final long started;long sent;String error="",replaces="",echo="";boolean small;Bitmap thumb;
         PendingMedia(String chat,Outgoing item,String caption,String reply,long started){this.chat=chat;this.item=item;this.caption=caption;this.reply=reply;this.started=started;}}
     private final List<PendingMedia> pendingMedia=new ArrayList<>();
     private void thumbFor(PendingMedia p){Outgoing o=p.item;boolean visual=o.mime.startsWith("image/")||o.mime.startsWith("video/");if(!visual)return;
         decoder.execute(()->{Bitmap b=MediaCache.decodeToCover(o.file,dp(240),dp(240),o.mime.startsWith("video/"));if(b!=null)ui.post(()->{p.thumb=b;if(screen.equals("chat")&&chatId.equals(p.chat))renderMessages(false);});});}
-    /** Drops "Sending…" bubbles whose real message is now in the chat: one outgoing photo, video or file from Google per bubble, sent since. */
-    private void settlePendingMedia(List<JSONObject> messages,JSONObject c){if(pendingMedia.isEmpty())return;Set<String> claimed=new HashSet<>();
+    /**
+     * Matches attachments on their way with Google's copies. Google often shows the message first
+     * with only its caption (or nothing), still "Sending…", and your phone adds the photo later; that
+     * copy is linked (echo) and the photo is shown in it from here. Once Google's copy has the photo
+     * (or the photo arrives as a message of its own), the one here is let go.
+     */
+    private void settlePendingMedia(JSONObject c){if(pendingMedia.isEmpty())return;List<JSONObject> recent=store.messages(chatId,40);Set<String> claimed=new HashSet<>();
+        for(PendingMedia p:pendingMedia)if(p.chat.equals(chatId)&&!p.echo.isEmpty())claimed.add(p.echo);
         for(java.util.Iterator<PendingMedia> it=pendingMedia.iterator();it.hasNext();){PendingMedia p=it.next();if(!p.chat.equals(chatId)||p.sent==0)continue;
-            for(JSONObject m:messages){String mid=m.optString("messageID");if(claimed.contains(mid)||!PairedProtocol.outgoing(m,c)||PairedProtocol.media(m).isEmpty())continue;
-                if(PairedProtocol.time(m)>=p.started-5_000){claimed.add(mid);it.remove();break;}}}}
-    private void renderPendingMedia(ChatTheme theme){for(PendingMedia p:pendingMedia){if(!p.chat.equals(chatId))continue;gap(items,8);
-        LinearLayout line=row();line.setGravity(Gravity.END);int fg=theme.onBubble(dark);
+            boolean done=false;
+            if(!p.echo.isEmpty()){JSONObject e=null;for(JSONObject m:recent)if(p.echo.equals(m.optString("messageID")))e=m;
+                if(e!=null&&!PairedProtocol.media(e).isEmpty())done=true;
+                // Gone (replaced under its real ID): look again below.
+                else if(e==null){claimed.remove(p.echo);p.echo="";}}
+            if(!done)for(JSONObject m:recent){String mid=m.optString("messageID");
+                if(claimed.contains(mid)||!PairedProtocol.outgoing(m,c)||PairedProtocol.time(m)<p.started-5_000||PairedProtocol.media(m).isEmpty())continue;
+                claimed.add(mid);done=true;break;}
+            if(done){if(!p.echo.isEmpty())claimed.add(p.echo);it.remove();p.item.file.delete();continue;}
+            if(p.echo.isEmpty())for(JSONObject m:recent){String mid=m.optString("messageID");
+                if(claimed.contains(mid)||!PairedProtocol.outgoing(m,c)||PairedProtocol.time(m)<p.started-5_000)continue;
+                String text=PairedProtocol.text(m).trim();if(p.caption.isEmpty()?text.isEmpty():text.equals(p.caption.trim())){p.echo=mid;claimed.add(mid);break;}}}}
+    /** The attachment on its way shown inside Google's caption-only copy of it, if any. */
+    private PendingMedia echoFor(String messageID){for(PendingMedia p:pendingMedia)if(!messageID.isEmpty()&&messageID.equals(p.echo))return p;return null;}
+    /** The photo (or file card) of an attachment on its way, at the right like any message you send. */
+    private View pendingThumb(PendingMedia p,ChatTheme theme){LinearLayout line=row();line.setGravity(Gravity.END);int fg=theme.onBubble(dark);
         FrameLayout box=new FrameLayout(this);box.setBackground(shape(theme.bubble(dark),22));
         box.setOutlineProvider(new ViewOutlineProvider(){@Override public void getOutline(View v,Outline ol){ol.setRoundRect(0,0,v.getWidth(),v.getHeight(),dp(22));}});box.setClipToOutline(true);
         int w,h;if(p.thumb!=null){ImageView img=new ImageView(this);img.setScaleType(ImageView.ScaleType.CENTER_CROP);img.setImageBitmap(p.thumb);
@@ -1747,18 +1769,28 @@ public class PairedActivity extends Activity {
         if(p.error.isEmpty()&&p.sent==0){ProgressBar spin=new ProgressBar(this,null,android.R.attr.progressBarStyleSmall);spin.setIndeterminateTintList(ColorStateList.valueOf(Color.WHITE));
             FrameLayout ring=new FrameLayout(this);ring.setBackground(oval(0x88000000));ring.addView(spin,new FrameLayout.LayoutParams(dp(20),dp(20),Gravity.CENTER));
             FrameLayout.LayoutParams rl=new FrameLayout.LayoutParams(dp(30),dp(30),Gravity.TOP|Gravity.END);rl.setMargins(0,dp(8),dp(8),0);box.addView(ring,rl);}
-        box.setAlpha(p.error.isEmpty()?0.85f:0.6f);line.addView(box,new LinearLayout.LayoutParams(w,h));items.addView(line);
+        box.setAlpha(p.error.isEmpty()?0.85f:0.6f);LinearLayout.LayoutParams bl=new LinearLayout.LayoutParams(w,h);bl.bottomMargin=dp(4);line.addView(box,bl);
+        box.setOnClickListener(v->pendingOptions(p));return line;}
+    /** Tap an attachment on its way: send it again, or remove it (only once it's failed or stuck). */
+    private void pendingOptions(PendingMedia p){JSONObject echo=p.echo.isEmpty()?null:store.message(p.echo);boolean failed=!p.error.isEmpty()||echo!=null&&PairedProtocol.failed(echo);
+        boolean stuck=p.sent>0&&p.echo.isEmpty()&&System.currentTimeMillis()-p.sent>180_000;if(!failed&&!stuck)return;
+        new AlertDialog.Builder(this).setMessage(!p.error.isEmpty()?p.error:failed?whyNotSent(echo):"Your phone hasn't picked this up. You can send it again.")
+            .setPositiveButton("Send again",(d,x)->retryPending(p)).setNegativeButton("Remove",(d,x)->{pendingMedia.remove(p);p.item.file.delete();renderMessages(false);}).setNeutralButton("Cancel",null).show();}
+    private void renderPendingMedia(ChatTheme theme){for(PendingMedia p:pendingMedia){if(!p.chat.equals(chatId))continue;
+        // Shown inside Google's copy of it instead (see bubbleBody).
+        JSONObject echo=p.echo.isEmpty()?null:store.message(p.echo);if(echo!=null&&!PairedProtocol.body(echo).isEmpty())continue;gap(items,8);
+        View line=pendingThumb(p,theme);items.addView(line,new LinearLayout.LayoutParams(-1,-2));int fg=theme.onBubble(dark);
         if(!p.caption.isEmpty()){LinearLayout capLine=row();capLine.setGravity(Gravity.END);TextView cap=text(p.caption,17,fg,false);cap.setPadding(dp(16),dp(11),dp(16),dp(11));cap.setBackground(shape(theme.bubble(dark),22));
-            cap.setAlpha(0.7f);cap.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));LinearLayout.LayoutParams cl=new LinearLayout.LayoutParams(-2,-2);cl.topMargin=dp(4);capLine.addView(cap);items.addView(capLine,cl);}
+            cap.setAlpha(0.7f);cap.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));capLine.addView(cap);items.addView(capLine,new LinearLayout.LayoutParams(-1,-2));}
         motion(line,"pm:"+System.identityHashCode(p),LIFT,motionPending.add(p)&&motionReady);
-        String label=!p.error.isEmpty()?"Not sent • Tap to retry":p.sent==0?"Sending…":"Sent to your phone • waiting for it to go out";
-        TextView st=text(label,12,p.error.isEmpty()?muted:danger,!p.error.isEmpty());st.setGravity(Gravity.END);st.setPadding(0,dp(4),dp(6),0);items.addView(st,new LinearLayout.LayoutParams(-1,-2));
-        if(!p.error.isEmpty()){View.OnClickListener act=v->new AlertDialog.Builder(this).setMessage(p.error).setPositiveButton("Send again",(d,x)->retryPending(p))
-                .setNegativeButton("Remove",(d,x)->{pendingMedia.remove(p);p.item.file.delete();renderMessages(false);}).setNeutralButton("Cancel",null).show();
-            box.setOnClickListener(act);st.setOnClickListener(act);}}}
+        boolean failed=!p.error.isEmpty()||echo!=null&&PairedProtocol.failed(echo),stuck=p.sent>0&&echo==null&&System.currentTimeMillis()-p.sent>180_000;
+        String label=failed?"Not sent • Tap to retry":p.sent==0?"Sending…":echo!=null?"Sending from your phone…":stuck?"Your phone hasn't sent this • Tap for options":"Sent to your phone • waiting for it to go out";
+        TextView st=text(label,12,failed?danger:muted,failed);st.setGravity(Gravity.END);st.setPadding(0,dp(4),dp(6),0);items.addView(st,new LinearLayout.LayoutParams(-1,-2));
+        if(failed||stuck)st.setOnClickListener(v->pendingOptions(p));}}
     private final Set<PendingMedia> motionPending=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
     private void retryPending(PendingMedia p){if(!PairedService.ready()){toast("Connect to Google Messages first.");return;}JSONObject c=store.chat(p.chat);if(c==null)return;
-        p.error="";busy=true;renderMessages(false);List<PendingMedia> one=new ArrayList<>();one.add(p);sendNext(c,one,0);}
+        if(!p.item.file.isFile()){toast("That attachment is no longer on this phone. Send it again with +.");pendingMedia.remove(p);renderMessages(false);return;}
+        if(!p.echo.isEmpty())p.replaces=p.echo;p.echo="";p.error="";p.sent=0;busy=true;renderMessages(false);List<PendingMedia> one=new ArrayList<>();one.add(p);sendNext(c,one,0);}
     // ---- 0.7: swipes, jump to latest, codes, jumbo emoji, details, starred, media, search, scheduling ----
     private Starred starred;private TextView jumpButton;private int newWhileAway;private long newestSeenTime;
     private String searchedFor="";private List<JSONObject> searchHits=new ArrayList<>();private int searchGeneration;
@@ -2376,7 +2408,8 @@ public class PairedActivity extends Activity {
         case "OUTGOING_FAILED_EMERGENCY_NUMBER"->"Messages to emergency numbers can't be sent from here.";
         case "OUTGOING_CANCELED"->"It was canceled.";
         default->"Google Messages on your phone couldn't send it.";};}
-    private void retryFailed(JSONObject m){String text=PairedProtocol.text(m);List<JSONObject> media=PairedProtocol.media(m);
+    private void retryFailed(JSONObject m){PendingMedia attached=echoFor(m.optString("messageID"));if(attached!=null){pendingOptions(attached);return;}
+        String text=PairedProtocol.text(m);List<JSONObject> media=PairedProtocol.media(m);
         if(!media.isEmpty()){retryFailedMedia(m,media,text);return;}
         new AlertDialog.Builder(this).setMessage("Send this message again?").setPositiveButton("Send again",(d,w)->{
             PairedService.sendOrQueue(this,chatId,text,"",(v,e)->{if(!e.isEmpty()){error(e);return;}
