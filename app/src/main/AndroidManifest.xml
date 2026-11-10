@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Asks Android (with your approval) not to put the connection to sleep, so messages arrive on time. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
@@ -73,6 +74,7 @@
         <activity android:name=".VideoPlayerActivity" android:exported="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden" />
         <service android:name=".PairedService" android:exported="false" android:foregroundServiceType="remoteMessaging" />
+        <service android:name=".TranscribeService" android:exported="false" android:foregroundServiceType="microphone|shortService" />
         <!-- Decodes pictures the phone's own decoders refuse (iPhone Genmoji) in a sandbox with no access to the app's data. -->
         <service android:name=".HevcDecoderService" android:exported="false" android:process=":picture_decoder" android:isolatedProcess="true" />
         <receiver android:name=".NotificationActions" android:exported="false" />

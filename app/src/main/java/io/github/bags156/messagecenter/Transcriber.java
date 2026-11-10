@@ -56,7 +56,7 @@ final class Transcriber {
      * Transcribes one audio file; the callbacks run on the main thread. One transcription runs at
      * a time. names (people in the chat) are words the recognizer should expect.
      */
-    static void transcribe(Context context, File audio, String mediaID, List<String> names, Progress progress, Done done) {
+    static void transcribe(Context context, File audio, String mediaID, List<String> names, boolean onScreen, Progress progress, Done done) {
         String cached = saved(context, mediaID);
         if (cached != null) { done.done(cached, ""); return; }
         if (!available(context)) {
@@ -65,6 +65,8 @@ final class Transcriber {
         }
         if (running) { done.done("", "Another voice message is being transcribed. Try again in a moment."); return; }
         running = true;
+        // So it can finish if you leave the app (only possible to start while it's on screen).
+        if (onScreen) TranscribeService.start(context);
         File dir = new File(context.getCacheDir(), "outgoing"), pcm = new File(dir, MediaCache.hash(mediaID + audio.getName()) + ".pcm");
         decoder.execute(() -> {
             String problem = null;
@@ -75,12 +77,14 @@ final class Transcriber {
             String p = problem;
             List<File> pieces = parts;
             main.post(() -> {
-                if (p != null) { running = false; for (File f : pieces) f.delete(); done.done("", p); return; }
-                if (pieces.isEmpty()) { running = false; done.done("", "No speech was found in this voice message."); return; }
+                if (p != null) { stopped(context); for (File f : pieces) f.delete(); done.done("", p); return; }
+                if (pieces.isEmpty()) { stopped(context); done.done("", "No speech was found in this voice message."); return; }
                 new Job(context.getApplicationContext(), pieces, mediaID, names, progress, done).next();
             });
         });
     }
+
+    private static void stopped(Context context) { running = false; TranscribeService.stop(context); }
 
     /**
      * Decodes any audio Android can play (AAC/M4A, AMR, MP3, Opus, WAV) to 16 kHz mono PCM, with
@@ -150,7 +154,8 @@ final class Transcriber {
 
     /**
      * Recognizes a voice message piece by piece (it's cut at pauses; see Pcm.speech). Each piece
-     * is played to the recognizer like a microphone would (see recognize). If the recognizer stops
+     * is played to the recognizer like a microphone would, but faster (see recognize, Speed); a
+     * piece that comes back with too few words is played again slower. If the recognizer stops
      * partway through a piece, it's started again from a little before where it stopped. The first
      * session asks for punctuation and capitalization, unmasked words, and the chat's names; if the
      * recognizer rejects any of that, the rest go without.
@@ -158,6 +163,7 @@ final class Transcriber {
     private static final class Job {
         private static final long BACK_UP = Pcm.RATE * 2;            // 1 s of audio, in bytes
         private static final long PADDING = Pcm.RATE * 2;            // the silence after each piece (Pcm.split)
+        private static final long LEAD = Pcm.RATE / 5 * 2;           // the silence before it
         private static final int MAX_RESTARTS = 8;
         private final Context context;
         private final List<File> parts;
@@ -167,28 +173,39 @@ final class Transcriber {
         private final Done done;
         private final List<String> pieces = new ArrayList<>();
         private final boolean english = Locale.getDefault().getLanguage().equals("en");
-        private boolean extras = true;
+        private final List<String> heardHere = new ArrayList<>();
+        private boolean extras = true, slowedDown;
         private int at, restarts;
         private long from;
+        private float speed;
 
         Job(Context context, List<File> parts, String mediaID, List<String> names, Progress progress, Done done) {
             this.context = context; this.parts = parts; this.mediaID = mediaID; this.names = names; this.progress = progress; this.done = done;
+            speed = Speed.now(prefs(context));
         }
 
         void next() {
             if (at >= parts.size()) { finish(""); return; }
             if (progress != null) progress.at(at, parts.size());
+            TranscribeService.progress(context, at, parts.size());
             File part = parts.get(at);
-            recognize(context, part, from, names, extras, (heard, error, reached) -> {
+            recognize(context, part, from, speed, names, extras, (heard, error, reached) -> {
                 if (heard.isEmpty() && error >= 0) {
                     if (extras && retryable(error)) { extras = false; next(); return; }
                     if (fatal(error)) { finish(message(error)); return; }
                     // Otherwise this stretch was a cough or a mumble; carry on.
                 }
-                pieces.addAll(heard);
+                heardHere.addAll(heard);
                 // Stopped with speech still to come: go again from a second before it stopped.
                 long rest = part.length() - PADDING - reached, again = Math.max(from + Pcm.RATE, reached - BACK_UP);
                 if (rest > Pcm.RATE && restarts < MAX_RESTARTS && again < part.length() - PADDING) { from = again; restarts++; next(); return; }
+                // Far fewer words than the piece's length suggests: the recognizer couldn't keep up. Redo it slower.
+                double seconds = (part.length() - LEAD - PADDING) / (double) (Pcm.RATE * 2);
+                if (speed > 1 && Speed.thin(heardHere, seconds)) {
+                    speed = Speed.slower(prefs(context), speed); slowedDown = true;
+                    heardHere.clear(); from = 0; restarts = 0; next(); return;
+                }
+                pieces.addAll(heardHere); heardHere.clear();
                 part.delete();
                 at++; from = 0; restarts = 0;
                 next();
@@ -196,12 +213,14 @@ final class Transcriber {
         }
 
         private void finish(String error) {
-            running = false;
+            stopped(context);
             for (File f : parts) f.delete();
             String text = TranscriptText.join(pieces, english);
             if (!error.isEmpty() && text.isEmpty()) { done.done("", error); return; }
             if (text.isEmpty()) { done.done("", "No speech was found in this voice message."); return; }
             prefs(context).edit().putString(mediaID, text).apply();
+            // It all went through at this speed: try a step faster next time (never one that's failed).
+            if (!slowedDown && parts.size() > 0) Speed.worked(prefs(context), speed);
             done.done(text, "");
         }
     }
@@ -213,11 +232,11 @@ final class Transcriber {
 
     /**
      * Runs the recognizer over one piece of audio, starting from byte offset from. The audio is
-     * played into a pipe at the pace of speech, starting once the recognizer says it's listening:
-     * given the whole file at once, a recognizer can skip ahead and drop what it wasn't ready for,
-     * which left only a stretch from the middle of a long message.
+     * played into a pipe at a steady pace (speed times real time), starting once the recognizer
+     * says it's listening: given the whole file at once, a recognizer can skip ahead and drop what
+     * it wasn't ready for, which left only a stretch from the middle of a long message.
      */
-    private static void recognize(Context context, File pcm, long from, List<String> names, boolean extras, Heard then) {
+    private static void recognize(Context context, File pcm, long from, float speed, List<String> names, boolean extras, Heard then) {
         ParcelFileDescriptor[] pipe;
         try { pipe = ParcelFileDescriptor.createPipe(); }
         catch (Exception e) { then.heard(new ArrayList<>(), SpeechRecognizer.ERROR_CLIENT, pcm.length()); return; }
@@ -269,7 +288,7 @@ final class Transcriber {
                     while (!stop.get() && (n = in.read(chunk)) > 0) {
                         out.write(chunk, 0, n);
                         sent += n; reached.addAndGet(n);
-                        long due = started + sent * 1000 / (Pcm.RATE * 2);
+                        long due = started + Math.round(sent * 1000 / (Pcm.RATE * 2 * (double) speed));
                         long wait = due - android.os.SystemClock.elapsedRealtime();
                         if (wait > 0) Thread.sleep(wait);
                     }
@@ -307,8 +326,8 @@ final class Transcriber {
             }
             @Override public void onEvent(int type, Bundle params) {}
         });
-        // Played in real time, so the session lasts about as long as the piece, plus time to finish.
-        main.postDelayed(timeout[0], (pcm.length() - from) * 1000 / (Pcm.RATE * 2) + 20_000);
+        // Played at a steady pace, so the session lasts about as long as that takes, plus time to finish.
+        main.postDelayed(timeout[0], Math.round((pcm.length() - from) * 1000 / (Pcm.RATE * 2 * (double) speed)) + 20_000);
         main.postDelayed(fallbackStart[0], 1500);
         try { recognizer.startListening(intent); }
         catch (Exception e) { finish.accept(SpeechRecognizer.ERROR_CLIENT); }

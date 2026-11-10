@@ -2239,7 +2239,7 @@ public class PairedActivity extends Activity {
         if(c!=null)for(JSONObject p:PairedProtocol.members(c)){String n=PairedProtocol.name(p);if(!n.isEmpty()&&!n.startsWith("+")){names.add(n);String first=n.split("\\s+")[0];if(!names.contains(first))names.add(first);}
             String nick=Nicknames.get(PairedProtocol.number(p));if(!nick.isEmpty()&&!names.contains(nick))names.add(nick);}
         withFile(media,"Downloading…",file->{transcribing.add(id);renderMessages(false);
-            Transcriber.transcribe(this,file,id,names,(done,total)->{String at=total>1?" "+Math.round(100f*done/total)+"%":"";transcribeProgress.put(id,at);
+            Transcriber.transcribe(this,file,id,names,resumed,(done,total)->{String at=total>1?" "+Math.round(100f*done/total)+"%":"";transcribeProgress.put(id,at);
                 TextView l=transcribingLabels.get(id);if(l!=null&&l.isAttachedToWindow())l.setText("Transcribing…"+at);},
                 (text,err)->{transcribing.remove(id);transcribeProgress.remove(id);transcribingLabels.remove(id);renderMessages(false);if(!err.isEmpty())error(err);});});}
 
