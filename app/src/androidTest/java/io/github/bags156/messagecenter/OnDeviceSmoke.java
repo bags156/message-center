@@ -642,24 +642,29 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(waiting[0]==1,"The photo isn't waiting in the chat ("+waiting[0]+")");
         bubble.getWindow().getDecorView().findViewsWithText(found,"Not sent • Tap to retry",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.size()==notSentBefore+1,"A photo that couldn't send doesn't say so in the chat");found.clear();
         bubble.getWindow().getDecorView().findViewsWithText(found,"Look at this",android.view.View.FIND_VIEWS_WITH_TEXT);check(!found.isEmpty(),"The caption of a photo being sent isn't shown");found.clear();
-        // Uploaded, and Google shows its copy with only the caption, still sending: the photo stays, inside that copy,
-        // not as a second bubble at the bottom; once Google's copy has the photo, the one here goes.
+        // Media and text are submitted separately. A text echo must never claim the pending photo.
+        // The photo's own transaction links its placeholder; when its media arrives the local copy goes.
         java.lang.reflect.Method render=PairedActivity.class.getDeclaredMethod("renderMessages",boolean.class);render.setAccessible(true);
         runOnMainSync(()->{try{Object p=((java.util.List<?>)pendingF.get(bubble)).get(0);Class<?> pc=p.getClass();
-            java.lang.reflect.Field err=pc.getDeclaredField("error"),sent=pc.getDeclaredField("sent");err.setAccessible(true);sent.setAccessible(true);err.set(p,"");sent.set(p,System.currentTimeMillis());}catch(Exception e){throw new RuntimeException(e);}});
+            java.lang.reflect.Field err=pc.getDeclaredField("error"),sent=pc.getDeclaredField("sent"),tmp=pc.getDeclaredField("tmp"),handled=pc.getDeclaredField("captionHandled");
+            err.setAccessible(true);sent.setAccessible(true);tmp.setAccessible(true);handled.setAccessible(true);err.set(p,"");sent.set(p,System.currentTimeMillis());tmp.set(p,"photo-submission");handled.set(p,true);}catch(Exception e){throw new RuntimeException(e);}});
         long nowUs=System.currentTimeMillis()*1000;
-        try(PairedStore store=new PairedStore(getTargetContext())){store.message(new JSONObject("{messageID:'echo1',conversationID:'smoke',participantID:'me',timestamp:"+nowUs+",messageStatus:{status:'OUTGOING_SENDING'},messageInfo:[{messageContent:{content:'Look at this'}}]}"),0,true);}
+        try(PairedStore store=new PairedStore(getTargetContext())){store.message(new JSONObject("{messageID:'echo-text',tmpID:'text-submission',conversationID:'smoke',participantID:'me',timestamp:"+nowUs+",messageStatus:{status:'OUTGOING_SENDING'},messageInfo:[{messageContent:{content:'Look at this'}}]}"),0,true);}
         runOnMainSync(()->{try{render.invoke(bubble,false);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
         String[] echoOf=new String[1];int[] left=new int[1];
         runOnMainSync(()->{try{java.util.List<?> l=(java.util.List<?>)pendingF.get(bubble);left[0]=l.size();if(!l.isEmpty()){java.lang.reflect.Field e=l.get(0).getClass().getDeclaredField("echo");e.setAccessible(true);echoOf[0]=(String)e.get(l.get(0));}}catch(Exception e){throw new RuntimeException(e);}});
-        check(left[0]==1&&"echo1".equals(echoOf[0]),"The photo wasn't linked to Google's caption-only copy ("+left[0]+", "+echoOf[0]+")");
+        check(left[0]==1&&"".equals(echoOf[0]),"The separate text claimed the pending photo ("+left[0]+", "+echoOf[0]+")");
+        try(PairedStore store=new PairedStore(getTargetContext())){store.message(new JSONObject("{messageID:'echo1',tmpID:'photo-submission',conversationID:'smoke',participantID:'me',timestamp:"+nowUs+",messageStatus:{status:'OUTGOING_SENDING'},messageInfo:[]}"),0,true);}
+        runOnMainSync(()->{try{render.invoke(bubble,false);java.util.List<?> l=(java.util.List<?>)pendingF.get(bubble);left[0]=l.size();if(!l.isEmpty()){
+            java.lang.reflect.Field e=l.get(0).getClass().getDeclaredField("echo");e.setAccessible(true);echoOf[0]=(String)e.get(l.get(0));}}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
+        check(left[0]==1&&"echo1".equals(echoOf[0]),"The photo wasn't linked to its own transaction ("+left[0]+", "+echoOf[0]+")");
         bubble.getWindow().getDecorView().findViewsWithText(found,"Look at this",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.size()==1,"The caption shows "+found.size()+" times while the photo is on its way");found.clear();
         bubble.getWindow().getDecorView().findViewsWithText(found,"waiting for it to go out",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.isEmpty(),"A second copy of the photo is still at the bottom");found.clear();
-        try(PairedStore store=new PairedStore(getTargetContext())){store.message(new JSONObject("{messageID:'echo1',conversationID:'smoke',participantID:'me',timestamp:"+nowUs+",messageStatus:{status:'OUTGOING_DELIVERED'},messageInfo:[{mediaContent:{mediaID:'echo1-photo',mimeType:'image/jpeg',mediaName:'smoke-send.jpg',size:4000}},{messageContent:{content:'Look at this'}}]}"),0,true);}
+        try(PairedStore store=new PairedStore(getTargetContext())){store.message(new JSONObject("{messageID:'echo1',tmpID:'photo-submission',conversationID:'smoke',participantID:'me',timestamp:"+nowUs+",messageStatus:{status:'OUTGOING_DELIVERED'},messageInfo:[{mediaContent:{mediaID:'echo1-photo',mimeType:'image/jpeg',mediaName:'smoke-send.jpg',size:4000}}]}"),0,true);}
         runOnMainSync(()->{try{render.invoke(bubble,false);left[0]=((java.util.List<?>)pendingF.get(bubble)).size();}catch(Exception e){throw new RuntimeException(e);}});
         check(left[0]==0,"The photo here wasn't let go once Google's copy had it");
         check(!pic.exists(),"The photo's file wasn't cleaned up once it went");
-        try(PairedStore store=new PairedStore(getTargetContext())){store.deleteMessage("echo1");}
+        try(PairedStore store=new PairedStore(getTargetContext())){store.deleteMessage("echo1");store.deleteMessage("echo-text");}
         runOnMainSync(()->{try{((java.util.List<?>)pendingF.get(bubble)).clear();render.invoke(bubble,false);}catch(Exception e){throw new RuntimeException(e);}});
         pic.delete();
         // Screenshots are allowed.

@@ -1725,7 +1725,7 @@ public class PairedActivity extends Activity {
             PhotoPrep.Ready ready=video?VideoPrep.prepare(app,o.file,o.name,o.mime,mms,percent->ui.post(()->{p.prep=percent;showPendingStatus(p);}))
                 :PhotoPrep.prepare(o.file,o.name,o.mime,mms);
             long prepared=System.currentTimeMillis();if(video)ui.post(()->{p.prep=-1;showPendingStatus(p);});
-            try{return client.sendMedia(c.toString(),ready.file.getPath(),ready.name,ready.mime,p.caption,p.reply);}
+            try{return client.sendMedia(c.toString(),ready.file.getPath(),ready.name,ready.mime,p.captionHandled?"":p.caption,p.reply);}
             finally{// For "Report a problem": how long each step took (sizes and times only).
                 Diagnostics.note("Sent "+(ready.mime.startsWith("image/")?"photo":ready.mime.startsWith("video/")?"video":"attachment")+" "+(ready.file.length()/1024)+" KB"+(ready.file!=o.file?" (from "+(o.file.length()/1024)+" KB)":"")+": waited "+(start-queued)+" ms, prepared "+(prepared-start)+" ms, uploaded and sent "+(System.currentTimeMillis()-prepared)+" ms");
                 if(ready.file!=o.file)ready.file.delete();}},(value,e)->{p.prep=-1;
@@ -1740,14 +1740,14 @@ public class PairedActivity extends Activity {
             try{JSONObject submitted=new JSONObject(value);p.tmp=submitted.optString("mediaTmpID");p.captionHandled=true;
                 String textError=submitted.optString("captionError");if(!p.caption.isEmpty()&&!textError.isEmpty()){
                     outbox.addStoppedCaption(p.chat,p.caption,p.reply,"The attachment was accepted. This text needs attention: "+textError,submitted.optBoolean("captionUncertain"));
-                    toast("Photo submitted. Tap the separate text for details.");}}
+                    toast("Attachment submitted. Tap the separate text for details.");}}
             catch(Exception ignored){p.captionHandled=true;if(!p.caption.isEmpty())outbox.addStoppedCaption(p.chat,p.caption,p.reply,
                 "The attachment was accepted, but the text outcome couldn't be read. Check Google Messages before retrying.",true);}
             // Sent again in place of a failed one: the failed copy goes.
             if(!p.replaces.isEmpty()){String gone=p.replaces;PairedService.execute(cl->{cl.deleteMessage(gone);return "";},(x,err)->{if(err.isEmpty()){store.deleteMessage(gone);if(screen.equals("chat"))renderMessages(false);}});}
             if(screen.equals("chat"))renderMessages(false);sendNext(c,sends,index+1);});}
     // ---- Attachments on their way: shown at the bottom of the chat until Google shows the real message ----
-    /** echo: Google's copy of this message before your phone has attached the photo (often just the caption, "Sending…"). */
+    /** echo: Google's copy of this photo; tmp links its submission separately from the accompanying text. */
     /** prep: how far along a video is being compressed (0-100), or -1. status: its label while it's on screen. */
     private static final class PendingMedia{final String chat,caption,reply;final Outgoing item;final long started;long sent;String error="",replaces="",echo="",tmp="";boolean small,captionHandled;Bitmap thumb;int prep=-1;TextView status;
         PendingMedia(String chat,Outgoing item,String caption,String reply,long started){this.chat=chat;this.item=item;this.caption=caption;this.reply=reply;this.started=started;}}
@@ -1755,8 +1755,8 @@ public class PairedActivity extends Activity {
     private void thumbFor(PendingMedia p){Outgoing o=p.item;boolean visual=o.mime.startsWith("image/")||o.mime.startsWith("video/");if(!visual)return;
         decoder.execute(()->{Bitmap b=MediaCache.decodeToCover(o.file,dp(240),dp(240),o.mime.startsWith("video/"));if(b!=null)ui.post(()->{p.thumb=b;if(screen.equals("chat")&&chatId.equals(p.chat))renderMessages(false);});});}
     /**
-     * Matches attachments on their way with Google's copies. Google often shows the message first
-     * with only its caption (or nothing), still "Sending…", and your phone adds the photo later; that
+     * Matches attachments on their way with Google's copies. Google may show an empty placeholder
+     * first, still "Sending…", and your phone adds the photo later; that
      * copy is linked (echo) and the photo is shown in it from here. Once Google's copy has the photo
      * (or the photo arrives as a message of its own), the one here is let go.
      */
@@ -1777,7 +1777,7 @@ public class PairedActivity extends Activity {
             if(p.echo.isEmpty())for(JSONObject m:recent){String mid=m.optString("messageID");
                 if(claimed.contains(mid)||!PairedProtocol.outgoing(m,c)||PairedProtocol.time(m)<p.started-5_000)continue;
                 String text=PairedProtocol.text(m).trim();if(text.isEmpty()){p.echo=mid;claimed.add(mid);break;}}}}
-    /** The attachment on its way shown inside Google's caption-only copy of it, if any. */
+    /** The attachment on its way shown inside Google's copy of it, if any. */
     private PendingMedia echoFor(String messageID){for(PendingMedia p:pendingMedia)if(!messageID.isEmpty()&&messageID.equals(p.echo))return p;return null;}
     /** The photo (or file card) of an attachment on its way, at the right like any message you send. */
     private View pendingThumb(PendingMedia p,ChatTheme theme){LinearLayout line=row();line.setGravity(Gravity.END);int fg=theme.onBubble(dark);
@@ -1816,7 +1816,7 @@ public class PairedActivity extends Activity {
     private final Set<PendingMedia> motionPending=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
     private void retryPending(PendingMedia p){if(!PairedService.ready()){toast("Connect to Google Messages first.");return;}JSONObject c=store.chat(p.chat);if(c==null)return;
         if(!p.item.file.isFile()){toast("That attachment is no longer on this phone. Send it again with +.");pendingMedia.remove(p);renderMessages(false);return;}
-        if(!p.echo.isEmpty())p.replaces=p.echo;p.echo="";p.error="";p.sent=0;renderMessages(false);List<PendingMedia> one=new ArrayList<>();one.add(p);sendNext(c,one,0);}
+        if(!p.echo.isEmpty())p.replaces=p.echo;p.echo="";p.tmp="";p.error="";p.sent=0;renderMessages(false);List<PendingMedia> one=new ArrayList<>();one.add(p);sendNext(c,one,0);}
     // ---- 0.7: swipes, jump to latest, codes, jumbo emoji, details, starred, media, search, scheduling ----
     private Starred starred;private TextView jumpButton;private int newWhileAway;private long newestSeenTime;
     private String searchedFor="";private List<JSONObject> searchHits=new ArrayList<>();private int searchGeneration;
