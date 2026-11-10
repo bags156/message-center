@@ -72,8 +72,8 @@ final class VideoPrep {
         Outcome done = null;
         try {
             int mode = Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL;
-            for (int attempt = 0; attempt < 3; attempt++) {
-                done = export(context, in, out, plan, mode, progress);
+            for (int attempt = 0; attempt < 4; attempt++) {
+                done = export(context, in, out, plan, mode, mms, progress);
                 if (done.error != null) {
                     // Some phones tone-map HDR in the decoder instead: try that once.
                     if (source.hdr && mode == Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL) { mode = Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_MEDIACODEC; continue; }
@@ -81,7 +81,7 @@ final class VideoPrep {
                 }
                 if (out.length() > 0 && out.length() <= limit) break;
                 Diagnostics.note("Video came out " + out.length() / 1024 + " KB at " + plan + "; trying smaller");
-                plan = plan.smaller(source, mms);
+                plan = plan.smaller(source, mms, out.length());
             }
         } finally {
             if (awake != null) try { awake.release(); } catch (Exception ignored) {}
@@ -156,7 +156,7 @@ final class VideoPrep {
     private static final class Outcome { volatile String error; volatile String encoder = ""; volatile int width, height; }
 
     /** One re-encode with Media3 Transformer, on a thread of its own (it calls back on the thread it's started from). */
-    private static Outcome export(Context context, File in, File out, VideoPlan plan, int hdrMode, Progress progress) {
+    private static Outcome export(Context context, File in, File out, VideoPlan plan, int hdrMode, boolean mms, Progress progress) {
         Outcome result = new Outcome();
         out.delete();
         HandlerThread thread = new HandlerThread("video-prep");
@@ -175,8 +175,11 @@ final class VideoPrep {
                     for (int n = 1; n <= 8; n++) { float[] each = new float[n]; java.util.Arrays.fill(each, 1f / n); mix.putChannelMixingMatrix(new ChannelMixingMatrix(n, 1, each)); }
                     sound.add(mix);
                 }
+                // MMS has a hard size limit, so the encoder is asked to keep strictly to the bitrate (constant bitrate).
+                VideoEncoderSettings.Builder picked = new VideoEncoderSettings.Builder().setBitrate(plan.videoBitrate);
+                if (mms && constantBitrate()) picked.setBitrateMode(android.media.MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR);
                 DefaultEncoderFactory.Builder encoders = new DefaultEncoderFactory.Builder(context).setEnableFallback(true)
-                        .setRequestedVideoEncoderSettings(new VideoEncoderSettings.Builder().setBitrate(plan.videoBitrate).build());
+                        .setRequestedVideoEncoderSettings(picked.build());
                 if (plan.audioBitrate > 0) encoders.setRequestedAudioEncoderSettings(new AudioEncoderSettings.Builder().setBitrate(plan.audioBitrate).build());
                 EditedMediaItem item = new EditedMediaItem.Builder(MediaItem.fromUri(Uri.fromFile(in))).setEffects(new Effects(sound, picture)).build();
                 Composition composition = new Composition.Builder(new EditedMediaItemSequence.Builder(item).build()).setHdrMode(hdrMode).build();
@@ -218,6 +221,19 @@ final class VideoPrep {
             thread.quitSafely();
         }
         return result;
+    }
+
+    /** Whether one of this phone's H.264 encoders can keep to a constant bitrate (asking one that can't fails). */
+    private static boolean constantBitrate() {
+        try {
+            for (android.media.MediaCodecInfo info : new android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).getCodecInfos()) {
+                if (!info.isEncoder()) continue;
+                for (String type : info.getSupportedTypes())
+                    if (type.equalsIgnoreCase(MimeTypes.VIDEO_H264) && info.getCapabilitiesForType(type).getEncoderCapabilities()
+                            .isBitrateModeSupported(android.media.MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)) return true;
+            }
+        } catch (Exception ignored) {}
+        return false;
     }
 
     /** What went wrong underneath, for "Report a problem" (codec and format names; no message content). */

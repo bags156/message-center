@@ -232,22 +232,27 @@ public final class OnDeviceSmoke extends Instrumentation {
         {android.graphics.Bitmap bm=android.graphics.Bitmap.createBitmap(800,600,android.graphics.Bitmap.Config.ARGB_8888);bm.eraseColor(0xff336699);try(java.io.FileOutputStream fo=new java.io.FileOutputStream(small)){bm.compress(android.graphics.Bitmap.CompressFormat.JPEG,90,fo);}}
         check(PhotoPrep.prepare(small,"small.jpg","image/jpeg",true).file==small,"A small photo was re-encoded for no reason");
         big.delete();small.delete();}
-    /** A 2-second 1280×720 clip filmed sideways (rotation 90), with stereo sound, heavy enough to need shrinking. */
+    /** A 2-second 1280×720 clip at 60 fps filmed sideways (rotation 90), with stereo sound and a little grain, like a phone's. */
     private java.io.File makeTestVideo(java.io.File out)throws Exception{
-        int w=1280,h=720,frames=60;android.media.MediaCodec.BufferInfo info=new android.media.MediaCodec.BufferInfo();
+        int w=1280,h=720,frames=120;android.media.MediaCodec.BufferInfo info=new android.media.MediaCodec.BufferInfo();
         android.media.MediaFormat vf=android.media.MediaFormat.createVideoFormat("video/avc",w,h);
         vf.setInteger(android.media.MediaFormat.KEY_COLOR_FORMAT,android.media.MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible);
-        vf.setInteger(android.media.MediaFormat.KEY_BIT_RATE,12_000_000);vf.setInteger(android.media.MediaFormat.KEY_FRAME_RATE,30);vf.setInteger(android.media.MediaFormat.KEY_I_FRAME_INTERVAL,1);
+        vf.setInteger(android.media.MediaFormat.KEY_BIT_RATE,12_000_000);vf.setInteger(android.media.MediaFormat.KEY_FRAME_RATE,60);vf.setInteger(android.media.MediaFormat.KEY_I_FRAME_INTERVAL,1);
         android.media.MediaCodec ve=android.media.MediaCodec.createEncoderByType("video/avc");ve.configure(vf,null,null,android.media.MediaCodec.CONFIGURE_FLAG_ENCODE);ve.start();
         java.util.List<byte[]> vData=new java.util.ArrayList<>();java.util.List<long[]> vMeta=new java.util.ArrayList<>();android.media.MediaFormat vOut=null;
         int frame=0;boolean inDone=false,outDone=false;
         while(!outDone){
-            if(!inDone){int i=ve.dequeueInputBuffer(10_000);if(i>=0){long t=frame*1_000_000L/30;
+            if(!inDone){int i=ve.dequeueInputBuffer(10_000);if(i>=0){long t=frame*1_000_000L/60;
                 if(frame==frames){ve.queueInputBuffer(i,0,0,t,android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM);inDone=true;}
                 else{android.media.Image img=ve.getInputImage(i);android.media.Image.Plane[] pl=img.getPlanes();
-                    // Blocky noise that changes every frame, so it can't compress to nothing.
-                    for(int c=0;c<3;c++){java.nio.ByteBuffer b=pl[c].getBuffer();int rs=pl[c].getRowStride(),ps=pl[c].getPixelStride(),pw=c==0?w:w/2,ph=c==0?h:h/2,blk=c==0?8:4;
-                        for(int y=0;y<ph;y++)for(int x=0;x<pw;x++){int v=(x/blk)*73856093^(y/blk)*19349663^(frame*83492791)^c*2654435;v=(v^(v>>>13))*0x5bd1e995;b.put(y*rs+x*ps,(byte)(c==0?(v>>>8)&0xff:96+((v>>>16)&63)));}}
+                    // A panning gradient, a moving square and fresh grain each frame: something like real footage.
+                    int sq=(frame*10)%(w-200);
+                    for(int c=0;c<3;c++){java.nio.ByteBuffer b=pl[c].getBuffer();int rs=pl[c].getRowStride(),ps=pl[c].getPixelStride(),pw=c==0?w:w/2,ph=c==0?h:h/2;
+                        for(int y=0;y<ph;y++)for(int x=0;x<pw;x++){int v;
+                            if(c==0){int g=(x+frame*6)%512;v=20+(g<256?g:511-g)*3/5+(y&255)/5;if(x>=sq&&x<sq+200&&y>=200&&y<400)v+=60;
+                                int n=x*73856093^y*19349663^frame*83492791;n=(n^(n>>>13))*0x5bd1e995;v+=((n>>>24)&15)-8;v=Math.max(16,Math.min(235,v));}
+                            else v=c==1?96+((x+frame)&63):96+((y*2)&63);
+                            b.put(y*rs+x*ps,(byte)v);}}
                     ve.queueInputBuffer(i,0,w*h*3/2,t,0);frame++;}}}
             int o=ve.dequeueOutputBuffer(info,10_000);
             if(o==android.media.MediaCodec.INFO_OUTPUT_FORMAT_CHANGED)vOut=ve.getOutputFormat();
@@ -284,9 +289,10 @@ public final class OnDeviceSmoke extends Instrumentation {
         try{r.setDataSource(f.getPath());int w=Integer.parseInt(r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)),h=Integer.parseInt(r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
             String rot=r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);int deg=rot==null?0:Integer.parseInt(rot);if(deg==90||deg==270){int t=w;w=h;h=t;}
             int ms=Integer.parseInt(r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION));int channels=0;
+            String fc=r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT);int count=fc==null?-1:Integer.parseInt(fc);
             android.media.MediaExtractor x=new android.media.MediaExtractor();x.setDataSource(f.getPath());
             for(int i=0;i<x.getTrackCount();i++){android.media.MediaFormat fm=x.getTrackFormat(i);if(fm.getString(android.media.MediaFormat.KEY_MIME).startsWith("audio/"))channels=fm.getInteger(android.media.MediaFormat.KEY_CHANNEL_COUNT);}
-            x.release();return new int[]{w,h,ms,channels};}finally{r.release();}}
+            x.release();return new int[]{w,h,ms,channels,count};}finally{r.release();}}
     /** The journal's lines about videos, to say why a check failed. */
     private String videoJournal(){try{java.util.List<String> all=java.nio.file.Files.readAllLines(new java.io.File(getTargetContext().getFilesDir(),"diagnostics.txt").toPath());
         StringBuilder b=new StringBuilder();for(String l:all)if(l.contains("Video"))b.append(l).append(" || ");return b.toString();}catch(Exception e){return "(no journal: "+e+")";}}
@@ -294,6 +300,7 @@ public final class OnDeviceSmoke extends Instrumentation {
     private void checkVideoPrep()throws Exception{
         java.io.File dir=new java.io.File(getTargetContext().getCacheDir(),"outgoing");dir.mkdirs();
         java.io.File src=makeTestVideo(new java.io.File(dir,"smoke-video.mp4"));int[] in=videoFacts(src);
+        android.util.Log.i("OnDeviceSmoke","Test video: "+src.length()/1024+" KB");
         check(in[0]==720&&in[1]==1280&&in[3]==2,"The test video is "+in[0]+"×"+in[1]+" with "+in[3]+" channels");
         VideoPlan.Source s=VideoPrep.read(src,"video/mp4");
         check(s!=null&&s.video.equals("video/avc")&&s.audio.equals("audio/mp4a-latm")&&!s.hdr&&Math.abs(s.durationMs-2000)<200,"The video wasn't read right ("+(s==null?"null":s.video+" "+s.audio+" "+s.durationMs+" ms")+")");
@@ -306,6 +313,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         int[] r=videoFacts(rcs.file);
         check(r[0]<r[1]&&Math.abs(r[0]-720)<=16&&Math.abs(r[1]-1280)<=16,"The RCS video is "+r[0]+"×"+r[1]+" (should stay 720×1280, upright)");
         check(Math.abs(r[2]-2000)<=300&&r[3]==2,"The RCS video is "+r[2]+" ms with "+r[3]+" channels");
+        check(r[4]<0||r[4]>=50&&r[4]<=70,"The RCS video has "+r[4]+" frames in 2 seconds (should be about 30 a second, from 60)");
         rcs.file.delete();
         PhotoPrep.Ready mms;try{mms=VideoPrep.prepare(getTargetContext(),src,"VID_2026.MP4","video/mp4",true,null);}
         catch(java.io.IOException e){throw new AssertionError(e.getMessage()+" | "+videoJournal());}

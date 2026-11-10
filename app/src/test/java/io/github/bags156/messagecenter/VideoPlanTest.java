@@ -86,10 +86,13 @@ public class VideoPlanTest {
 
     @Test public void nextTryIsSmaller() {
         VideoPlan.Source s = video(3840, 2160, 30, 60, 400_000_000L, "video/hevc", "audio/mp4a-latm", false);
-        VideoPlan p = VideoPlan.of(s, false), q = p.smaller(s, false);
-        assertEquals(720, q.shortSide); assertTrue(q.videoBitrate < p.videoBitrate);
+        VideoPlan p = VideoPlan.of(s, false), q = p.smaller(s, false, 110_000_000L);
+        assertEquals(720, q.shortSide); assertEquals(Math.round(p.videoBitrate * 0.65), q.videoBitrate, 1);
         VideoPlan.Source m = video(1920, 1080, 30, 10, 20_000_000L, "video/avc", "audio/mp4a-latm", false);
-        VideoPlan a = VideoPlan.of(m, true), b = a.smaller(m, true);
-        assertEquals(360, b.shortSide); assertTrue(b.mono); assertTrue(b.videoBitrate >= VideoPlan.MMS_LEAST);
+        VideoPlan a = VideoPlan.of(m, true), b = a.smaller(m, true, 1_000_000L);
+        assertEquals(360, b.shortSide); assertTrue(b.mono); assertEquals(Math.round(a.videoBitrate * 0.65), b.videoBitrate, 1);
+        // Four times over: the bitrate drops to match, not just by a third.
+        VideoPlan c = a.smaller(m, true, 3_800_000L);
+        assertTrue(c.videoBitrate < a.videoBitrate / 4); assertTrue(c.videoBitrate >= VideoPlan.MMS_LEAST);
     }
 }

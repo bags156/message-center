@@ -89,14 +89,18 @@ final class VideoPlan {
         return new VideoPlan(false, null, smaller ? even(side) : 0, fast ? 30 : 0, bps, 0, false);
     }
 
-    /** The next try when the last came out too big: a step smaller, and a lower bitrate. */
-    VideoPlan smaller(Source s, boolean mms) {
+    /**
+     * The next try when the last came out too big (cameOut bytes): a step smaller, and a lower
+     * bitrate, in proportion to how far over it was (encoders don't all keep to what's asked).
+     */
+    VideoPlan smaller(Source s, boolean mms, long cameOut) {
         int[] sides = mms ? MMS_SIDES : RCS_SIDES;
         int now = shortSide > 0 ? shortSide : Math.min(s.width, s.height), next = now;
         for (int side : sides) if (side < now) { next = side; break; }
         int least = mms ? MMS_LEAST : RCS_LEAST;
+        double aim = mms ? MMS_BYTES * 0.85 : RCS_BUDGET, scale = Math.min(0.65, cameOut > 0 ? aim / cameOut * 0.9 : 0.65);
         return new VideoPlan(false, null, next < Math.min(s.width, s.height) ? even(next) : 0, frameRate,
-                Math.max(least, Math.round(videoBitrate * 0.65f)), audioBitrate, mono);
+                (int) Math.max(least, Math.round(videoBitrate * scale)), audioBitrate, mono);
     }
 
     private static VideoPlan keep() { return new VideoPlan(true, null, 0, 0, 0, 0, false); }
