@@ -51,7 +51,7 @@ public final class PairedService extends Service {
     private static volatile String pendingCookies;
     private final ExecutorService network=Executors.newSingleThreadExecutor(),events=Executors.newSingleThreadExecutor();
     /** Attachment downloads and uploads run here so a large file never delays sending or loading. */
-    private final ExecutorService media=Executors.newFixedThreadPool(2),phoneRequests=Executors.newSingleThreadExecutor(),readRequests=Executors.newSingleThreadExecutor();
+    private final ExecutorService sending=Executors.newSingleThreadExecutor(),media=Executors.newFixedThreadPool(2),phoneRequests=Executors.newSingleThreadExecutor(),readRequests=Executors.newSingleThreadExecutor();
     private final Handler main=new Handler(Looper.getMainLooper());
     private final AtomicInteger generation=new AtomicInteger();
     private volatile Client client;
@@ -94,12 +94,18 @@ public final class PairedService extends Service {
     static String status(Context context) {PairedService s=current;return s==null?"Connection stopped":s.status;}
     static String emoji() {PairedService s=current;return s==null?"":s.emoji;}
     static boolean ready() {PairedService s=current;return s!=null && s.ready;}
-    static void execute(Operation work,Result result) {run(work,result,false);}
-    static void executeMedia(Operation work,Result result) {run(work,result,true);}
-    private static void run(Operation work,Result result,boolean forMedia) {
+    static void execute(Operation work,Result result) {run(work,result,0);}
+    static void executeMedia(Operation work,Result result) {run(work,result,1);}
+    /**
+     * Sending a photo or file. It has a line of its own: downloads (every photo in a chat, its
+     * thumbnails, voice messages) share the media line two at a time, and a send queued behind
+     * them could wait minutes.
+     */
+    static void executeSend(Operation work,Result result) {run(work,result,2);}
+    private static void run(Operation work,Result result,int lane) {
         PairedService s=current;
         if(s==null || !s.ready || s.client==null) {result.done("","Connect to Google Messages first.");return;}
-        (forMedia?s.media:s.network).execute(()-> {
+        (lane==2?s.sending:lane==1?s.media:s.network).execute(()-> {
             String value="",error="";
             try {if(!s.ready||s.client==null)throw new IllegalStateException("The connection is not ready.");value=work.run(s.client);}
             catch(Exception e){error=e.getMessage()==null ? "This operation failed.":e.getMessage();}
@@ -770,7 +776,7 @@ public final class PairedService extends Service {
         generation.incrementAndGet();ready=false;main.removeCallbacks(autoReconnect);main.removeCallbacks(syncTick);main.removeCallbacks(problemCheck);main.removeCallbacks(codeSweep);main.removeCallbacks(receiptRetry);if(current==this)current=null;
         try{if(screenReceiver!=null)unregisterReceiver(screenReceiver);}catch(Exception ignored){}
         try{if(networkCallback!=null)getSystemService(android.net.ConnectivityManager.class).unregisterNetworkCallback(networkCallback);}catch(Exception ignored){}
-        Client old=client;client=null;network.shutdownNow();events.shutdownNow();media.shutdownNow();phoneRequests.shutdownNow();readRequests.shutdownNow();
+        Client old=client;client=null;network.shutdownNow();events.shutdownNow();media.shutdownNow();sending.shutdownNow();phoneRequests.shutdownNow();readRequests.shutdownNow();
         if(old!=null)new Thread(old::close,"paired-disconnect").start();
         // SQLiteOpenHelper stays alive until in-flight JNI calls return; the process
         // reclaims it. Closing here races with a final incoming update.

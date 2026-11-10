@@ -11,15 +11,17 @@ import java.util.Locale;
 
 /**
  * Gets a photo ready to send. A phone camera's photo can be 10-20 MB; a picture message (MMS)
- * carries about 1 MB, and Google Messages marks a bigger one "failed" every time it's retried. So
- * photos are resized and re-encoded as JPEG when they need it: for MMS chats to fit 1 MB, for RCS
- * to a sensible size. HEIC (which Google's upload doesn't name) becomes JPEG too. Turning it into
+ * carries about 1 MB, and Google Messages marks a bigger one "failed" every time it's retried. And
+ * a photo sent from here crosses the network three times (up to Google, down to your phone, out to
+ * them), so size is time. Photos are resized and re-encoded as JPEG when they need it: for MMS
+ * chats to fit 1 MB, for RCS to 2560 px (about 1-2 MB). HEIC (which Google's upload doesn't name) becomes JPEG too. Turning it into
  * a new JPEG also leaves the photo's location and camera details behind. GIFs, other files and
  * photos already small enough are sent as they are.
  */
 final class PhotoPrep {
-    static final int RCS_EDGE = 4096, MMS_EDGE = 1600;
-    static final long RCS_BYTES = 6L << 20, MMS_BYTES = 950_000;
+    // RCS: sharp on any phone screen and quick to upload (about 1-2 MB); MMS: what a picture message carries.
+    static final int RCS_EDGE = 2560, MMS_EDGE = 1600;
+    static final long RCS_BYTES = 2_500_000, MMS_BYTES = 950_000;
 
     static final class Ready {
         final File file; final String name, mime;

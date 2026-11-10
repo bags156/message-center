@@ -1716,8 +1716,12 @@ public class PairedActivity extends Activity {
         PendingMedia p=sends.get(index);Outgoing o=p.item;
         // A picture message (MMS) carries about 1 MB, so photos are made to fit; RCS gets a sensible size. See PhotoPrep.
         boolean mms=p.small||!PairedProtocol.rcs(c);
-        PairedService.executeMedia(client->{PhotoPrep.Ready ready=PhotoPrep.prepare(o.file,o.name,o.mime,mms);
-            try{return client.sendMedia(c.toString(),ready.file.getPath(),ready.name,ready.mime,p.caption,p.reply);}finally{if(ready.file!=o.file)ready.file.delete();}},(value,e)->{
+        long queued=System.currentTimeMillis();
+        PairedService.executeSend(client->{long start=System.currentTimeMillis();PhotoPrep.Ready ready=PhotoPrep.prepare(o.file,o.name,o.mime,mms);long prepared=System.currentTimeMillis();
+            try{return client.sendMedia(c.toString(),ready.file.getPath(),ready.name,ready.mime,p.caption,p.reply);}
+            finally{// For "Report a problem": how long each step took (sizes and times only).
+                Diagnostics.note("Sent "+(ready.mime.startsWith("image/")?"photo":"attachment")+" "+(ready.file.length()/1024)+" KB"+(ready.file!=o.file?" (from "+(o.file.length()/1024)+" KB)":"")+": waited "+(start-queued)+" ms, prepared "+(prepared-start)+" ms, uploaded and sent "+(System.currentTimeMillis()-prepared)+" ms");
+                if(ready.file!=o.file)ready.file.delete();}},(value,e)->{
             if(!e.isEmpty()){
                 // This one and the rest stay in the chat as "Not sent"; tap to send again or remove.
                 for(int k=index;k<sends.size();k++){sends.get(k).error=k==index?e:"Not sent because an earlier attachment failed.";}
