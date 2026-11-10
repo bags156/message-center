@@ -480,6 +480,28 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(linkShown,"The Links tab doesn't show the link that was sent");found.clear();
         bubble.getWindow().getDecorView().findViewsWithText(found,"Links, 1, selected",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);check(found.size()==1,"The Links tab isn't the one selected");found.clear();
         runOnMainSync(bubble::onBackPressed);waitForIdleSync();runOnMainSync(bubble::onBackPressed);waitForIdleSync();
+        // Sending a photo: it leaves the attachment strip at once and waits in the chat. Not signed in here, so it can't
+        // go, and says so with a way to try again (instead of sitting in the strip as "Sending…").
+        java.io.File pic=new java.io.File(getTargetContext().getCacheDir(),"smoke-send.jpg");
+        {android.graphics.Bitmap bm=android.graphics.Bitmap.createBitmap(64,48,android.graphics.Bitmap.Config.ARGB_8888);bm.eraseColor(0xff3366cc);
+            try(java.io.FileOutputStream fo=new java.io.FileOutputStream(pic)){bm.compress(android.graphics.Bitmap.CompressFormat.JPEG,90,fo);}}
+        JSONObject smokeChat;try(PairedStore store=new PairedStore(getTargetContext())){smokeChat=store.chat("smoke");}
+        bubble.getWindow().getDecorView().findViewsWithText(found,"Not sent • Tap to retry",android.view.View.FIND_VIEWS_WITH_TEXT);int notSentBefore=found.size();found.clear();
+        java.lang.reflect.Field stripF=PairedActivity.class.getDeclaredField("attachScroll"),pendingF=PairedActivity.class.getDeclaredField("pendingMedia");stripF.setAccessible(true);pendingF.setAccessible(true);
+        runOnMainSync(()->{try{Class<?> oc=Class.forName(PairedActivity.class.getName()+"$Outgoing");java.lang.reflect.Constructor<?> k=oc.getDeclaredConstructor(java.io.File.class,String.class,String.class);k.setAccessible(true);
+            java.lang.reflect.Field og=PairedActivity.class.getDeclaredField("outgoing");og.setAccessible(true);
+            @SuppressWarnings("unchecked") java.util.List<Object> strip=(java.util.List<Object>)og.get(bubble);strip.add(k.newInstance(pic,"smoke-send.jpg","image/jpeg"));
+            java.lang.reflect.Method sa=PairedActivity.class.getDeclaredMethod("sendAttachments",JSONObject.class,String.class,String.class);sa.setAccessible(true);sa.invoke(bubble,smokeChat,"Look at this","");}
+            catch(Exception e){throw new RuntimeException(e);}});
+        waitForIdleSync();
+        boolean[] stripGone=new boolean[1];int[] waiting=new int[1];
+        runOnMainSync(()->{try{android.view.View strip=(android.view.View)stripF.get(bubble);stripGone[0]=strip==null||strip.getVisibility()!=android.view.View.VISIBLE;waiting[0]=((java.util.List<?>)pendingF.get(bubble)).size();}catch(Exception e){throw new RuntimeException(e);}});
+        check(stripGone[0],"The photo stayed in the attachment strip after tapping send");
+        check(waiting[0]==1,"The photo isn't waiting in the chat ("+waiting[0]+")");
+        bubble.getWindow().getDecorView().findViewsWithText(found,"Not sent • Tap to retry",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.size()==notSentBefore+1,"A photo that couldn't send doesn't say so in the chat");found.clear();
+        bubble.getWindow().getDecorView().findViewsWithText(found,"Look at this",android.view.View.FIND_VIEWS_WITH_TEXT);check(!found.isEmpty(),"The caption of a photo being sent isn't shown");found.clear();
+        runOnMainSync(()->{try{((java.util.List<?>)pendingF.get(bubble)).clear();java.lang.reflect.Method r=PairedActivity.class.getDeclaredMethod("renderMessages",boolean.class);r.setAccessible(true);r.invoke(bubble,false);}catch(Exception e){throw new RuntimeException(e);}});
+        pic.delete();
         // Screenshots are allowed.
         check((bubble.getWindow().getAttributes().flags&android.view.WindowManager.LayoutParams.FLAG_SECURE)==0,"Screenshots are blocked in chats");
         check((activity.getWindow().getAttributes().flags&android.view.WindowManager.LayoutParams.FLAG_SECURE)==0,"Screenshots are blocked in the inbox");
@@ -502,6 +524,6 @@ public final class OnDeviceSmoke extends Instrumentation {
         getTargetContext().getSharedPreferences("starred",0).edit().clear().commit();
         new ChatSettings(getTargetContext()).setBackground("smoke","");
         checkNotificationPrivacy();
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos, iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }

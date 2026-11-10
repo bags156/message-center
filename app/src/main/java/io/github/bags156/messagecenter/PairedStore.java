@@ -78,6 +78,22 @@ final class PairedStore extends SQLiteOpenHelper {
         }
         return out;
     }
+    /**
+     * A message you sent can show up first under a stand-in ID and then again under its real one
+     * (same tmpID). The stand-in would sit at "Sending…" forever, so once the other copy arrives,
+     * a stand-in that's still sending is removed. Real messages are never touched.
+     */
+    private void dropStandIns(SQLiteDatabase db,String id,String chat,JSONObject data){
+        String tmp=data.optString("tmpID");if(tmp.isEmpty()||tmp.equals(id))return;
+        List<String> gone=new ArrayList<>();
+        try(Cursor c=db.rawQuery("SELECT id,data FROM items WHERE chat=? AND id<>? AND instr(data,?)>0",new String[]{chat,id,tmp})){
+            while(c.moveToNext()){JSONObject other=json(c.getString(1));
+                String status=PairedProtocol.status(other);
+                boolean stillSending=status.equals("OUTGOING_SENDING")||status.equals("OUTGOING_YET_TO_SEND")||status.equals("OUTGOING_RESENDING")||status.equals("OUTGOING_VALIDATING")||status.equals("OUTGOING_AWAITING_RETRY");
+                if(tmp.equals(other.optString("tmpID"))&&stillSending)gone.add(c.getString(0));}
+        }
+        for(String g:gone)db.delete("items","id=?",new String[]{g});
+    }
     /** Messages in a chat that may hold a web link (the caller finds the links), newest first. */
     synchronized List<JSONObject> linkMessages(String chat,int max) {
         List<JSONObject> out=new ArrayList<>();
@@ -110,6 +126,7 @@ final class PairedStore extends SQLiteOpenHelper {
             long next=snapshot()+1;db.execSQL("UPDATE meta SET value=? WHERE id=1",new Object[]{next});
             ContentValues v=new ContentValues();v.put("id",id);v.put("chat",chat);v.put("data",data.toString());v.put("time",PairedProtocol.time(data));v.put("version",next);
             db.insertWithOnConflict("items",null,v,SQLiteDatabase.CONFLICT_REPLACE);
+            dropStandIns(db,id,chat,data);
             db.setTransactionSuccessful();return existed;
         }finally{db.endTransaction();}
     }
