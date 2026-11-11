@@ -860,6 +860,8 @@ public final class OnDeviceSmoke extends Instrumentation {
         // Tapping ⊕ opens the attach panel with Photos & videos, Camera, and Files.
         bubble.getWindow().getDecorView().findViewsWithText(found,"Attach photos, videos, or files",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);
         android.view.View plus=found.get(0);runOnMainSync(plus::performClick);waitForIdleSync();
+        // The panel's window takes focus a moment later, from the window manager.
+        for(int wait=0;wait<30&&bubble.hasWindowFocus();wait++)Thread.sleep(100);
         check(bubble.hasWindowFocus()==false,"Attach panel did not open");bubble.finish();waitForIdleSync();
         checkChatKeepsItsPlace();
         check(!PairedService.canReconnect(getTargetContext()),"Reconnect offered with no saved session to reconnect with");
