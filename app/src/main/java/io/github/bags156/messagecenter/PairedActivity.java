@@ -2533,19 +2533,20 @@ public class PairedActivity extends Activity {
             .setPositiveButton("Save",(d,w)->{Nicknames.set(this,number,e.getText().toString());rowCache.clear();MessagesWidget.update(this);if(screen.equals("details"))details();else if(screen.equals("inbox"))renderInbox();})
             .setNegativeButton("Cancel",null).show();}
     // ---- 0.8: undo send, undo delete, voice speed ----
-    /** Seconds a sent message waits so it can be taken back (Settings → Undo send). */
-    private static final int[] UNDO_SEND_SECONDS={3,5,10,15,20,30};
+    /** Seconds a sent message waits so it can be taken back (Settings → Undo send); 0 turns it off. */
+    private static final int UNDO_SEND_MAX=300;
     private boolean undoSendOn(){return getSharedPreferences("paired",MODE_PRIVATE).getBoolean("undo_send",true);}
-    private int undoSendSeconds(){return Math.max(1,Math.min(60,getSharedPreferences("paired",MODE_PRIVATE).getInt("undo_send_seconds",5)));}
+    private int undoSendSeconds(){return Math.max(1,Math.min(UNDO_SEND_MAX,getSharedPreferences("paired",MODE_PRIVATE).getInt("undo_send_seconds",5)));}
     private long undoSendMs(){return undoSendSeconds()*1000L;}
-    private void chooseUndoSend(){String[] labels=new String[UNDO_SEND_SECONDS.length+1];labels[0]="Off";int current=0;
-        for(int i=0;i<UNDO_SEND_SECONDS.length;i++){labels[i+1]=UNDO_SEND_SECONDS[i]+" seconds";if(undoSendOn()&&UNDO_SEND_SECONDS[i]==undoSendSeconds())current=i+1;}
-        new AlertDialog.Builder(this).setTitle("Undo send")
-            .setSingleChoiceItems(labels,current,(d,which)->{android.content.SharedPreferences.Editor e=getSharedPreferences("paired",MODE_PRIVATE).edit();
-                if(which==0)e.putBoolean("undo_send",false);else e.putBoolean("undo_send",true).putInt("undo_send_seconds",UNDO_SEND_SECONDS[which-1]);
-                e.apply();d.dismiss();if(screen.equals("settings"))settings();})
-            .setNeutralButton("About",(d,w)->new AlertDialog.Builder(this).setMessage("After you tap send, the message waits this long before it goes, so you can tap it to take it back. It still sends if you close the app.").setPositiveButton("OK",null).show())
-            .setNegativeButton("Close",null).show();}
+    private void chooseUndoSend(){EditText e=input("Seconds");e.setSingleLine(true);e.setInputType(InputType.TYPE_CLASS_NUMBER);
+        e.setText(String.valueOf(undoSendOn()?undoSendSeconds():0));e.selectAll();
+        AlertDialog d=new AlertDialog.Builder(this).setTitle("Undo send").setMessage("Seconds a message waits after you tap send, so you can tap it to take it back. 0 turns it off (up to "+UNDO_SEND_MAX+"). It still sends if you close the app.").setView(e)
+            .setPositiveButton("Save",(x,w)->{int n;try{n=Integer.parseInt(e.getText().toString().trim());}catch(NumberFormatException bad){toast("Enter a number of seconds.");return;}
+                if(n<0||n>UNDO_SEND_MAX){toast("Enter 0 to "+UNDO_SEND_MAX+" seconds.");return;}
+                android.content.SharedPreferences.Editor edit=getSharedPreferences("paired",MODE_PRIVATE).edit();if(n==0)edit.putBoolean("undo_send",false);else edit.putBoolean("undo_send",true).putInt("undo_send_seconds",n);
+                edit.apply();if(screen.equals("settings"))settings();})
+            .setNegativeButton("Cancel",null).create();
+        d.setOnShowListener(x->{e.requestFocus();if(d.getWindow()!=null)d.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);});d.show();}
     /** The undo window passed: send it (or keep it queued until the connection is back). */
     private void releaseHeld(String id){JSONObject o=outbox.get(id);if(o==null||!Outbox.HOLD.equals(o.optString("state")))return;outbox.setState(id,Outbox.WAITING,"");PairedService.flushOutboxNow(this);if(screen.equals("chat"))renderMessages(false);}
     /** Takes a just-sent message back and puts its text in the message box again. */
@@ -3109,7 +3110,7 @@ public class PairedActivity extends Activity {
         int indexed;try(PhotoText index=new PhotoText(this)){indexed=index.count();}
         settingRow(chats,"Scan downloaded pictures","Includes older pictures already downloaded here; does not download remote photos",indexed+" indexed",()->{PhotoText.indexDownloaded(this,true);toast("Indexing downloaded pictures. Search results update as they finish.");});
         settingSwitch(chats,"Typing indicators","Let others see when you're typing",prefs.getBoolean("send_typing",true),on->prefs.edit().putBoolean("send_typing",on).apply());
-        settingRow(chats,"Undo send","How long you have to take a message back after tapping send",undoSendOn()?undoSendSeconds()+" seconds":"Off",this::chooseUndoSend);
+        settingRow(chats,"Undo send","How long you have to take a message back after tapping send",undoSendOn()?undoSendSeconds()+(undoSendSeconds()==1?" second":" seconds"):"Off",this::chooseUndoSend);
         settingRow(chats,"Quick replies","Saved phrases above the message box",quickRepliesOn()?quickReplies().size()+" saved":"Off",this::editQuickReplies);
         long arUntil=PairedService.autoReplyUntil(this);boolean arOn=arUntil>System.currentTimeMillis();
         settingRow(chats,"Busy auto-reply",arOn?"“"+PairedService.autoReplyText(this)+"”":"Answers saved contacts once an hour while you're busy",arOn?(arUntil==Long.MAX_VALUE?"On":"Until "+timeOnly(arUntil)):"Off",this::autoReplyMenu);

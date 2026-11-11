@@ -1,5 +1,5 @@
-Message Center 1.5.9.
+Message Center 1.5.10.
 
-- Undo send time is now adjustable: Settings → Undo send lets you pick 3, 5, 10, 15, 20 or 30 seconds, or Off. It stays at 5 seconds unless you change it.
+- Undo send: type any number of seconds instead of picking from a list (Settings → Undo send). 0 turns it off; up to 300 seconds. It stays at what you had unless you change it.
 
 Install over the existing app through Obtainium. Your pairing, conversations and settings are retained.
