@@ -838,7 +838,10 @@ public class PairedActivity extends Activity {
         boolean toBottom=atBottom;String keepId=spot==null?null:spot.id;int keepOffset=spot==null?0:spot.offset;
         items.removeAllViews();unreadDivider=null;inlineSeen=false;Perf.end("messages: clear",perf);perf=Perf.start();
         JSONObject c=store.chat(chatId);ChatTheme theme=chatSettings.theme(chatId);boolean group=c!=null&&PairedProtocol.other(c)==null;
-        List<JSONObject> messages=new ArrayList<>();for(JSONObject m:store.messages(chatId,limit))if(!PairedProtocol.body(m).isEmpty()||!PairedProtocol.event(m,c).isEmpty()||!PairedProtocol.effect(m).isEmpty())messages.add(m);
+        // Scrolled up reading: new messages don't push the oldest ones drawn out of the window (only at the bottom does it slide).
+        if(!atBottom&&chatId.equals(oldestChat)&&oldestTime>0){int keep=store.countSince(chatId,oldestTime);if(keep>limit)limit=keep;}
+        List<JSONObject> saved=store.messages(chatId,limit);if(!saved.isEmpty()){oldestChat=chatId;oldestTime=PairedProtocol.time(saved.get(0));}
+        List<JSONObject> messages=new ArrayList<>();for(JSONObject m:saved)if(!PairedProtocol.body(m).isEmpty()||!PairedProtocol.event(m,c).isEmpty()||!PairedProtocol.effect(m).isEmpty())messages.add(m);
         moreSaved=messages.size()>=limit-5;if(moreSaved)items.addView(button("Show more saved messages",false,()->{limit+=WINDOW;renderMessages(false);}));
         // iPhone reactions sent as text ("Laughed at an image") go on the message they're about, like any other reaction.
         tapbacks=new HashMap<>();messages=placeTapbacks(messages,tapbacks);
@@ -1207,6 +1210,8 @@ public class PairedActivity extends Activity {
      * Older saved messages are added as you scroll up toward them (see showOlderSaved).
      */
     private static final int FIRST_WINDOW=30;
+    /** The oldest message drawn, and its chat. */
+    private String oldestChat="";private long oldestTime;
     private int firstWindow(String id){if(unreadSince<=0)return FIRST_WINDOW;return Math.min(WINDOW,Math.max(FIRST_WINDOW,store.countSince(id,unreadSince)+12));}
     /** Scrolling up within a screen of the oldest message drawn: adds the next older saved ones, keeping your place. */
     private void showOlderSaved(){if(!moreSaved||!screen.equals("chat")||placing!=null)return;limit+=WINDOW;renderMessages(false);}
