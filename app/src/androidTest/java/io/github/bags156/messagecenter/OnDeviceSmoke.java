@@ -152,7 +152,9 @@ public final class OnDeviceSmoke extends Instrumentation {
     private long untilDrawn(Activity a,Runnable action)throws Exception{java.util.concurrent.CountDownLatch drawn=new java.util.concurrent.CountDownLatch(1);long[] at=new long[2];
         runOnMainSync(()->{android.view.View decor=a.getWindow().getDecorView();at[0]=System.nanoTime();action.run();
             decor.getViewTreeObserver().registerFrameCommitCallback(()->{at[1]=System.nanoTime();drawn.countDown();});decor.invalidate();});
-        check(drawn.await(20,java.util.concurrent.TimeUnit.SECONDS),"No frame was drawn after opening or leaving a chat");waitForIdleSync();return (at[1]-at[0])/1_000_000;}
+        check(drawn.await(20,java.util.concurrent.TimeUnit.SECONDS),"No frame was drawn after opening or leaving a chat");waitForIdleSync();settled=(System.nanoTime()-at[0])/1_000_000;return (at[1]-at[0])/1_000_000;}
+    /** For untilDrawn: when the main thread had nothing left to do afterwards (anything drawn in a second pass included). */
+    private long settled;
     /**
      * Opening a busy chat from a full inbox and going back, timed to the first frame drawn, with
      * where the time went. The inbox has 120 chats (80 with full-size contact photos, 40 groups).
@@ -182,9 +184,10 @@ public final class OnDeviceSmoke extends Instrumentation {
             // The first time pays for decoding photos; after that, what you'd feel opening and closing chats.
             long firstOpen=untilDrawn(a,toChat),firstBack=untilDrawn(a,toInbox);
             Perf.clear();Perf.on=true;long[] opens=new long[5],backs=new long[5];
-            for(int r=0;r<5;r++){opens[r]=untilDrawn(a,toChat);backs[r]=untilDrawn(a,toInbox);}
-            Perf.on=false;java.util.Arrays.sort(opens);java.util.Arrays.sort(backs);
-            result="open chat "+firstOpen+" ms first, "+opens[2]+" ms after; back to inbox "+firstBack+" ms first, "+backs[2]+" ms after [where: "+Perf.report(5)+"]";}
+            long[] openSettled=new long[5],backSettled=new long[5];
+            for(int r=0;r<5;r++){opens[r]=untilDrawn(a,toChat);openSettled[r]=settled;backs[r]=untilDrawn(a,toInbox);backSettled[r]=settled;}
+            Perf.on=false;java.util.Arrays.sort(opens);java.util.Arrays.sort(backs);java.util.Arrays.sort(openSettled);java.util.Arrays.sort(backSettled);
+            result="open chat "+firstOpen+" ms first, "+opens[2]+" ms after (settled "+openSettled[2]+"); back to inbox "+firstBack+" ms first, "+backs[2]+" ms after (settled "+backSettled[2]+") [where: "+Perf.report(5)+"]";}
         finally{Perf.on=false;vault.clear();try(PairedStore store=new PairedStore(ctx)){for(int i=0;i<120;i++)store.deleteChat("speed"+i);}for(java.io.File f:made)f.delete();onMain(a,"inbox");}
         return result;}
     private String measureRedraw()throws Exception{

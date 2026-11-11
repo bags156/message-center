@@ -32,10 +32,12 @@ final class Avatars {
     private Avatars() {}
     static File dir(Context context) { return new File(context.getFilesDir(), "avatars"); }
     static File file(Context context, String participantID) { return new File(dir(context), hex(participantID) + ".img"); }
+    private static final char[] HEX = "0123456789abcdef".toCharArray();
     static String hex(String id) {
-        StringBuilder out = new StringBuilder();
-        for (byte b : id.getBytes(StandardCharsets.UTF_8)) out.append(String.format("%02x", b));
-        return out.toString();
+        byte[] bytes = id.getBytes(StandardCharsets.UTF_8);
+        char[] out = new char[bytes.length * 2];
+        for (int i = 0; i < bytes.length; i++) { out[i * 2] = HEX[(bytes[i] >> 4) & 15]; out[i * 2 + 1] = HEX[bytes[i] & 15]; }
+        return new String(out);
     }
     /** The full-size photo from this phone's contacts, when one was found. */
     static File phoneFile(Context context, String participantID) { return new File(dir(context), hex(participantID) + ".hd.jpg"); }
@@ -76,6 +78,41 @@ final class Avatars {
         } catch (Exception e) { return false; }
     }
     /** Shrinks in halves first, so a large photo stays smooth instead of grainy. */
+    /**
+     * Photos already shrunk to the size they're shown at, shared by every screen, so going back to
+     * the inbox doesn't decode full-size contact photos again (or draw them scaled down each frame).
+     */
+    private static final android.util.LruCache<String, Bitmap> faces = new android.util.LruCache<String, Bitmap>(12 * 1024 * 1024) {
+        @Override protected int sizeOf(String key, Bitmap value) { return value.getByteCount(); }
+    };
+
+    /** This person's photo as a size×size square (center-cropped), or null when there isn't one. */
+    static Bitmap face(Context context, String participantID, int size) {
+        if (participantID == null || participantID.isEmpty() || size <= 0) return null;
+        File f = best(context, participantID);
+        long modified = f.lastModified();
+        if (modified == 0) return null; // no file
+        String key = participantID + "|" + size + "|" + modified + "|" + f.length();
+        Bitmap hit = faces.get(key);
+        if (hit != null) return hit;
+        Bitmap photo = decodeAbout(f, size);
+        if (photo == null) return null;
+        Bitmap square = scaleSquare(photo, size);
+        faces.put(key, square);
+        return square;
+    }
+
+    /** Decodes a picture at no less than size on its short side, skipping the detail that would be thrown away. */
+    static Bitmap decodeAbout(File f, int size) {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(f.getPath(), bounds);
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = Math.max(1, Integer.highestOneBit(Math.max(1, Math.min(bounds.outWidth, bounds.outHeight) / Math.max(1, size))));
+        return BitmapFactory.decodeFile(f.getPath(), options);
+    }
+
     static Bitmap scaleSquare(Bitmap photo, int size) {
         int side = Math.min(photo.getWidth(), photo.getHeight());
         Bitmap b = Bitmap.createBitmap(photo, (photo.getWidth() - side) / 2, (photo.getHeight() - side) / 2, side, side);
@@ -136,9 +173,16 @@ final class Avatars {
         canvas.drawText(letter, size / 2f, size / 2f - (text.descent() + text.ascent()) / 2f, text);
         return out;
     }
-    private static final class GroupCache {static final android.util.LruCache<String,Bitmap> images=new android.util.LruCache<>(32);}
+    /** Drawn group pictures, by memory size: a count of 32 was fewer than the groups in a long inbox, so every redraw rebuilt them all. */
+    private static final class GroupCache {static final android.util.LruCache<String,Bitmap> images=new android.util.LruCache<String,Bitmap>(16*1024*1024){@Override protected int sizeOf(String k,Bitmap v){return v.getByteCount();}};}
     /** Drops this group's drawn pictures (after its photo or name changed). */
     static void forgetGroup(String chat){for(String key:GroupCache.images.snapshot().keySet())if(key.startsWith(chat+"|"))GroupCache.images.remove(key);}
+    /** Which photo files a chat's picture is drawn from, and their versions: changes when any of them does. */
+    static String photoKey(Context context,JSONObject chat){StringBuilder key=new StringBuilder();
+        if(isGroup(chat)){File own=ownGroupPhoto(context,chat.optString("conversationID"));key.append(own.lastModified()).append(':').append(own.length());
+            List<JSONObject> people=groupMembers(chat);for(int i=0;i<Math.min(3,people.size());i++){File f=best(context,PairedProtocol.participantID(people.get(i)));key.append('|').append(f.lastModified()).append(':').append(f.length());}}
+        else{String id=PairedProtocol.participantID(PairedProtocol.other(chat));if(!id.isEmpty()){File f=best(context,id);key.append(f.lastModified()).append(':').append(f.length());}}
+        return key.toString();}
     static boolean isGroup(JSONObject chat){return chat!=null&&(chat.optBoolean("isGroupChat")||PairedProtocol.members(chat).size()>1);}
     /** Stable participant ordering keeps a group's identity from shuffling after a refresh. */
     static List<JSONObject> groupMembers(JSONObject chat){List<JSONObject> people=new ArrayList<>(PairedProtocol.members(chat));

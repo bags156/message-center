@@ -57,6 +57,14 @@ final class SwipeRow extends FrameLayout {
         return true;
     }
 
+    /** Back at rest with no drag in progress, for a row that's being shown again. */
+    void settle() {
+        dragging = false; armed = false;
+        content.animate().cancel(); content.setTranslationX(0);
+        if (rightHint != null) { rightHint.animate().cancel(); rightHint.setAlpha(0f); }
+        if (leftHint != null) { leftHint.animate().cancel(); leftHint.setAlpha(0f); }
+    }
+
     @SuppressLint("ClickableViewAccessibility")
     @Override public boolean onTouchEvent(MotionEvent e) {
         // Touches that started on empty space (nothing tappable) arrive here directly.

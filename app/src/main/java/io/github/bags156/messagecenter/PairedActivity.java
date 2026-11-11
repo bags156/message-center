@@ -108,7 +108,11 @@ public class PairedActivity extends Activity {
     private Drafts drafts;
     // Another window (the bubble, or the full app) changed this chat's draft: show it here too.
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener draftChanged=(prefs,key)->{if(key!=null&&key.equals(chatId)&&!hasWindowFocus())refreshDraft();};
-    private final Map<String,Bitmap> photos=new HashMap<>();
+    /**
+     * Inbox rows as last drawn, by chat, with what they were drawn from. A row whose chat hasn't
+     * changed is put back as it was, so going back from a chat doesn't rebuild the whole inbox.
+     */
+    private final Map<String,Object[]> rowCache=new HashMap<>();
     private final Set<String> photosRequested=new HashSet<>();
     private boolean registered,pairSubmitted,busy,resumed,anchorOlder;private String shownEmoji="";
     private long lastInboxRefresh,lastTypingSent;
@@ -175,7 +179,7 @@ public class PairedActivity extends Activity {
     /** Tells ChatBubbles which chat you're in (its Details and Shared count), so that chat's bubble steps aside. */
     private void reportChatOnScreen(){if(bubble())return;boolean inChat=screen.equals("chat")||screen.equals("details")||screen.equals("media");
         ChatBubbles.showing(this,started&&inChat?chatId:"");}
-    @Override protected void onResume(){super.onResume();resumed=true;PairedService.screenVisible(true);refreshDraft();if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
+    @Override protected void onResume(){super.onResume();resumed=true;timeFormat=null;dateFormat=null;PairedService.screenVisible(true);refreshDraft();if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
         PhotoText.indexDownloaded(this,false);
         if(PairedService.ready()&&screen.equals("pair")){CookieManager.getInstance().removeAllCookies(null);inbox();askNotifications();}
         else if(!bubble()&&!PairedService.emoji().isEmpty()&&login==null)pairing();
@@ -254,15 +258,12 @@ public class PairedActivity extends Activity {
         String hex=other!=null?other.optString("avatarHexColor",""):"";if(hex.isEmpty()&&chat!=null)hex=chat.optString("avatarHexColor","");
         return PairedProtocol.color(hex,fallback);
     }
-    private Bitmap photo(JSONObject chat){
-        String id=PairedProtocol.participantID(PairedProtocol.other(chat));if(id.isEmpty())return null;
-        if(photos.containsKey(id))return photos.get(id);
-        File f=Avatars.best(this,id);Bitmap b=f.isFile()?BitmapFactory.decodeFile(f.getPath()):null;if(b!=null)photos.put(id,b);return b;
-    }
+    /** The other person's photo at the size it's shown (decoded once, then shared; see Avatars.face). */
+    private Bitmap photo(JSONObject chat,int px){return Avatars.face(this,PairedProtocol.participantID(PairedProtocol.other(chat)),px);}
     private View avatar(JSONObject chat,int size){
         FrameLayout box=new FrameLayout(this);box.setLayoutParams(new LinearLayout.LayoutParams(dp(size),dp(size)));
         if(Avatars.isGroup(chat)){box.addView(roundImage(Avatars.group(this,chat,dp(size))),new FrameLayout.LayoutParams(-1,-1));box.setContentDescription(Avatars.groupLabel(chat));return box;}
-        Bitmap b=photo(chat);
+        Bitmap b=photo(chat,dp(size));
         if(b!=null){box.addView(roundImage(b),new FrameLayout.LayoutParams(-1,-1));return box;}
         box.setBackground(oval(avatarColor(chat)));
         if(chat!=null&&PairedProtocol.other(chat)==null&&chat.optBoolean("isGroupChat")){
@@ -283,7 +284,7 @@ public class PairedActivity extends Activity {
     /** One person's photo, or their initial on their Google color. */
     private View personAvatar(JSONObject p,String name,int size){
         FrameLayout box=new FrameLayout(this);box.setLayoutParams(new LinearLayout.LayoutParams(dp(size),dp(size)));String id=PairedProtocol.participantID(p);Bitmap b=null;
-        if(!id.isEmpty()){if(photos.containsKey(id))b=photos.get(id);else{File f=Avatars.best(this,id);b=f.isFile()?BitmapFactory.decodeFile(f.getPath()):null;if(b!=null)photos.put(id,b);}}
+        if(!id.isEmpty())b=Avatars.face(this,id,dp(size));
         if(b!=null){box.addView(roundImage(b),new FrameLayout.LayoutParams(-1,-1));return box;}
         box.setBackground(oval(PairedProtocol.color(p==null?"":p.optString("avatarHexColor"),Avatars.fallbackColor(name))));
         TextView letter=text(PairedProtocol.initial(name),Math.round(size*0.42f),Color.WHITE,false);letter.setGravity(Gravity.CENTER);box.addView(letter,new FrameLayout.LayoutParams(-1,-1));return box;}
@@ -298,7 +299,7 @@ public class PairedActivity extends Activity {
         for(JSONObject c:chats)for(JSONObject p:PairedProtocol.members(c)){String id=PairedProtocol.participantID(p),n=PairedProtocol.number(p);if(!id.isEmpty()&&!n.isEmpty()&&phoneChecked.add(id))todo.add(new String[]{id,n});}
         if(todo.isEmpty())return;
         decoder.execute(()->{boolean changed=false;for(String[] t:todo)changed|=Avatars.fromPhone(this,t[0],t[1]);if(!changed)return;
-            ui.post(()->{photos.clear();PairedService.refreshConversationIcons();if(screen.equals("inbox"))renderInbox();else if(screen.equals("chat"))renderMessages(false);});});}
+            ui.post(()->{rowCache.clear();PairedService.refreshConversationIcons();if(screen.equals("inbox"))renderInbox();else if(screen.equals("chat"))renderMessages(false);});});}
     private void askContactPhotos(){android.content.SharedPreferences prefs=getSharedPreferences("paired",MODE_PRIVATE);
         if(Avatars.canUsePhonePhotos(this)||prefs.getBoolean("asked_contacts",false))return;prefs.edit().putBoolean("asked_contacts",true).apply();
         new AlertDialog.Builder(this).setTitle("Sharper contact photos?").setMessage("Google only sends small photos. Message Center can use the full-size photos from your phone's contacts for chats, bubbles, notifications, and the widget. They stay on this phone.")
@@ -315,13 +316,15 @@ public class PairedActivity extends Activity {
     }
 
     // ---- Time labels ----
-    private String timeOfDay(long t){return DateFormat.getTimeFormat(this).format(new Date(t));}
+    // Made once per screen: building a date format is slow, and the inbox needs one per row.
+    private java.text.DateFormat timeFormat,weekdayFormat,monthDayFormat,dateFormat;
+    private String timeOfDay(long t){if(timeFormat==null)timeFormat=DateFormat.getTimeFormat(this);return timeFormat.format(new Date(t));}
     private String inboxStamp(long t){
         switch(InboxOrder.stamp(t,System.currentTimeMillis(),TimeZone.getDefault())){
             case TIME:return timeOfDay(t);
-            case WEEKDAY:return new SimpleDateFormat("EEE",Locale.getDefault()).format(new Date(t));
-            case MONTH_DAY:return new SimpleDateFormat(DateFormat.getBestDateTimePattern(Locale.getDefault(),"MMMd"),Locale.getDefault()).format(new Date(t));
-            default:return DateFormat.getDateFormat(this).format(new Date(t));
+            case WEEKDAY:if(weekdayFormat==null)weekdayFormat=new SimpleDateFormat("EEE",Locale.getDefault());return weekdayFormat.format(new Date(t));
+            case MONTH_DAY:if(monthDayFormat==null)monthDayFormat=new SimpleDateFormat(DateFormat.getBestDateTimePattern(Locale.getDefault(),"MMMd"),Locale.getDefault());return monthDayFormat.format(new Date(t));
+            default:if(dateFormat==null)dateFormat=DateFormat.getDateFormat(this);return dateFormat.format(new Date(t));
         }
     }
     private String separatorStamp(long t){
@@ -443,7 +446,7 @@ public class PairedActivity extends Activity {
         if(grid)for(JSONObject c:chats)if(chatSettings.pinned(c))pins.add(c);
         if(!pins.isEmpty()){View g=pinnedGrid(pins);g.setTag(R.id.chat_row,"\npinned");items.addView(g);}
         if(!promos.isEmpty())items.addView(promotionsRow(promos));
-        for(JSONObject c:chats)if(pins.isEmpty()||!chatSettings.pinned(c)){View row=swipeableChat(c);row.setTag(R.id.chat_row,c.optString("conversationID"));row.setTag(R.id.chat_time,PairedProtocol.time(c));items.addView(row);}
+        for(JSONObject c:chats)if(pins.isEmpty()||!chatSettings.pinned(c)){View row=chatRow(c);row.setTag(R.id.chat_row,c.optString("conversationID"));row.setTag(R.id.chat_time,PairedProtocol.time(c));items.addView(row);}
         Perf.end("inbox: rows",perf);perf=Perf.start();renderMessageHits();
         String note=store.page("folder:"+folder,true);if(!chats.isEmpty()&&store.page("folder:"+folder,false).isEmpty()&&!note.isEmpty()){TextView end=text(note,12,muted,false);end.setGravity(Gravity.CENTER);end.setPadding(dp(16),dp(16),dp(16),dp(8));items.addView(end);}
         requestPhotos(chats);
@@ -653,7 +656,7 @@ public class PairedActivity extends Activity {
         Spot back=(screen.equals("details")||backFromSaved)&&id.equals(backChat)?backSpot:null;backChat="";backSpot=null;backFromSaved=false;
         // Opening a chat with unread messages: remember where they start, for the "New messages" line.
         if(!id.equals(chatId)||!screen.equals("chat")){JSONObject before=store.chat(id);unreadSince=before!=null&&chatSettings.unread(before)?chatSettings.seen(id):-1;unreadJump=unreadSince>0;}
-        remember();chatId=id;if(back==null)limit=WINDOW;replyId="";base("chat");JSONObject c=store.chat(id);ChatTheme theme=chatSettings.theme(id);
+        remember();chatId=id;if(back==null)limit=firstWindow(id);replyId="";base("chat");JSONObject c=store.chat(id);ChatTheme theme=chatSettings.theme(id);
         root.setPadding(dp(4),dp(4),dp(4),dp(8));
         LinearLayout bar=row();if(!bubble())bar.addView(icon(R.drawable.ic_back,ink,"Back",this::inbox));else bar.setPadding(dp(12),0,0,0);
         LinearLayout who=row();View face=avatar(c,40);who.addView(face);
@@ -724,7 +727,7 @@ public class PairedActivity extends Activity {
         sendButton.setPadding(dp(14),dp(14),dp(14),dp(14));sendButton.setContentDescription("Send");sendButton.setOnClickListener(v->sendOrRecord());sendButton.setOnLongClickListener(v->{if(micShowing())startRecording();else if(dictation==null)scheduleMessage();return true;});
         LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(dp(52),dp(52));sl.setMarginStart(dp(8));compose.addView(sendButton,sl);root.addView(compose);renderAttachments();updateComposeButton();applyIncoming();Perf.end("open: screen",perf);
         perf=Perf.start();chatSettings.setMarkedUnread(id,false);if(!bubble())PairedService.clearNotification(this,id);Perf.end("open: notification",perf);
-        if(back!=null){restoreSpot=back;renderMessages(false);}else renderMessages(true);perf=Perf.start();if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();
+        if(back!=null){restoreSpot=back;renderMessages(false);}else renderMessages(true);if(limit<WINDOW)fillChatSoon(id);perf=Perf.start();if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();
         if(c!=null)requestPhotos(java.util.Collections.singletonList(c));Perf.end("open: after",perf);Perf.end("open: total",perfAll);
     }
     private void chatMenu(View anchor){JSONObject c=store.chat(chatId);if(c==null)return;PopupMenu menu=new PopupMenu(this,anchor);Menu m=menu.getMenu();
@@ -1197,7 +1200,16 @@ public class PairedActivity extends Activity {
         if(more&&cursor.isEmpty()){anchorOlder=false;String note=store.page("messages:"+id,true);toast(note.isEmpty()?"Refresh this conversation first.":note);return;}
         busy=true;PairedService.loadMessages(id,cursor,(v,e)->{busy=false;if(!e.isEmpty()){anchorOlder=false;toast(e);}if(screen.equals("chat")&&chatId.equals(id))messagesLoaded(more);});}
     /** Google sent this chat's messages: show them without moving you (renderMessages keeps your place unless you were at the bottom). */
-    private void messagesLoaded(boolean more){if(more)limit+=100;renderMessages(false);markReadIfAllowed();}
+    private void messagesLoaded(boolean more){if(more)limit+=100;else if(limit<WINDOW)limit=WINDOW;renderMessages(false);markReadIfAllowed();}
+    /**
+     * Opening a chat draws just its newest messages (and any unread ones), so it shows at once.
+     * The rest of the usual window follows straight after the first frame, or with Google's
+     * reply when connected, which redraws the chat anyway.
+     */
+    private static final int FIRST_WINDOW=30;
+    private int firstWindow(String id){if(unreadSince<=0)return FIRST_WINDOW;return Math.min(WINDOW,Math.max(FIRST_WINDOW,store.countSince(id,unreadSince)+12));}
+    private void fillChatSoon(String id){android.view.Choreographer.getInstance().postFrameCallback(t->ui.postDelayed(()->{
+        if(screen.equals("chat")&&chatId.equals(id)&&limit<WINDOW){limit=WINDOW;renderMessages(false);}},PairedService.ready()?600:0));}
     /**
      * Viewing a chat here records it as seen. If read receipts are on for this
      * chat, it is also marked read on the phone, and Google Messages sends RCS
@@ -1930,6 +1942,19 @@ public class PairedActivity extends Activity {
         View hint=new FrameLayout(this);TextView arrow=text("↩",22,muted,true);arrow.setPadding(dp(22),0,0,0);((FrameLayout)hint).addView(arrow,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER_VERTICAL|Gravity.START));
         return new SwipeRow(this,message,hint,null,dp(64),dp(96)).onSwipeRight(()->startReply(m));}
     /** Inbox: swipe left to archive (or move back to the inbox), right to mark read or unread. */
+    /** An inbox row: the one already drawn for this chat when nothing it shows has changed, else a new one. */
+    private View chatRow(JSONObject c){String id=c.optString("conversationID"),key=rowKey(c);Object[] hit=key==null?null:rowCache.get(id);
+        if(hit!=null&&key.equals(hit[0])){View v=(View)hit[1];if(v.getParent() instanceof ViewGroup)((ViewGroup)v.getParent()).removeView(v);
+            if(v instanceof SwipeRow)((SwipeRow)v).settle();v.jumpDrawablesToCurrentState();return v;}
+        View v=swipeableChat(c);if(key==null)rowCache.remove(id);else rowCache.put(id,new Object[]{key,v});return v;}
+    /**
+     * Everything an inbox row is drawn from; the same key means the row would come out the same.
+     * Null for a row whose preview comes from saved messages instead (it's always drawn fresh).
+     */
+    private String rowKey(JSONObject c){if(PairedProtocol.string(c.optJSONObject("latestMessage"),"displayContent").isEmpty())return null;
+        String id=c.optString("conversationID");long when=PairedProtocol.time(c);
+        return c.toString()+'\n'+folder+'|'+chatSettings.unread(c)+'|'+chatSettings.pinned(c)+'|'+chatSettings.muted(id)+'|'+chatSettings.snoozed(id)+'|'+dark+'|'+textScale
+            +'|'+(when>0?inboxStamp(when):"")+'|'+PairedProtocol.title(c)+'|'+Avatars.photoKey(this,c)+'|'+drafts.getOrDefault(id,"");}
     private View swipeableChat(JSONObject c){View row=inboxRow(c);if(folder==3)return row;String id=c.optString("conversationID");boolean unread=chatSettings.unread(c),archived=folder==2;
         SwipeRow s=new SwipeRow(this,row,swipeHint(unread?"Mark read":"Mark unread",0xff3b6fd8,true),swipeHint(archived?"Unarchive":"Archive",0xff2e7d5b,false),dp(96),dp(160));
         s.onSwipeLeft(()->archive(c,!archived));
@@ -2499,7 +2524,7 @@ public class PairedActivity extends Activity {
     private void setNickname(JSONObject p){String number=PairedProtocol.number(p);if(number.isEmpty()){toast("This person has no number to attach a nickname to.");return;}
         EditText e=input("Nickname");e.setSingleLine(true);e.setText(Nicknames.get(number));
         new AlertDialog.Builder(this).setTitle("Nickname").setMessage("Shown instead of their name in this app, on this phone only. Leave empty to use their contact name.").setView(e)
-            .setPositiveButton("Save",(d,w)->{Nicknames.set(this,number,e.getText().toString());photos.clear();MessagesWidget.update(this);if(screen.equals("details"))details();else if(screen.equals("inbox"))renderInbox();})
+            .setPositiveButton("Save",(d,w)->{Nicknames.set(this,number,e.getText().toString());rowCache.clear();MessagesWidget.update(this);if(screen.equals("details"))details();else if(screen.equals("inbox"))renderInbox();})
             .setNegativeButton("Cancel",null).show();}
     // ---- 0.8: undo send, undo delete, voice speed ----
     private static final long UNDO_SEND_MS=5000;
@@ -2885,7 +2910,7 @@ public class PairedActivity extends Activity {
         if(request==ARRIVAL_PERMISSION){boolean any=false;for(int r:results)if(r==PackageManager.PERMISSION_GRANTED)any=true;if(any)arrivalText(arrivalChat);else toast("Location is needed to text them when you arrive.");return;}
         if(request==ARRIVAL_BACKGROUND){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)arrivalText(arrivalChat);else toast("Choose “Allow all the time” for Location, so the text can go while your phone is in your pocket.");return;}
         if(request==LOCATION_PERMISSION){boolean any=false;for(int r:results)if(r==PackageManager.PERMISSION_GRANTED)any=true;if(any)shareLocation();else toast("Location permission is needed to share where you are.");return;}
-        if(request==CONTACTS_PERMISSION&&results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED){phoneChecked.clear();photos.clear();
+        if(request==CONTACTS_PERMISSION&&results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED){phoneChecked.clear();rowCache.clear();
             if(screen.equals("inbox"))renderInbox();else if(screen.equals("settings"))settings();else if(screen.equals("newchat"))loadPhoneContacts();}
         if(request==CONTACTS_PERMISSION&&screen.equals("newchat"))renderContacts();
         if(request==78){JSONObject pending=pendingTranscription;pendingTranscription=null;if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED&&pending!=null)transcribe(pending);else if(pending!=null)toast("Transcription needs microphone access.");}}
