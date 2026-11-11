@@ -1,8 +1,5 @@
-Message Center 1.5.7.
+Message Center 1.5.8.
 
-- Opening a chat and going back to the inbox are much faster. On the test phone, opening a busy chat went from about 0.55 to 0.22 seconds, and going back to a 120-chat inbox from about 1.4 to 0.28 seconds (your phone is quicker than the test phone, so expect less).
-- A chat now opens with its newest 30 messages (and all unread ones). Older saved messages are added as you scroll up toward them.
-- Contact photos are decoded once at the size they're shown instead of at full size every time, which also uses far less memory.
-- Group chat pictures are no longer redrawn on every visit to the inbox when you have many groups.
+- Fixed: a chat's bubble sometimes stayed on screen (or came right back) while that chat was open in the app. Opening a chat also quiets its notification, and doing that while Android was still removing the bubble posted it again. Nothing re-posts a chat's bubble now while its chat is open; it comes back when you leave, as before.
 
 Install over the existing app through Obtainium. Your pairing, conversations and settings are retained.

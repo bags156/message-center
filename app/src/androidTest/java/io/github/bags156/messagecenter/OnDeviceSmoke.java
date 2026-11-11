@@ -36,7 +36,7 @@ public final class OnDeviceSmoke extends Instrumentation {
      * A chat's bubble steps aside while that chat is open in the full app and comes back, quiet
      * and collapsed, once you've left it; leaving a chat that had no bubble doesn't make one.
      */
-    private void checkBubbleStepsAside()throws Exception{
+    private void checkBubbleStepsAside(PairedActivity a)throws Exception{
         android.content.Context ctx=getTargetContext();android.app.NotificationManager nm=ctx.getSystemService(android.app.NotificationManager.class);
         getUiAutomation().grantRuntimePermission(ctx.getPackageName(),android.Manifest.permission.POST_NOTIFICATIONS);
         shell("cmd notification set_bubbles "+ctx.getPackageName()+" 1");
@@ -54,18 +54,26 @@ public final class OnDeviceSmoke extends Instrumentation {
             .setBubbleMetadata(new android.app.Notification.BubbleMetadata.Builder(open,icon).setDesiredHeight(600).build()).build());
         android.app.Notification shown=chatNotification(nm,"bubble-check",4000);
         check(shown!=null&&(shown.flags&android.app.Notification.FLAG_BUBBLE)!=0,"The check notification didn't become a bubble ("+(shown==null?"not posted":"flags "+shown.flags)+")");
-        runOnMainSync(()->ChatBubbles.showing(ctx,"bubble-check"));
+        try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'bubble-check',name:'Sam Example',type:'RCS',participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'sam',number:'+15550109999'},fullName:'Sam Example'}]}"));}
+        // Opened the way you open it: the chat screen also quiets that chat's notification, which used to post the bubble straight back.
+        java.lang.reflect.Method open=PairedActivity.class.getDeclaredMethod("thread",String.class),back=PairedActivity.class.getDeclaredMethod("inbox");open.setAccessible(true);back.setAccessible(true);
+        runOnMainSync(()->{try{open.invoke(a,"bubble-check");}catch(Exception e){throw new RuntimeException(e);}});
         check(gone(nm,"bubble-check",3000),"Opening a chat left its bubble on screen");
-        // Switching away and straight back inside the delay doesn't flash it, and it stays away while the chat is open.
-        runOnMainSync(()->ChatBubbles.showing(ctx,"no-bubble"));Thread.sleep(300);runOnMainSync(()->ChatBubbles.showing(ctx,"bubble-check"));
-        Thread.sleep(ChatBubbles.RESTORE_DELAY_MS+600);check(chatNotification(nm,"bubble-check",0)==null,"The bubble came back while its chat was still open");
-        runOnMainSync(()->ChatBubbles.showing(ctx,"no-bubble"));
+        // And it stays away: Android finishing the removal late, the chat screen coming back, Google saying it's read.
+        Thread.sleep(1500);runOnMainSync(()->PairedService.clearNotification(ctx,"bubble-check"));
+        Thread.sleep(ChatBubbles.RESTORE_DELAY_MS+600);check(gone(nm,"bubble-check",0),"The bubble came back while its chat was open");
+        // Switching away and straight back inside the delay doesn't flash it.
+        runOnMainSync(()->ChatBubbles.showing(ctx,"no-bubble"));Thread.sleep(300);runOnMainSync(()->{try{open.invoke(a,"bubble-check");}catch(Exception e){throw new RuntimeException(e);}});
+        Thread.sleep(ChatBubbles.RESTORE_DELAY_MS+600);check(gone(nm,"bubble-check",0),"The bubble came back while its chat was still open");
+        // Leaving for the inbox brings it back.
+        runOnMainSync(()->{try{back.invoke(a);}catch(Exception e){throw new RuntimeException(e);}});
         shown=chatNotification(nm,"bubble-check",ChatBubbles.RESTORE_DELAY_MS+4000);
         check(shown!=null&&(shown.flags&android.app.Notification.FLAG_BUBBLE)!=0,"Leaving the chat didn't bring its bubble back ("+(shown==null?"nothing":"flags "+shown.flags)+")");
         android.app.Notification.BubbleMetadata meta=shown.getBubbleMetadata();
         check(meta!=null&&meta.isNotificationSuppressed()&&!meta.getAutoExpandBubble(),"The bubble came back expanded, or with an unread dot");
         runOnMainSync(()->ChatBubbles.showing(ctx,""));Thread.sleep(ChatBubbles.RESTORE_DELAY_MS+600);
         check(chatNotification(nm,"no-bubble",0)==null,"Leaving a chat that had no bubble made one");
+        try(PairedStore store=new PairedStore(ctx)){store.deleteChat("bubble-check");}
         nm.cancel("chat:bubble-check",1);nm.deleteNotificationChannel("bubble-check");ctx.getSystemService(android.content.pm.ShortcutManager.class).removeLongLivedShortcuts(java.util.Collections.singletonList("chat-bubble-check"));}
     /** "What notifications show": a reminder is really posted in each mode and read back. Runs last (it grants notifications). */
     private void checkNotificationPrivacy()throws Exception{
@@ -873,7 +881,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         getTargetContext().getSharedPreferences("starred",0).edit().clear().commit();
         new ChatSettings(getTargetContext()).setBackground("smoke","");
         checkNotificationPrivacy();
-        checkBubbleStepsAside();
+        checkBubbleStepsAside((PairedActivity)activity);
         result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }

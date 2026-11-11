@@ -11,7 +11,6 @@ import android.service.notification.StatusBarNotification;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -31,8 +30,8 @@ final class ChatBubbles {
     private static final String PREFS = "chat_bubbles", HIDDEN = "hidden", BOOT = "boot";
 
     private static volatile String onScreen = "";
-    /** Bubbles taken down, by chat, so they come back exactly as they were. Main thread only. */
-    private static final Map<String, Taken> taken = new HashMap<>();
+    /** Bubbles taken down, by chat, so they come back exactly as they were. */
+    private static final Map<String, Taken> taken = new java.util.concurrent.ConcurrentHashMap<>();
     private static Handler main;
     private static Context app;
     private static final Runnable restore = ChatBubbles::restoreNow;
@@ -44,6 +43,22 @@ final class ChatBubbles {
 
     /** The chat open in the full app, or "" when none is (or the app isn't on screen). */
     static String onScreen() { return onScreen; }
+
+    /**
+     * True while a chat's bubble is meant to be out of the way: its chat is open, or the bubble
+     * was put away and isn't back yet. Nothing may post that chat's bubble again meanwhile.
+     * Android removes a notification a moment after it's asked to, so for that moment the
+     * bubble still looks active; re-posting it then (to quiet it, or redraw its icon) would
+     * bring it straight back.
+     */
+    static boolean away(String chat) { return chat != null && (chat.equals(onScreen) || taken.containsKey(chat)); }
+
+    /** A chat's bubble seen while its chat is open: put it away (and remember it, if takeDown missed it). Any thread. */
+    static void putAway(Context context, StatusBarNotification n, String chat) {
+        if (app == null) app = context.getApplicationContext();
+        if (taken.putIfAbsent(chat, new Taken(n.getTag(), n.getId(), n.getNotification())) == null) remember(chat, true);
+        try { app.getSystemService(NotificationManager.class).cancel(n.getTag(), n.getId()); } catch (Exception ignored) {}
+    }
 
     /** The full app reports the chat it's showing ("" for none). Call on the main thread. */
     static void showing(Context context, String chat) {
@@ -69,7 +84,8 @@ final class ChatBubbles {
         try {
             for (StatusBarNotification n : nm.getActiveNotifications()) {
                 if (!("chat:" + chat).equals(n.getTag()) || (n.getNotification().flags & Notification.FLAG_BUBBLE) == 0) continue;
-                taken.put(chat, new Taken(n.getTag(), n.getId(), n.getNotification()));
+                // Already put away and still being removed: don't record that leftover as the one to bring back.
+                if (taken.putIfAbsent(chat, new Taken(n.getTag(), n.getId(), n.getNotification())) != null) { nm.cancel(n.getTag(), n.getId()); return; }
                 remember(chat, true);
                 nm.cancel(n.getTag(), n.getId());
                 Diagnostics.note("Bubble put away while its chat is open");
@@ -127,7 +143,7 @@ final class ChatBubbles {
     }
 
     /** Kept on disk too, so a bubble taken down just before the app was closed still comes back. */
-    private static void remember(String chat, boolean hidden) {
+    private static synchronized void remember(String chat, boolean hidden) {
         SharedPreferences prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         Set<String> set = new HashSet<>(prefs.getStringSet(HIDDEN, new HashSet<>()));
         if (hidden ? !set.add(chat) : !set.remove(chat)) return;

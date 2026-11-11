@@ -440,7 +440,9 @@ public final class PairedService extends Service {
         PairedService s=current;if(s!=null)synchronized(s.notified){s.notified.remove(id);}
         NotificationManager nm=context.getSystemService(NotificationManager.class);Nudges.cancel(context,id);
         // Cancelling a bubbled chat's notification would also close its bubble; quiet it instead (no dot, out of the shade).
-        for(StatusBarNotification n:nm.getActiveNotifications())if(("chat:"+id).equals(n.getTag())&&(n.getNotification().flags&Notification.FLAG_BUBBLE)!=0){quietBubble(context,nm,n);return;}
+        for(StatusBarNotification n:nm.getActiveNotifications())if(("chat:"+id).equals(n.getTag())&&(n.getNotification().flags&Notification.FLAG_BUBBLE)!=0){
+            // Its chat is open: the bubble stays put away (quieting it would post it again and bring it back).
+            if(id.equals(ChatBubbles.onScreen()))ChatBubbles.putAway(context,n,id);else if(!ChatBubbles.away(id))quietBubble(context,nm,n);return;}
         nm.cancel("chat:"+id,1);
     }
     /** Re-posts a bubble's notification as "seen": the bubble stays, its red dot goes, and it leaves the notification shade. */
@@ -647,7 +649,7 @@ public final class PairedService extends Service {
     static void refreshConversationIcons(){PairedService s=current;if(s==null||s.media.isShutdown()||!s.refreshingIcons.compareAndSet(false,true))return;
         try{s.media.execute(()->{try{s.refreshGroupBubbles();}finally{s.refreshingIcons.set(false);}});}catch(java.util.concurrent.RejectedExecutionException ignored){s.refreshingIcons.set(false);}}
     private void refreshGroupBubbles(){NotificationManager manager=getSystemService(NotificationManager.class);
-        for(StatusBarNotification sbn:manager.getActiveNotifications()){String tag=sbn.getTag();if(tag==null||!tag.startsWith("chat:"))continue;String id=tag.substring(5);JSONObject chat=store.chat(id);
+        for(StatusBarNotification sbn:manager.getActiveNotifications()){String tag=sbn.getTag();if(tag==null||!tag.startsWith("chat:"))continue;String id=tag.substring(5);if(ChatBubbles.away(id))continue;JSONObject chat=store.chat(id);
             Notification old=sbn.getNotification();Notification.BubbleMetadata meta=old.getBubbleMetadata();if(meta==null||!Avatars.isGroup(chat)||!NotificationPrivacy.showName(this,id))continue;
             try{Bitmap icon=chatIcon(chat,PairedProtocol.title(chat));publishShortcut(id,PairedProtocol.title(chat),icon);
                 Notification.BubbleMetadata.Builder bubble=meta.getShortcutId()!=null?new Notification.BubbleMetadata.Builder(meta.getShortcutId()):new Notification.BubbleMetadata.Builder(meta.getIntent(),Icon.createWithAdaptiveBitmap(icon));
@@ -708,7 +710,7 @@ public final class PairedService extends Service {
     static void refreshChatNotifications(Context context) {
         PairedService s=current;if(s==null)return;
         s.main.post(()->{for(android.service.notification.StatusBarNotification sbn:s.getSystemService(NotificationManager.class).getActiveNotifications()){
-            String tag=sbn.getTag();if(tag!=null&&tag.startsWith("chat:"))s.postConversation(tag.substring(5),null,true,false);}});
+            String tag=sbn.getTag();if(tag!=null&&tag.startsWith("chat:")&&!ChatBubbles.away(tag.substring(5)))s.postConversation(tag.substring(5),null,true,false);}});
     }
     /**
      * Opens Android's settings for this one conversation (sound, vibration, priority, Do Not
