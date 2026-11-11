@@ -686,7 +686,7 @@ public class PairedActivity extends Activity {
         scroll.setSmoothScrollingEnabled(false);pinnedBottom=true;keepSpot=null;
         if(!keeperAdded){keeperAdded=true;getWindow().getDecorView().getViewTreeObserver().addOnPreDrawListener(this::keepPlace);}
         scroll.setOnScrollChangeListener((v,x,y,ox,oy)->{View ch=scroll.getChildAt(0);pinnedBottom=ch!=null&&ch.getHeight()-scroll.getHeight()-y<dp(80);
-            if(placing==null)keepSpot=pinnedBottom?null:spotAt(y);updateJumpButton();if(y==0&&oy>0)loadOlderMessages();});
+            if(placing==null)keepSpot=pinnedBottom?null:spotAt(y);updateJumpButton();if(y<oy&&moreSaved&&y<scroll.getHeight())showOlderSaved();else if(y==0&&oy>0)loadOlderMessages();});
         ScrollView chatScroll=scroll;View.OnLayoutChangeListener keepBottom=(v,l,t,r,b,ol,ot,or,ob)->{if(pinnedBottom&&scroll==chatScroll&&(b-t)!=(ob-ot))chatScroll.scrollTo(0,items.getHeight());};
         items.addOnLayoutChangeListener(keepBottom);scroll.addOnLayoutChangeListener(keepBottom);
         typingRow=row();typingRow.setPadding(dp(14),dp(2),dp(14),dp(6));typingRow.setVisibility(View.GONE);
@@ -727,7 +727,7 @@ public class PairedActivity extends Activity {
         sendButton.setPadding(dp(14),dp(14),dp(14),dp(14));sendButton.setContentDescription("Send");sendButton.setOnClickListener(v->sendOrRecord());sendButton.setOnLongClickListener(v->{if(micShowing())startRecording();else if(dictation==null)scheduleMessage();return true;});
         LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(dp(52),dp(52));sl.setMarginStart(dp(8));compose.addView(sendButton,sl);root.addView(compose);renderAttachments();updateComposeButton();applyIncoming();Perf.end("open: screen",perf);
         perf=Perf.start();chatSettings.setMarkedUnread(id,false);if(!bubble())PairedService.clearNotification(this,id);Perf.end("open: notification",perf);
-        if(back!=null){restoreSpot=back;renderMessages(false);}else renderMessages(true);if(limit<WINDOW)fillChatSoon(id);perf=Perf.start();if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();
+        if(back!=null){restoreSpot=back;renderMessages(false);}else renderMessages(true);perf=Perf.start();if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();
         if(c!=null)requestPhotos(java.util.Collections.singletonList(c));Perf.end("open: after",perf);Perf.end("open: total",perfAll);
     }
     private void chatMenu(View anchor){JSONObject c=store.chat(chatId);if(c==null)return;PopupMenu menu=new PopupMenu(this,anchor);Menu m=menu.getMenu();
@@ -1200,16 +1200,16 @@ public class PairedActivity extends Activity {
         if(more&&cursor.isEmpty()){anchorOlder=false;String note=store.page("messages:"+id,true);toast(note.isEmpty()?"Refresh this conversation first.":note);return;}
         busy=true;PairedService.loadMessages(id,cursor,(v,e)->{busy=false;if(!e.isEmpty()){anchorOlder=false;toast(e);}if(screen.equals("chat")&&chatId.equals(id))messagesLoaded(more);});}
     /** Google sent this chat's messages: show them without moving you (renderMessages keeps your place unless you were at the bottom). */
-    private void messagesLoaded(boolean more){if(more)limit+=100;else if(limit<WINDOW)limit=WINDOW;renderMessages(false);markReadIfAllowed();}
+    private void messagesLoaded(boolean more){if(more)limit+=100;renderMessages(false);markReadIfAllowed();}
     /**
-     * Opening a chat draws just its newest messages (and any unread ones), so it shows at once.
-     * The rest of the usual window follows straight after the first frame, or with Google's
-     * reply when connected, which redraws the chat anyway.
+     * Opening a chat draws just its newest messages (and all unread ones), so it shows at once and
+     * every redraw while you're in it (Google's reply, read receipts, new messages) stays quick.
+     * Older saved messages are added as you scroll up toward them (see showOlderSaved).
      */
     private static final int FIRST_WINDOW=30;
     private int firstWindow(String id){if(unreadSince<=0)return FIRST_WINDOW;return Math.min(WINDOW,Math.max(FIRST_WINDOW,store.countSince(id,unreadSince)+12));}
-    private void fillChatSoon(String id){android.view.Choreographer.getInstance().postFrameCallback(t->ui.postDelayed(()->{
-        if(screen.equals("chat")&&chatId.equals(id)&&limit<WINDOW){limit=WINDOW;renderMessages(false);}},PairedService.ready()?600:0));}
+    /** Scrolling up within a screen of the oldest message drawn: adds the next older saved ones, keeping your place. */
+    private void showOlderSaved(){if(!moreSaved||!screen.equals("chat")||placing!=null)return;limit+=WINDOW;renderMessages(false);}
     /**
      * Viewing a chat here records it as seen. If read receipts are on for this
      * chat, it is also marked read on the phone, and Google Messages sends RCS
