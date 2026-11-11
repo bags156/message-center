@@ -354,26 +354,6 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(VideoPrep.prepare(getTargetContext(),src,"notes.pdf","application/pdf",false,null).file==src,"A file that isn't a video was touched");
         src.delete();
         android.util.Log.i("OnDeviceSmoke","Video prep: RCS took "+rcsMs+" ms, progress seen "+seen[0]);}
-    /** A poll shows as a results card with the votes tallied from replies; votes become quiet lines. */
-    private void checkPolls()throws Exception{
-        String poll=Polls.compose("Dinner Friday?",java.util.Arrays.asList("Tacos","Pizza"));long t=1794006000000000L;
-        try(PairedStore store=new PairedStore(getTargetContext())){
-            store.chat(new JSONObject("{conversationID:'pollchat',name:'Poll group',isGroupChat:true,type:'RCS',lastMessageTimestamp:"+(t+3_000_000)+",participants:["
-                +"{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'p1',number:'+15550102000'},fullName:'Daniel Example'},{ID:{participantID:'p2',number:'+15550103000'},fullName:'Sam Example'}]}"));
-            store.message(new JSONObject().put("messageID","poll1").put("conversationID","pollchat").put("participantID","me").put("timestamp",t).put("messageStatus",new JSONObject().put("status","OUTGOING_DELIVERED"))
-                .put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content",poll)))),0,true);
-            String[][] votes={{"v1","p1","2"},{"v2","p2","tacos"},{"v3","p2","2 (Pizza)"}};
-            for(int i=0;i<votes.length;i++)store.message(new JSONObject().put("messageID",votes[i][0]).put("conversationID","pollchat").put("participantID",votes[i][1]).put("timestamp",t+(i+1)*1_000_000L)
-                .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content",votes[i][2])))),0,true);}
-        PairedActivity reader=(PairedActivity)startActivitySync(new Intent(getTargetContext(),BubbleActivity.class).setAction(Intent.ACTION_VIEW).putExtra("chat","pollchat").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-        waitForIdleSync();java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();android.view.View decor=reader.getWindow().getDecorView();
-        decor.findViewsWithText(found,"Dinner Friday?",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.size()==1,"The poll isn't shown as a card ("+found.size()+")");found.clear();
-        decor.findViewsWithText(found,"Pizza, 2 votes",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);check(found.size()==1,"Sam's changed vote and Daniel's vote weren't counted for Pizza");found.clear();
-        decor.findViewsWithText(found,"Tacos, 0 votes",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);check(found.size()==1,"A changed vote still counts for the old option");found.clear();
-        decor.findViewsWithText(found,"Daniel voted for Pizza",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.size()==1,"A vote isn't shown as a quiet line");found.clear();
-        decor.findViewsWithText(found,"Reply with a number to vote.",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.isEmpty(),"The poll's plain text is still shown");found.clear();
-        reader.finish();waitForIdleSync();
-        try(PairedStore store=new PairedStore(getTargetContext())){store.deleteChat("pollchat");}}
     /** Text on arrival: sends once on arriving (through the outbox), waits for you to leave first when you're already there, and repeats when asked. */
     private void checkArrivalTexts()throws Exception{android.content.Context c=getTargetContext();for(JSONObject a:Arrivals.all(c))Arrivals.cancel(c,a.optString("id"));
         JSONObject place=Arrivals.savePlace(c,"Home",36.37,-94.21);Outbox outbox=new Outbox(c);int before=outbox.forChat("arrive").size();
@@ -777,7 +757,6 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkPhotoPrep();
         checkPictureTextAndFollowUps();
         checkVideoPrep();
-        checkPolls();
         checkArrivalTexts();
         checkMarkup((PairedActivity)activity);
         String speed=measureRedraw();

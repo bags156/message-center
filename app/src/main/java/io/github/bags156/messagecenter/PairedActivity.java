@@ -814,11 +814,6 @@ public class PairedActivity extends Activity {
             if(line[i]==null&&PairedProtocol.body(m).isEmpty())line[i]="✨ "+(out[i]?"You":senderFirst(m,c))+" sent "+Effects.label(PairedProtocol.effect(m));
             replyTo[i]=ReplyReferences.isReply(m);
             reacted[i]=!reactorsOf(m).isEmpty();}
-        // Polls: each poll becomes a results card, and its votes ("2", "pizza") quiet lines under it.
-        List<Polls.Said> said=new ArrayList<>(n);for(int i=0;i<n;i++){JSONObject m=messages.get(i);said.add(new Polls.Said(m.optString("messageID"),out[i]?"me":m.optString("participantID"),at[i],PairedProtocol.text(m),ReplyReferences.primary(m)));}
-        pollBoard=Polls.board(said);
-        for(int i=0;i<n;i++){JSONObject m=messages.get(i);String poll=pollBoard.voteFor.get(m.optString("messageID"));if(poll==null||line[i]!=null||out[i]&&PairedProtocol.failed(m))continue;
-            Polls.Result r=pollBoard.results.get(poll);line[i]="🗳 "+(out[i]?"You":senderFirst(m,c))+" voted for "+r.poll.options.get(pollBoard.voteOption.get(m.optString("messageID")));}
         int lastOut=-1;for(int i=n-1;i>=0;i--)if(out[i]&&line[i]==null){lastOut=i;break;}
         // Opening a chat or loading older messages draws without motion; so does a catch-up that brings many at once.
         boolean fresh=!chatId.equals(motionChat)||anchorOlder;if(!chatId.equals(motionChat)){motionChat=chatId;motionSeen.clear();motionOutbox.clear();motionReactions.clear();motionRunning.clear();motionOutboxBefore=0;}
@@ -846,8 +841,7 @@ public class PairedActivity extends Activity {
             if(unreadSince>0&&unreadDivider==null&&i>0&&!out[i]&&at[i]>unreadSince){int count=0;for(int k=i;k<n;k++)if(!out[k]&&at[k]>unreadSince&&ev[k].isEmpty()&&line[k]==null)count++;
                 unreadCount=count;unreadDivider=newMessagesLine(count);items.addView(unreadDivider);}
             if(group&&!out[i]&&!joinPrev&&!replyTo[i]){TextView sender=text(senderName(m,c),12,muted,false);sender.setPadding(dp(14),0,0,dp(4));items.addView(sender);}
-            Polls.Result poll=pollBoard.results.get(mid);
-            View b=timed(swipeToReply(poll!=null?pollCard(m,c,theme,out[i],poll):bubble(m,c,theme,out[i],joinPrev,joinNext),m),at[i],out[i]);if(selecting)b=selectable(b,m);items.addView(b);messageViews.put(m.optString("messageID"),b);
+            View b=timed(swipeToReply(bubble(m,c,theme,out[i],joinPrev,joinNext),m),at[i],out[i]);if(selecting)b=selectable(b,m);items.addView(b);messageViews.put(m.optString("messageID"),b);
             // A new message's effect (an iPhone's Slam or Balloons, or "Happy birthday"): bubble effects replace the usual slide in.
             String fx=animate&&isNew&&!out[i]&&effectsOn()?effectOf(m):"";
             if(Effects.fullScreen(fx))screenEffect=new String[]{fx,mid,PairedProtocol.text(m)};
@@ -1688,52 +1682,10 @@ public class PairedActivity extends Activity {
         attachTile(tiles,R.drawable.ic_place,"Location",()->{d[0].dismiss();shareLocation();});
         content.addView(tiles,new LinearLayout.LayoutParams(-1,-2));
         LinearLayout more=row();more.setGravity(Gravity.CENTER);
-        attachTile(more,R.drawable.ic_poll,"Poll",()->{d[0].dismiss();createPoll();});
         attachTile(more,R.drawable.ic_arrive,"Text on arrival",()->{d[0].dismiss();arrivalText(chatId);});
-        // Two more spaces keep the tiles the same size as the row above.
-        more.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));more.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
+        // Spaces keep the tile the same size as the ones in the row above.
+        for(int k=0;k<3;k++)more.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
         content.addView(more,new LinearLayout.LayoutParams(-1,-2));d[0]=sheet(content);}
-    // ---- Polls (see Polls): a question with numbered options, sent as plain text so anyone can vote ----
-    private Polls.Board pollBoard=new Polls.Board();
-    private void createPoll(){String id=chatId;LinearLayout box=vertical();box.setPadding(dp(20),dp(8),dp(20),0);
-        EditText question=input("Question");question.setSingleLine(true);box.addView(question);gap(box,8);
-        LinearLayout options=vertical();box.addView(options);List<EditText> fields=new ArrayList<>();
-        Runnable[] add={null};add[0]=()->{EditText o=input("Option "+(fields.size()+1));o.setSingleLine(true);fields.add(o);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(6);options.addView(o,lp);};
-        add[0].run();add[0].run();
-        TextView more=text("+ Add option",15,chatSettings.theme(id).accent(dark),true);more.setPadding(dp(4),dp(12),dp(4),dp(8));pressable(more);box.addView(more);
-        more.setOnClickListener(v->{if(fields.size()<Polls.MOST_OPTIONS){add[0].run();fields.get(fields.size()-1).requestFocus();}if(fields.size()>=Polls.MOST_OPTIONS)more.setVisibility(View.GONE);});
-        TextView note=text("Everyone votes by replying with a number, so it works with iPhones and any phone. Results show here.",13,muted,false);note.setPadding(dp(4),dp(4),dp(4),dp(4));box.addView(note);
-        ScrollView sv=new ScrollView(this);sv.addView(box);
-        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("New poll").setView(sv).setNegativeButton("Cancel",null).setPositiveButton("Send poll",null).create();
-        dialog.setOnShowListener(x->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{String q=question.getText().toString().trim();List<String> picked=new ArrayList<>();
-            for(EditText f:fields){String t=f.getText().toString().trim();if(!t.isEmpty())picked.add(t);}
-            if(q.isEmpty()){question.setError("Ask a question");return;}if(picked.size()<2){fields.get(picked.isEmpty()?0:1).setError("Add at least two options");return;}
-            dialog.dismiss();sendPollText(id,Polls.compose(q,picked),"");}));
-        dialog.show();question.requestFocus();}
-    private void sendPollText(String id,String text,String reply){PairedService.sendOrQueue(this,id,text,reply,(v,e)->{if(!e.isEmpty()){error(e);return;}if(screen.equals("chat")&&chatId.equals(id))loadMessages(false);});}
-    /** A poll's results, live from the replies; tap an option to vote (a reply to the poll, so it threads on phones that show replies). */
-    private View pollCard(JSONObject m,JSONObject c,ChatTheme theme,boolean outgoing,Polls.Result r){
-        int fg=outgoing?theme.onBubble(dark):ink,soft=(fg&0x00ffffff)|0x99000000,track=(fg&0x00ffffff)|0x22000000,fill=outgoing?(fg&0x00ffffff)|0x77000000:theme.accent(dark);
-        LinearLayout line=row();line.setGravity(outgoing?Gravity.END:Gravity.START);
-        LinearLayout card=vertical();card.setPadding(dp(16),dp(12),dp(16),dp(10));card.setBackground(shape(outgoing?theme.bubble(dark):surface,22));
-        card.addView(text("📊  POLL",11,soft,true));gap(card,4);TextView q=text(r.poll.question,17,fg,true);q.setTextSize(17*textScale);card.addView(q);gap(card,6);
-        int total=r.total();Integer mine=r.choices.get("me");
-        for(int k=0;k<r.poll.options.size();k++){int option=k;LinearLayout opt=vertical();opt.setPadding(0,dp(6),0,dp(6));pressable(opt);
-            LinearLayout top=row();top.setGravity(Gravity.CENTER_VERTICAL);TextView label=text((mine!=null&&mine==k?"✓ ":"")+r.poll.options.get(k),15,fg,mine!=null&&mine==k);top.addView(label,new LinearLayout.LayoutParams(0,-2,1));
-            top.addView(text(String.valueOf(r.counts[k]),15,fg,true));opt.addView(top);
-            LinearLayout bar=row();bar.setBackground(shape(track,4));View filled=new View(this);filled.setBackground(shape(fill,4));
-            bar.addView(filled,new LinearLayout.LayoutParams(0,dp(6),Math.max(0,r.counts[k])));bar.addView(new View(this),new LinearLayout.LayoutParams(0,dp(6),Math.max(0,total-r.counts[k])+(total==0?1:0)));
-            LinearLayout.LayoutParams bl=new LinearLayout.LayoutParams(-1,dp(6));bl.topMargin=dp(4);opt.addView(bar,bl);
-            List<String> names=new ArrayList<>();for(Map.Entry<String,Integer> e:r.choices.entrySet())if(e.getValue()==k)names.add(e.getKey().equals("me")?"You":PairedProtocol.personFirst(c,e.getKey(),null));
-            if(!names.isEmpty()){String shown=String.join(", ",names.subList(0,Math.min(3,names.size())))+(names.size()>3?" +"+(names.size()-3):"");TextView who=text(shown,12,soft,false);who.setPadding(0,dp(3),0,0);opt.addView(who);}
-            opt.setContentDescription(r.poll.options.get(k)+", "+r.counts[k]+(r.counts[k]==1?" vote":" votes")+(mine!=null&&mine==k?", your vote":""));
-            opt.setOnClickListener(v->votePoll(m,r,option));opt.setOnLongClickListener(v->{messageSheet(m);return true;});card.addView(opt);}
-        gap(card,4);card.addView(text((total==1?"1 vote":total+" votes")+" • "+(mine==null?"Tap an option to vote":"Tap another to change your vote"),12,soft,false));
-        card.setOnLongClickListener(v->{messageSheet(m);return true;});
-        line.addView(card,new LinearLayout.LayoutParams(Math.round(getResources().getDisplayMetrics().widthPixels*0.78f),-2));return line;}
-    private void votePoll(JSONObject m,Polls.Result r,int option){Integer mine=r.choices.get("me");String choice=r.poll.options.get(option);
-        if(mine!=null&&mine==option){toast("You voted for "+choice);return;}
-        sendPollText(chatId,Polls.ballot(r.poll,option),m.optString("messageID"));toast("Voted for "+choice);}
     private void attachTile(LinearLayout parent,int icon,String label,Runnable action){ChatTheme theme=chatSettings.theme(chatId);
         LinearLayout tile=vertical();tile.setGravity(Gravity.CENTER_HORIZONTAL);tile.setPadding(dp(4),dp(10),dp(4),dp(10));pressable(tile);
         ImageView i=new ImageView(this);i.setImageResource(icon);i.setImageTintList(ColorStateList.valueOf(theme.onAccent(dark)));i.setBackground(oval(theme.accent(dark)));i.setPadding(dp(17),dp(17),dp(17),dp(17));

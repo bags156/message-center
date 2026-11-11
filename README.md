@@ -2,7 +2,7 @@
 
 An experimental Android client for Google Messages, with the paired connection running **on the phone**. No additional server, Matrix account, or Beeper account is required. Google Messages remains the default SMS/RCS app and must stay installed and online.
 
-**Current release: 1.5.3. The paired-client architecture began in 0.2.0.** It replaces the notification-based approach in 0.1.x. Compiling and offline device tests do not verify Google sign-in, live RCS delivery, complete history, or ColorOS background reliability. Those require testing on a paired phone.
+**Current release: 1.5.4. The paired-client architecture began in 0.2.0.** It replaces the notification-based approach in 0.1.x. Compiling and offline device tests do not verify Google sign-in, live RCS delivery, complete history, or ColorOS background reliability. Those require testing on a paired phone.
 
 ## Install and connect
 
@@ -32,9 +32,7 @@ For Obtainium, use `https://github.com/bags156/message-center`. Regular releases
 - Details → Shared: the chat's photos & videos, links and files, each in its own tab, newest first under month headings. Hold any item to jump to it in the chat, copy or share it.
 - Message effects: when an iPhone sends Balloons, Confetti, Slam, Invisible Ink and the rest, RCS only delivers a "(sent with …)" note. The chat plays the effect and hides the note (tap "Replay" to see it again); "Happy birthday", "Congratulations" and "Happy New Year" play theirs too. RCS can't carry an effect, so none are sent.
 
-## Polls and arrival texts
-
-Polls (⊕ › Poll) are sent as plain text, a question with numbered options, so anyone can vote from any phone by replying with a number or the option's words. Each poll shows here as a live results card with who voted for what; each person's latest vote counts, and tapping an option sends your vote as a reply to the poll.
+## Arrival texts
 
 Text on arrival (⊕ › Text on arrival) texts someone when you get to a place you pick: where you are now, an address search, or a saved place. It uses Android's own proximity alerts (no Google Play services), needs location "all the time" only for that, and sends through the normal outbox. Just once lasts a day; every time waits for you to leave before it can send again. If you're already there, it waits until you next arrive.
 
