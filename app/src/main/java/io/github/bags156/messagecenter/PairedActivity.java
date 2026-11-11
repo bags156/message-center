@@ -2135,7 +2135,6 @@ public class PairedActivity extends Activity {
         labels.add("Where I am now…");actions.add(()->currentLocation(loc->{if(loc==null){toast("Couldn't find your location. Try again outside or with Wi-Fi on.");return;}namePlace(id,loc.getLatitude(),loc.getLongitude(),Arrivals.places(this).isEmpty()?"Home":"",0);}));
         labels.add("Search for an address…");actions.add(()->searchPlace(id));
         menuSheet("Text "+arrivalWho(id)+" when I arrive at…",labels,actions);}
-    private void openAppSettings(){try{startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.fromParts("package",getPackageName(),null)));}catch(Exception ignored){}}
     /** Your location now (or the last one Android knows), or null; on the main thread. */
     private void currentLocation(java.util.function.Consumer<android.location.Location> done){android.location.LocationManager lm=getSystemService(android.location.LocationManager.class);
         String provider=lm.hasProvider(android.location.LocationManager.FUSED_PROVIDER)&&lm.isProviderEnabled(android.location.LocationManager.FUSED_PROVIDER)?android.location.LocationManager.FUSED_PROVIDER
