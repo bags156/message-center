@@ -50,6 +50,8 @@ Needs a reply uses the latest meaningful incoming or successfully sent outgoing 
 
 Picture text search uses Tesseract (open source) with its English model, packed in the app; it runs on the phone and sends nothing anywhere. It indexes new downloaded pictures, with a lightweight backfill on launch and a manual scan of older downloaded pictures in Settings. Inbox and in-chat search merge text and picture matches. Long-press a photo message to read/copy its recognized text. Indexing does not download remote pictures, and deleting messages removes them from search. It reads printed text in screenshots and documents best, and can miss text in photos of signs, handwriting or busy scenes.
 
+Bubbles step aside for the chat you're in: opening a chat in the full app (or its Details) puts that chat's bubble away, and it comes back, collapsed and without a dot, a moment after you leave. Other people's bubbles still pop up as usual. A chat that had no bubble doesn't get one when you leave it, and new messages in the chat you're looking at don't notify, since they're already on screen.
+
 Group chats use a stable collage of participant photos or initials, a group marker and an additional-member count. The group design appears in the inbox and in Android bubble/shortcut icons, with every face inside the adaptive icon’s visible area. Your own and hidden participants are excluded.
 
 Group details (RCS groups) has Rename group…, which renames it for everyone. Group photo on this phone… sets a picture for the group that only you see; it replaces the collage here and isn't sent to anyone. Adding or removing people, leaving a group, and changing the group's photo for everyone aren't available: Google's linked-device connection doesn't offer them.

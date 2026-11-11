@@ -18,6 +18,49 @@ public final class OnDeviceSmoke extends Instrumentation {
         store.message(new JSONObject().put("messageID",chat+i).put("conversationID",chat).put("participantID",mine?"me":"p1").put("timestamp",1794000400000000L+i*60_000_000L)
             .put("messageStatus",new JSONObject().put("status",mine?"OUTGOING_DELIVERED":"INCOMING_COMPLETE"))
             .put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","Line "+i+" of a long conversation")))),0,true);}
+    private String shell(String command)throws Exception{android.os.ParcelFileDescriptor out=getUiAutomation().executeShellCommand(command);
+        try(java.io.InputStream in=new android.os.ParcelFileDescriptor.AutoCloseInputStream(out)){return new String(in.readAllBytes());}}
+    /** This app's notification for a chat, waiting up to ms for it (and for Android to make it a bubble when it's one). */
+    private android.app.Notification chatNotification(android.app.NotificationManager nm,String chat,long ms)throws Exception{
+        long until=System.currentTimeMillis()+ms;android.app.Notification found;
+        do{found=null;for(android.service.notification.StatusBarNotification sbn:nm.getActiveNotifications())if(("chat:"+chat).equals(sbn.getTag()))found=sbn.getNotification();
+            if(found!=null&&(found.flags&android.app.Notification.FLAG_BUBBLE)!=0)return found;if(System.currentTimeMillis()<until)Thread.sleep(100);}
+        while(System.currentTimeMillis()<until);return found;}
+    /**
+     * A chat's bubble steps aside while that chat is open in the full app and comes back, quiet
+     * and collapsed, once you've left it; leaving a chat that had no bubble doesn't make one.
+     */
+    private void checkBubbleStepsAside()throws Exception{
+        android.content.Context ctx=getTargetContext();android.app.NotificationManager nm=ctx.getSystemService(android.app.NotificationManager.class);
+        getUiAutomation().grantRuntimePermission(ctx.getPackageName(),android.Manifest.permission.POST_NOTIFICATIONS);
+        shell("cmd notification set_bubbles "+ctx.getPackageName()+" 1");
+        nm.createNotificationChannel(new android.app.NotificationChannel("bubble-check","Bubble check",android.app.NotificationManager.IMPORTANCE_HIGH));
+        android.app.Person sam=new android.app.Person.Builder().setName("Sam Example").setKey("sam").build();
+        android.graphics.Bitmap face=android.graphics.Bitmap.createBitmap(108,108,android.graphics.Bitmap.Config.ARGB_8888);face.eraseColor(0xff336699);
+        android.graphics.drawable.Icon icon=android.graphics.drawable.Icon.createWithAdaptiveBitmap(face);
+        ctx.getSystemService(android.content.pm.ShortcutManager.class).pushDynamicShortcut(new android.content.pm.ShortcutInfo.Builder(ctx,"chat-bubble-check").setShortLabel("Sam Example").setLongLived(true)
+            .setIntent(new Intent(ctx,PairedActivity.class).setAction(Intent.ACTION_VIEW).putExtra("chat","bubble-check")).setIcon(icon).setPerson(sam)
+            .setCategories(java.util.Collections.singleton(android.content.pm.ShortcutInfo.SHORTCUT_CATEGORY_CONVERSATION)).build());
+        android.app.PendingIntent open=android.app.PendingIntent.getActivity(ctx,9,new Intent(ctx,BubbleActivity.class).setAction(Intent.ACTION_VIEW)
+            .setData(android.net.Uri.parse("messagecenter-check://bubble-check")).putExtra("chat","bubble-check"),android.app.PendingIntent.FLAG_UPDATE_CURRENT|android.app.PendingIntent.FLAG_MUTABLE);
+        nm.notify("chat:bubble-check",1,new android.app.Notification.Builder(ctx,"bubble-check").setSmallIcon(android.R.drawable.sym_action_chat).setShortcutId("chat-bubble-check")
+            .setStyle(new android.app.Notification.MessagingStyle(new android.app.Person.Builder().setName("You").build()).addMessage("Are you on your way?",System.currentTimeMillis(),sam))
+            .setBubbleMetadata(new android.app.Notification.BubbleMetadata.Builder(open,icon).setDesiredHeight(600).build()).build());
+        android.app.Notification shown=chatNotification(nm,"bubble-check",4000);
+        check(shown!=null&&(shown.flags&android.app.Notification.FLAG_BUBBLE)!=0,"The check notification didn't become a bubble ("+(shown==null?"not posted":"flags "+shown.flags)+")");
+        runOnMainSync(()->ChatBubbles.showing(ctx,"bubble-check"));
+        check(chatNotification(nm,"bubble-check",0)==null,"Opening a chat left its bubble on screen");
+        // Switching away and straight back inside the delay doesn't flash it, and it stays away while the chat is open.
+        runOnMainSync(()->ChatBubbles.showing(ctx,"no-bubble"));Thread.sleep(300);runOnMainSync(()->ChatBubbles.showing(ctx,"bubble-check"));
+        Thread.sleep(ChatBubbles.RESTORE_DELAY_MS+600);check(chatNotification(nm,"bubble-check",0)==null,"The bubble came back while its chat was still open");
+        runOnMainSync(()->ChatBubbles.showing(ctx,"no-bubble"));
+        shown=chatNotification(nm,"bubble-check",ChatBubbles.RESTORE_DELAY_MS+4000);
+        check(shown!=null&&(shown.flags&android.app.Notification.FLAG_BUBBLE)!=0,"Leaving the chat didn't bring its bubble back ("+(shown==null?"nothing":"flags "+shown.flags)+")");
+        android.app.Notification.BubbleMetadata meta=shown.getBubbleMetadata();
+        check(meta!=null&&meta.isNotificationSuppressed()&&!meta.getAutoExpandBubble(),"The bubble came back expanded, or with an unread dot");
+        runOnMainSync(()->ChatBubbles.showing(ctx,""));Thread.sleep(ChatBubbles.RESTORE_DELAY_MS+600);
+        check(chatNotification(nm,"no-bubble",0)==null,"Leaving a chat that had no bubble made one");
+        nm.cancel("chat:bubble-check",1);nm.deleteNotificationChannel("bubble-check");ctx.getSystemService(android.content.pm.ShortcutManager.class).removeLongLivedShortcuts(java.util.Collections.singletonList("chat-bubble-check"));}
     /** "What notifications show": a reminder is really posted in each mode and read back. Runs last (it grants notifications). */
     private void checkNotificationPrivacy()throws Exception{
         android.content.Context ctx=getTargetContext();
@@ -781,6 +824,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         getTargetContext().getSharedPreferences("starred",0).edit().clear().commit();
         new ChatSettings(getTargetContext()).setBackground("smoke","");
         checkNotificationPrivacy();
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        checkBubbleStepsAside();
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }

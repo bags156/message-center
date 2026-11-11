@@ -134,6 +134,8 @@ public final class PairedService extends Service {
         Notification foreground=connectionNotification();
         if(Build.VERSION.SDK_INT>=34)startForeground(FOREGROUND_ID,foreground,ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING);
         else startForeground(FOREGROUND_ID,foreground);
+        // A bubble put away while its chat was open comes back if the app was closed before you left the chat.
+        ChatBubbles.restoreSoon(this);
     }
     @Override public int onStartCommand(Intent intent,int flags,int startId) {
         if(intent!=null && "PAIR".equals(intent.getAction())) {
@@ -465,6 +467,15 @@ public final class PairedService extends Service {
         s.postConversation(id,null,true,true);return "";
     }
     /**
+     * Puts back a chat's bubble that was taken down while the chat was open, when the app was
+     * closed in between (so the original notification is gone). False if the connection isn't running yet.
+     */
+    static boolean restoreBubble(String id) {
+        PairedService s=current;if(s==null||s.store==null)return false;
+        if(s.store.chat(id)!=null&&NotificationPrivacy.showName(s,id))s.postConversation(id,null,true,false,true);
+        return true;
+    }
+    /**
      * Each chat gets its own PendingIntent (the chat ID is in the intent data, so
      * Android never merges two chats' intents), and it opens that conversation.
      */
@@ -574,8 +585,12 @@ public final class PairedService extends Service {
      * Posts (or refreshes) a chat's notification. A new message is added to it; with
      * bubbleNow the chat opens as an expanded bubble without alerting.
      */
-    private void postConversation(String id,JSONObject m,boolean quiet,boolean bubbleNow) {
+    private void postConversation(String id,JSONObject m,boolean quiet,boolean bubbleNow) {postConversation(id,m,quiet,bubbleNow,false);}
+    /** With seen, a bubble put back after you left its chat: collapsed, no dot, not in the shade. */
+    private void postConversation(String id,JSONObject m,boolean quiet,boolean bubbleNow,boolean seen) {
         if(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return;
+        // You're looking at this chat in the app: no alert, and no bubble over the message you're reading.
+        if(!bubbleNow&&!seen&&id.equals(ChatBubbles.onScreen()))return;
         JSONObject chat=store.chat(id);
         String title=chat==null?"New message":PairedProtocol.title(chat);boolean group=chat!=null&&PairedProtocol.other(chat)==null;
         List<JSONObject> recent;
@@ -616,7 +631,7 @@ public final class PairedService extends Service {
         if(quiet)builder.setGroup("quiet-"+id).setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY).setOnlyAlertOnce(true);
         // A long-lived shortcut makes this a "conversation" notification, which Android requires for bubbles.
         Bitmap icon=chatIcon(chat,title);String shortcut=publishShortcut(id,title,icon);
-        if(shortcut!=null){builder.setShortcutId(shortcut);builder.setBubbleMetadata(bubble(id,icon,bubbleNow));}
+        if(shortcut!=null){builder.setShortcutId(shortcut);builder.setBubbleMetadata(bubble(id,icon,bubbleNow,seen));}
         getSystemService(NotificationManager.class).notify("chat:"+id,1,builder.build());
     }
     private Bitmap chatIcon(JSONObject chat,String title) {
@@ -651,11 +666,11 @@ public final class PairedService extends Service {
         } catch(Exception e) {return null;}
     }
     /** The bubble opens the same chat screen in BubbleActivity, which Android can embed in a floating window. */
-    private Notification.BubbleMetadata bubble(String id,Bitmap icon,boolean expand) {
+    private Notification.BubbleMetadata bubble(String id,Bitmap icon,boolean expand,boolean seen) {
         Intent intent=new Intent(this,BubbleActivity.class).setAction(Intent.ACTION_VIEW).setData(chatUri(id)).putExtra("chat",id);
         // Android requires a mutable PendingIntent for bubbles; the intent is explicit to this app.
         PendingIntent pending=PendingIntent.getActivity(this,2,intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_MUTABLE);
-        return new Notification.BubbleMetadata.Builder(pending,Icon.createWithAdaptiveBitmap(icon)).setDesiredHeight(640).setAutoExpandBubble(expand).setSuppressNotification(expand).build();
+        return new Notification.BubbleMetadata.Builder(pending,Icon.createWithAdaptiveBitmap(icon)).setDesiredHeight(640).setAutoExpandBubble(expand).setSuppressNotification(expand||seen).build();
     }
     /** Marks an action as working in the background, the extra AndroidX writes and Android Auto reads. */
     private static android.os.Bundle noUi() {android.os.Bundle b=new android.os.Bundle();b.putBoolean("android.support.action.showsUserInterface",false);return b;}

@@ -168,6 +168,13 @@ public class PairedActivity extends Activity {
     }
     /** A tapped notification (or bubble) delivers its chat here when this screen is already open. */
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(!bubble()&&receiveShare(intent))return;if(MessagesWidget.NEW_CHAT.equals(intent.getAction())){if(login!=null)destroyLogin();inbox();newMessage();return;}String id=intent.getStringExtra("chat");if(id!=null&&!id.isEmpty()){if(login!=null)destroyLogin();thread(id);showFromIntent(intent);}}
+    /** On screen (started), as opposed to resumed: a permission prompt over the chat doesn't count as leaving it. */
+    private boolean started;
+    @Override protected void onStart(){super.onStart();started=true;reportChatOnScreen();}
+    @Override protected void onStop(){started=false;reportChatOnScreen();super.onStop();}
+    /** Tells ChatBubbles which chat you're in (its Details and Shared count), so that chat's bubble steps aside. */
+    private void reportChatOnScreen(){if(bubble())return;boolean inChat=screen.equals("chat")||screen.equals("details")||screen.equals("media");
+        ChatBubbles.showing(this,started&&inChat?chatId:"");}
     @Override protected void onResume(){super.onResume();resumed=true;PairedService.screenVisible(true);refreshDraft();if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
         PhotoText.indexDownloaded(this,false);
         if(PairedService.ready()&&screen.equals("pair")){CookieManager.getInstance().removeAllCookies(null);inbox();askNotifications();}
@@ -197,7 +204,7 @@ public class PairedActivity extends Activity {
         receiptStatusView=null;
         // Screenshots are always allowed (an older version could leave them blocked after signing in).
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);if(!name.equals("login"))setRecentsScreenshotEnabled(true);
-        if(recorder!=null)cancelRecording();if(dictation!=null)stopDictation();recordBar=null;composeRow=null;sendButton=null;recordClock=null;recordWave=null;recordDot=null;screen=name;batteryCard=null;jumpButton=null;statusView=null;statusRow=null;reconnectButton=null;receiptsMark=null;composer=null;items=null;scroll=null;searchRow=null;attachStrip=null;attachScroll=null;replyPanel=null;typingRow=null;messageViews.clear();bubbleViews.clear();playing=null;voiceCards.clear();voiceOrder.clear();ui.removeCallbacks(typingTick);if(typingPulse!=null){typingPulse.cancel();typingPulse=null;}
+        if(recorder!=null)cancelRecording();if(dictation!=null)stopDictation();recordBar=null;composeRow=null;sendButton=null;recordClock=null;recordWave=null;recordDot=null;screen=name;reportChatOnScreen();batteryCard=null;jumpButton=null;statusView=null;statusRow=null;reconnectButton=null;receiptsMark=null;composer=null;items=null;scroll=null;searchRow=null;attachStrip=null;attachScroll=null;replyPanel=null;typingRow=null;messageViews.clear();bubbleViews.clear();playing=null;voiceCards.clear();voiceOrder.clear();ui.removeCallbacks(typingTick);if(typingPulse!=null){typingPulse.cancel();typingPulse=null;}
         dark=(getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;
         textScale=getSharedPreferences("paired",MODE_PRIVATE).getFloat("text_scale",1f);quickRow=null;quickScroll=null;searchChips=null;selecting=false;chosen.clear();selectionBar=null;chatFrame=null;
         int[] colors=palette(dark,dark&&"black".equals(getSharedPreferences("paired",MODE_PRIVATE).getString("theme","system")));
