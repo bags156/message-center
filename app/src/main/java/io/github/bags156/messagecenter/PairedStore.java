@@ -113,10 +113,14 @@ final class PairedStore extends SQLiteOpenHelper {
         try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM items WHERE chat=? AND time>=?",new String[]{chat,String.valueOf(time)})){c.moveToFirst();return c.getInt(0);}
     }
     synchronized JSONObject chat(String id) {try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM chats WHERE id=?",new String[]{id})){return c.moveToFirst()?json(c.getString(0)):null;}}
+    /** The saved text of each chat chats() handed out, so the inbox can tell cheaply whether a chat changed. */
+    private final java.util.Map<JSONObject,String> saved=java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+    /** The chat as saved, when it came from chats(); otherwise its text now. */
+    String savedText(JSONObject chat){String text=saved.get(chat);return text!=null?text:chat.toString();}
     synchronized List<JSONObject> chats(String query,int folder) {
         List<JSONObject> out=new ArrayList<>();String q=query.toLowerCase(java.util.Locale.ROOT);
         try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM chats WHERE folder=? ORDER BY updated DESC",new String[]{String.valueOf(folder)})) {
-            while(c.moveToNext()) {JSONObject o=json(c.getString(0));String title=PairedProtocol.title(o),preview=PairedProtocol.string(o.optJSONObject("latestMessage"),"displayContent");
+            while(c.moveToNext()) {String text=c.getString(0);JSONObject o=json(text);saved.put(o,text);String title=PairedProtocol.title(o),preview=PairedProtocol.string(o.optJSONObject("latestMessage"),"displayContent");
                 if(q.isEmpty() || (title+" "+preview).toLowerCase(java.util.Locale.ROOT).contains(q))out.add(o);}
         }return out;
     }

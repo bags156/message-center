@@ -31,6 +31,10 @@ import org.json.JSONObject;
 final class Avatars {
     private Avatars() {}
     static File dir(Context context) { return new File(context.getFilesDir(), "avatars"); }
+    /** Goes up whenever a saved photo is added, replaced or removed, so drawn rows know to redraw their pictures. */
+    private static final java.util.concurrent.atomic.AtomicInteger changes = new java.util.concurrent.atomic.AtomicInteger();
+    static int changes() { return changes.get(); }
+    private static boolean changed(boolean did) { if (did) changes.incrementAndGet(); return did; }
     static File file(Context context, String participantID) { return new File(dir(context), hex(participantID) + ".img"); }
     private static final char[] HEX = "0123456789abcdef".toCharArray();
     static String hex(String id) {
@@ -62,9 +66,9 @@ final class Avatars {
                 new String[]{ContactsContract.PhoneLookup._ID, ContactsContract.PhoneLookup.LOOKUP_KEY}, null, null, null)) {
             if (c != null && c.moveToFirst()) contact = ContactsContract.Contacts.getLookupUri(c.getLong(0), c.getString(1));
         } catch (Exception e) { return false; }
-        if (contact == null) return hd.delete();
+        if (contact == null) return changed(hd.delete());
         try (InputStream in = ContactsContract.Contacts.openContactPhotoInputStream(resolver, contact, true)) {
-            if (in == null) return hd.delete();
+            if (in == null) return changed(hd.delete());
             Bitmap photo = BitmapFactory.decodeStream(in);
             if (photo == null) return false;
             int longest = Math.max(photo.getWidth(), photo.getHeight());
@@ -74,7 +78,7 @@ final class Avatars {
             File temp = new File(dir, hd.getName() + ".tmp");
             try (FileOutputStream out = new FileOutputStream(temp)) { photo.compress(Bitmap.CompressFormat.JPEG, 92, out); }
             if (!temp.renameTo(hd)) { temp.delete(); return false; }
-            return true;
+            return changed(true);
         } catch (Exception e) { return false; }
     }
     /** Shrinks in halves first, so a large photo stays smooth instead of grainy. */
@@ -125,6 +129,7 @@ final class Avatars {
         File target = file(context, participantID), temp = new File(dir, target.getName() + ".tmp");
         try (FileOutputStream out = new FileOutputStream(temp)) { out.write(image); }
         if (!temp.renameTo(target)) { temp.delete(); throw new IOException("Photo not saved"); }
+        changed(true);
     }
     private static final int[] FALLBACK = {0xff1a73e8, 0xff188038, 0xffe37400, 0xffa142f4, 0xffd93025, 0xff007b83, 0xff9334e6, 0xffc5221f};
     /** A stable color per name for people without a photo or a Google-supplied color. */
@@ -176,13 +181,7 @@ final class Avatars {
     /** Drawn group pictures, by memory size: a count of 32 was fewer than the groups in a long inbox, so every redraw rebuilt them all. */
     private static final class GroupCache {static final android.util.LruCache<String,Bitmap> images=new android.util.LruCache<String,Bitmap>(16*1024*1024){@Override protected int sizeOf(String k,Bitmap v){return v.getByteCount();}};}
     /** Drops this group's drawn pictures (after its photo or name changed). */
-    static void forgetGroup(String chat){for(String key:GroupCache.images.snapshot().keySet())if(key.startsWith(chat+"|"))GroupCache.images.remove(key);}
-    /** Which photo files a chat's picture is drawn from, and their versions: changes when any of them does. */
-    static String photoKey(Context context,JSONObject chat){StringBuilder key=new StringBuilder();
-        if(isGroup(chat)){File own=ownGroupPhoto(context,chat.optString("conversationID"));key.append(own.lastModified()).append(':').append(own.length());
-            List<JSONObject> people=groupMembers(chat);for(int i=0;i<Math.min(3,people.size());i++){File f=best(context,PairedProtocol.participantID(people.get(i)));key.append('|').append(f.lastModified()).append(':').append(f.length());}}
-        else{String id=PairedProtocol.participantID(PairedProtocol.other(chat));if(!id.isEmpty()){File f=best(context,id);key.append(f.lastModified()).append(':').append(f.length());}}
-        return key.toString();}
+    static void forgetGroup(String chat){changed(true);for(String key:GroupCache.images.snapshot().keySet())if(key.startsWith(chat+"|"))GroupCache.images.remove(key);}
     static boolean isGroup(JSONObject chat){return chat!=null&&(chat.optBoolean("isGroupChat")||PairedProtocol.members(chat).size()>1);}
     /** Stable participant ordering keeps a group's identity from shuffling after a refresh. */
     static List<JSONObject> groupMembers(JSONObject chat){List<JSONObject> people=new ArrayList<>(PairedProtocol.members(chat));
@@ -229,7 +228,7 @@ final class Avatars {
         canvas.drawRoundRect(new RectF(x-size*.43f,y+size*.04f,x-size*.025f,y+size*.34f),size*.12f,size*.12f,paint);
         canvas.drawRoundRect(new RectF(x+size*.025f,y+size*.04f,x+size*.43f,y+size*.34f),size*.12f,size*.12f,paint);}
     static void clear(Context context) {
-        GroupCache.images.evictAll();
+        GroupCache.images.evictAll();changed(true);
         File[] files = dir(context).listFiles();
         if (files != null) for (File f : files) f.delete();
         context.getSharedPreferences("avatars", Context.MODE_PRIVATE).edit().clear().apply();

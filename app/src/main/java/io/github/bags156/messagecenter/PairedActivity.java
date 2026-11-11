@@ -456,7 +456,7 @@ public class PairedActivity extends Activity {
         String id=c.optString("conversationID");boolean unread=chatSettings.unread(c),pinned=chatSettings.pinned(c);String draft=drafts.getOrDefault(id,"").trim();
         LinearLayout entry=row();entry.setPadding(dp(4),dp(9),dp(4),dp(9));entry.setGravity(Gravity.CENTER_VERTICAL);
         pressable(entry);
-        long perf=Perf.start();entry.addView(avatar(c,46));Perf.end("row: photo",perf);perf=Perf.start();
+        entry.addView(avatar(c,46));
         LinearLayout middle=vertical();middle.setPadding(dp(14),0,dp(8),0);
         TextView title=text(PairedProtocol.title(c),16,ink,unread);title.setTextSize(16.5f*textScale);title.setSingleLine(true);title.setEllipsize(TextUtils.TruncateAt.END);middle.addView(title);
         String snippet=Effects.preview(ChatText.withoutMediaEmoji(PairedProtocol.string(c.optJSONObject("latestMessage"),"displayContent")));boolean[] mine={PairedProtocol.latestFromMe(c)};
@@ -464,7 +464,7 @@ public class PairedActivity extends Activity {
         if(snippet.isEmpty()){JSONObject last=latestStored(id);if(last!=null)snippet=previewOf(last,c,mine);}
         // Google's preview of an iPhone reaction is its raw text ("❤️ to “…”"); show it as "Michael reacted ❤️ to “…”".
         else if(ChatText.tapback(snippet)!=null){String line=ChatText.reactionLine(mine[0]?"You":latestSenderFirst(c),snippet);if(line!=null){snippet=line;mine[0]=false;}}
-        boolean placeholder=snippet.isEmpty()&&draft.isEmpty();if(placeholder){snippet="Open to load messages";mine[0]=false;}Perf.end("row: preview",perf);
+        boolean placeholder=snippet.isEmpty()&&draft.isEmpty();if(placeholder){snippet="Open to load messages";mine[0]=false;}
         if(!draft.isEmpty())snippet="You: "+draft;else if(mine[0]&&!snippet.isEmpty())snippet="You: "+snippet;
         TextView preview=text(snippet,14,unread?ink:muted,unread);preview.setTextSize(14*textScale);preview.setMaxLines(2);preview.setEllipsize(TextUtils.TruncateAt.END);
         if(!draft.isEmpty()||placeholder)preview.setTypeface(Typeface.create(Typeface.DEFAULT,Typeface.ITALIC));
@@ -976,7 +976,7 @@ public class PairedActivity extends Activity {
         TextView text=text(fallback!=null?fallback:body,17,outgoing?theme.onBubble(dark):ink,false);text.setTextSize(17*textScale);text.setLineSpacing(0,1.1f);text.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));b.addView(text);
         // One to three emoji alone are shown large, without a bubble.
         if(media.isEmpty()&&target.isEmpty()&&fallback==null){int jumbo=ChatText.emojiOnly(body);if(jumbo>0){text.setTextSize(jumbo==1?48:jumbo==2?40:34);b.setBackground(null);b.setPadding(dp(4),0,dp(4),0);}}
-        long perfScan=Perf.start();TextScan scan=TextScan.of(text.getText().toString(),PairedProtocol.time(m)>0?PairedProtocol.time(m):System.currentTimeMillis());Perf.end("bubble: scan",perfScan);perfScan=Perf.start();
+        TextScan scan=TextScan.of(text.getText().toString(),PairedProtocol.time(m)>0?PairedProtocol.time(m):System.currentTimeMillis());
         if(applyLinks(text,scan)){text.setLinkTextColor(outgoing?theme.onBubble(dark):ink);text.setHighlightColor(Color.TRANSPARENT);text.setMovementMethod(LinkMovementMethod.getInstance());text.setOnLongClickListener(v->{messageSheet(m);return true;});}
         // Street addresses open in your maps app.
         List<int[]> places=scan.places;
@@ -990,7 +990,7 @@ public class PairedActivity extends Activity {
             for(SmartText.Hit h:smart){if(sp.getSpans(h.start,h.end,URLSpan.class).length>0||sp.getSpans(h.start,h.end,ClickableSpan.class).length>0)continue;added=true;
                 sp.setSpan(new ClickableSpan(){@Override public void onClick(View w){smartTap(h,m,c);}@Override public void updateDrawState(TextPaint ds){ds.setColor(linkColor);ds.setUnderlineText(true);}},h.start,h.end,Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);}
             if(added){text.setText(sp);text.setHighlightColor(Color.TRANSPARENT);text.setMovementMethod(LinkMovementMethod.getInstance());text.setOnLongClickListener(v->{messageSheet(m);return true;});}}
-        Perf.end("bubble: links",perfScan);b.setOnLongClickListener(v->{messageSheet(m);return true;});b.setOnClickListener(v->tapped(m,b));if(text.getMovementMethod()!=null)text.setOnClickListener(v->tapped(m,b));
+        b.setOnLongClickListener(v->{messageSheet(m);return true;});b.setOnClickListener(v->tapped(m,b));if(text.getMovementMethod()!=null)text.setOnClickListener(v->tapped(m,b));
         line.addView(b,new LinearLayout.LayoutParams(-2,-2));wrap.addView(line,new LinearLayout.LayoutParams(-1,-2));bubbleViews.put(m.optString("messageID"),b);
         String url=linkPreviewsOn()&&(outgoing||chatTrusted)?ChatText.firstUrl(fallback!=null?fallback:body):"";if(!url.isEmpty()){gap(wrap,4);wrap.addView(linkCard(url,outgoing),new LinearLayout.LayoutParams(-1,-2));}
         return wrap;
@@ -1929,7 +1929,7 @@ public class PairedActivity extends Activity {
     private static final int TIME_REVEAL_DP=72;
     /** A message row with its time waiting at the right edge (hidden until you drag the chat left). */
     private View timed(View row,long at,boolean out){FrameLayout f=new FrameLayout(this);f.addView(row,new FrameLayout.LayoutParams(-1,-2));
-        TextView t=text(android.text.format.DateFormat.getTimeFormat(this).format(new Date(at)),12,muted,false);t.setGravity(Gravity.END|Gravity.CENTER_VERTICAL);t.setPadding(0,0,dp(2),0);t.setSingleLine(true);
+        TextView t=text(timeOfDay(at),12,muted,false);t.setGravity(Gravity.END|Gravity.CENTER_VERTICAL);t.setPadding(0,0,dp(2),0);t.setSingleLine(true);
         t.setAlpha(0f);t.setTranslationX(dp(TIME_REVEAL_DP));t.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         f.addView(t,new FrameLayout.LayoutParams(dp(TIME_REVEAL_DP),-1,Gravity.END));f.setTag(R.id.time_label,t);return f;}
     /**
@@ -1959,8 +1959,8 @@ public class PairedActivity extends Activity {
      */
     private String rowKey(JSONObject c){if(PairedProtocol.string(c.optJSONObject("latestMessage"),"displayContent").isEmpty())return null;
         String id=c.optString("conversationID");long when=PairedProtocol.time(c);
-        return c.toString()+'\n'+folder+'|'+chatSettings.unread(c)+'|'+chatSettings.pinned(c)+'|'+chatSettings.muted(id)+'|'+chatSettings.snoozed(id)+'|'+dark+'|'+textScale
-            +'|'+(when>0?inboxStamp(when):"")+'|'+PairedProtocol.title(c)+'|'+Avatars.photoKey(this,c)+'|'+drafts.getOrDefault(id,"");}
+        return store.savedText(c)+'\n'+folder+'|'+chatSettings.unread(c)+'|'+chatSettings.pinned(c)+'|'+chatSettings.muted(id)+'|'+chatSettings.snoozed(id)+'|'+dark+'|'+textScale
+            +'|'+(when>0?inboxStamp(when):"")+'|'+PairedProtocol.title(c)+'|'+Avatars.changes()+'|'+drafts.getOrDefault(id,"");}
     private View swipeableChat(JSONObject c){View row=inboxRow(c);if(folder==3)return row;String id=c.optString("conversationID");boolean unread=chatSettings.unread(c),archived=folder==2;
         SwipeRow s=new SwipeRow(this,row,swipeHint(unread?"Mark read":"Mark unread",0xff3b6fd8,true),swipeHint(archived?"Unarchive":"Archive",0xff2e7d5b,false),dp(96),dp(160));
         s.onSwipeLeft(()->archive(c,!archived));
