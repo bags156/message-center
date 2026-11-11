@@ -41,11 +41,6 @@ final class Outbox {
         return add(chat,text,reply,holdMillis,holdMillis > 0 ? HOLD : WAITING,"");
     }
 
-    /** Text whose photo was accepted already. It waits for a person; retrying sends text only. */
-    synchronized JSONObject addStoppedCaption(String chat,String text,String reply,String error,boolean uncertain) {
-        return add(chat,text,reply,0,uncertain ? UNSURE : FAILED,error);
-    }
-
     private JSONObject add(String chat,String text,String reply,long holdMillis,String state,String error) {
         JSONObject o = new JSONObject(); long now = System.currentTimeMillis();
         try { o.put("id", UUID.randomUUID().toString()).put("chat", chat).put("text", text).put("reply", reply).put("created", now).put("state", state).put("due", now + holdMillis).put("error",error); }

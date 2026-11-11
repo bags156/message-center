@@ -150,6 +150,9 @@ public final class PairedService extends Service {
         try {
             update(cookies==null?"Connecting to Google Messages…":"Starting device pairing…");
             Client fresh=Bridge.newClient(cookies==null?vault.load():"",(kind,payload)->{
+                // Attachment stages are saved on the bridge's own thread, before it goes on to submit:
+                // after a crash, "never reached submission" is then certain (see MediaOutbox.recover).
+                if("MEDIA_PROGRESS".equals(kind)){if(generation.get()==token)mediaProgress(payload);return;}
                 if(!events.isShutdown())events.execute(()->{if(generation.get()==token)event(token,kind,payload);});
             });client=fresh;
             if(cookies!=null) {
@@ -217,7 +220,7 @@ public final class PairedService extends Service {
                 case "MESSAGE" -> {
                     JSONObject envelope=new JSONObject(payload),message=envelope.getJSONObject("message");
                     boolean existed=store.message(message,0,true);touch(message);fullArrived(message);
-                    if(attachmentOutbox.reconcile(message)){attachmentOutbox.retireCompleted();changed("MEDIA_OUTBOX");}
+                    if(attachmentOutbox.reconcile(message)){attachmentOutbox.retireCompleted();changed("MEDIA_OUTBOX");main.post(this::flushMediaOutbox);}
                     if(!PairedProtocol.outgoing(message) && typing.remove(message.optString("conversationID"))!=null)changed("TYPING");
                     // Answered on the phone: this chat's notification here is no longer needed.
                     if(PairedProtocol.outgoing(message)&&!envelope.optBoolean("old",true))dismiss(message.optString("conversationID"));
@@ -232,8 +235,6 @@ public final class PairedService extends Service {
                     if(t.optBoolean("typing"))people.put(number,System.currentTimeMillis()+TYPING_TIMEOUT_MS);else if(number.isEmpty())people.clear();else people.remove(number);
                     changed(kind);
                 }
-                case "MEDIA_PROGRESS" -> {JSONObject p=new JSONObject(payload);String tag=p.optString("job");int split=tag.lastIndexOf('|');if(split>0){
-                    attachmentOutbox.progress(tag.substring(0,split),Long.parseLong(tag.substring(split+1)),p.optString("phase"),-1,p.optString("tmpID"));changed("MEDIA_OUTBOX");}}
                 case "AUTH_REQUIRED" -> {ready=false;stopAutoReconnect();getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("enabled",false).apply();update("Google session expired. Sign in again.");}
                 case "DISCONNECTED" -> {ready=false;update("Connection ended • reconnecting on its own");scheduleAutoReconnect("connection ended");}
                 case "RECONNECTING" -> {ready=false;update("Waiting for Google Messages • reconnecting on its own");scheduleAutoReconnect("waiting for Google Messages");}
@@ -333,7 +334,7 @@ public final class PairedService extends Service {
     }
     static void loadMessages(String id,String cursor,Result done) {
         execute(c->{PairedService s=current;long version=s.store.snapshot();JSONObject response=new JSONObject(c.messages(id,cursor));
-            JSONArray messages=response.optJSONArray("messages");if(messages!=null)for(int i=0;i<messages.length();i++){JSONObject m=messages.getJSONObject(i);s.store.message(m,version,false);JSONObject saved=s.store.message(m.optString("messageID"));if(saved!=null)s.attachmentOutbox.reconcile(saved);s.store.page("source-page:"+m.optString("messageID"),cursor,"known");}s.attachmentOutbox.retireCompleted();
+            JSONArray messages=response.optJSONArray("messages");if(messages!=null)for(int i=0;i<messages.length();i++){JSONObject m=messages.getJSONObject(i);s.store.message(m,version,false);JSONObject saved=s.store.message(m.optString("messageID"));if(saved!=null)s.attachmentOutbox.reconcile(saved);s.store.page("source-page:"+m.optString("messageID"),cursor,"known");}s.attachmentOutbox.retireCompleted();s.main.post(s::flushMediaOutbox);
             String next=PairedProtocol.cursor(response),note="";
             if(!next.isEmpty() && next.equals(cursor)){next="";note="Google repeated a history cursor; stopped to prevent a loop.";}
             if(next.isEmpty() && note.isEmpty())note=response.optString("someBytes","").isEmpty()?"End of the history pages Google supplied. This does not prove the full phone archive was shared.":"Google returned a history format this version cannot page. More messages may exist in Google Messages.";
@@ -751,14 +752,23 @@ public final class PairedService extends Service {
     /** A saved attachment keeps running independently of any Activity or bubble. */
     static void flushAttachments(Context context){PairedService s=current;if(s!=null)s.main.post(s::flushMediaOutbox);
         else if(new SessionVault(context).exists())try{start(context);}catch(Exception ignored){}}
+    private void mediaProgress(String payload){try{JSONObject p=new JSONObject(payload);String tag=p.optString("job");int split=tag.lastIndexOf('|');if(split<=0)return;
+        attachmentOutbox.progress(tag.substring(0,split),Long.parseLong(tag.substring(split+1)),p.optString("phase"),-1,p.optString("tmpID"));changed("MEDIA_OUTBOX");}
+        catch(Exception e){Diagnostics.note("Attachment progress couldn't be saved: "+e.getClass().getSimpleName());}}
+    /** Wakes the queue when text waiting on its attachment is due to go anyway. */
+    private final Runnable captionCheck=this::flushMediaOutbox;
+    private void scheduleCaptionCheck(){long now=System.currentTimeMillis(),soonest=0;
+        for(JSONObject j:attachmentOutbox.all()){long due=MediaOutbox.captionDue(j);if(due>now&&(soonest==0||due<soonest))soonest=due;}
+        main.removeCallbacks(captionCheck);if(soonest>0)main.postDelayed(captionCheck,soonest-now+500);}
     private void flushMediaOutbox(){
-        if(flushingMedia||!ready||client==null||sending.isShutdown())return;JSONObject next=attachmentOutbox.next();if(next==null)return;
-        String id=next.optString("id"),chat=next.optString("chat");JSONObject conversation=store.chat(chat);
-        if(conversation==null){attachmentOutbox.failed(id,next.optLong("attempt"),"This conversation isn't synced. Open it, then retry.");changed("MEDIA_OUTBOX");main.post(this::flushMediaOutbox);return;}
-        JSONObject job=attachmentOutbox.begin(id);if(job==null)return;long attempt=job.optLong("attempt");flushingMedia=true;Client source=client;int token=generation.get();changed("MEDIA_OUTBOX");
+        if(flushingMedia||!ready||client==null||sending.isShutdown())return;long now=System.currentTimeMillis();JSONObject next=attachmentOutbox.next(now);if(next==null){scheduleCaptionCheck();return;}
+        String id=next.optString("id"),chat=next.optString("chat");JSONObject conversation=store.chat(chat);boolean captionOnly=MediaOutbox.captionNext(next,now);
+        if(conversation==null){attachmentOutbox.failed(id,next.optLong("attempt"),"This conversation isn't synced. Open it, then retry.",captionOnly);changed("MEDIA_OUTBOX");main.post(this::flushMediaOutbox);return;}
+        JSONObject job=attachmentOutbox.begin(id,captionOnly);if(job==null)return;long attempt=job.optLong("attempt");flushingMedia=true;Client source=client;int token=generation.get();changed("MEDIA_OUTBOX");
         sending.execute(()->{try{
-            if(!job.optString("mediaTmpID").isEmpty()){
-                attachmentOutbox.captionAccepted(id,attempt,source.sendText(conversation.toString(),job.optString("caption"),job.optString("reply")));
+            if(captionOnly){
+                // The reply link went with the first attachment; the text after it is a plain message.
+                attachmentOutbox.captionAccepted(id,attempt,source.sendText(conversation.toString(),job.optString("caption"),""));
             }else{
                 java.io.File original=new java.io.File(job.optString("file"));if(!original.isFile())throw new java.io.IOException("The saved attachment is missing. Choose it again.");
                 boolean mms=job.optBoolean("forceSmall")||!PairedProtocol.rcs(conversation);PhotoPrep.Ready prepared=null;java.io.File cached=new java.io.File(job.optString("prepared"));
@@ -771,14 +781,17 @@ public final class PairedService extends Service {
                 if(current!=this||generation.get()!=token||!ready)throw new java.io.IOException("The connection changed before submission. Retry when connected.");
                 // Persist this BEFORE entering JNI. A process death anywhere in upload/submission is reviewed, never blindly resent.
                 attachmentOutbox.bridgeStarting(id,attempt);attachmentOutbox.progress(id,attempt,MediaOutbox.UPLOADING,-1,"");changed("MEDIA_OUTBOX");
-                JSONObject result=new JSONObject(source.sendMediaTracked(conversation.toString(),prepared.file.getPath(),prepared.name,prepared.mime,
-                    MediaOutbox.sendCaption(job)?job.optString("caption"):"",job.optString("reply"),id+"|"+attempt));
+                // The attachment goes alone; its text follows once your phone has sent it (MediaOutbox.captionReady).
+                JSONObject result=new JSONObject(source.sendMediaTracked(conversation.toString(),prepared.file.getPath(),prepared.name,prepared.mime,"",job.optString("reply"),id+"|"+attempt));
                 attachmentOutbox.finish(id,attempt,result);
+                // Sent again in place of a failed one: the failed copy goes.
+                String replaced=job.optString("replaces");
+                if(!replaced.isEmpty())try{source.deleteMessage(replaced);store.deleteMessage(replaced);}catch(Exception e){Diagnostics.note("The failed copy couldn't be removed: "+e.getClass().getSimpleName());}
             }
             // A fast echo can precede the submit response. Reconcile exact IDs against the cached messages again.
             for(JSONObject m:store.messages(chat,100))attachmentOutbox.reconcile(m);
             attachmentOutbox.retireCompleted();
-        }catch(Exception e){attachmentOutbox.failed(id,attempt,e.getMessage()==null?"This attachment couldn't be sent.":e.getMessage());}
+        }catch(Exception e){attachmentOutbox.failed(id,attempt,e.getMessage()==null?(captionOnly?"The text couldn't be sent.":"This attachment couldn't be sent."):e.getMessage(),captionOnly);}
         finally{main.post(()->{flushingMedia=false;if(current==this){changed("MEDIA_OUTBOX");changed("MESSAGE");
             // History checks use the normal network lane, never hold the next attachment behind them.
             if(mediaRefreshes.add(chat))main.postDelayed(()->{mediaRefreshes.remove(chat);if(current==this&&ready)loadMessages(chat,"",(v,e)->{});},1000);

@@ -379,7 +379,8 @@ func sendMediaParts(media *gmproto.MediaContent, caption, replyID string, send f
 		return result, err // No caption was attempted. Never retry an ambiguous media send here.
 	}
 	if strings.TrimSpace(caption) != "" {
-		result.CaptionTmpID, err = send(replyID, []*gmproto.MessageInfo{textInfo(caption)})
+		// The reply link rides on the attachment only; marking the text too would quote the original twice.
+		result.CaptionTmpID, err = send("", []*gmproto.MessageInfo{textInfo(caption)})
 		if err != nil {
 			result.CaptionError = err.Error()
 			result.CaptionUncertain = errors.Is(err, errSendOutcomeUnknown)

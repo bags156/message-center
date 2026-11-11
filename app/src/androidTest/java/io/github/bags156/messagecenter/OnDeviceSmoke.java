@@ -483,18 +483,6 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(queued!=null&&"fallback".equals(queued.optString("messageID")),"Offline notification read was lost instead of queued");
             settings.setReceipts("c1",false);receipts.clear();store.clear();
         }
-        // A caption failure after its photo was accepted must persist as TEXT ONLY and never auto-send.
-        Outbox captions=new Outbox(getTargetContext());
-        JSONObject failedCaption=captions.addStoppedCaption("caption-check","Synthetic caption","original","Text rejected",false);
-        JSONObject unsureCaption=captions.addStoppedCaption("caption-check","Another synthetic caption","","Check Google Messages",true);
-        Outbox reopened=new Outbox(getTargetContext());
-        check(Outbox.FAILED.equals(reopened.get(failedCaption.optString("id")).optString("state"))
-            &&Outbox.UNSURE.equals(reopened.get(unsureCaption.optString("id")).optString("state")),"Caption failure was not saved separately");
-        check(reopened.next()==null,"A failed/uncertain caption is being resent automatically");
-        reopened.setState(failedCaption.optString("id"),Outbox.WAITING,"");JSONObject retryCaption=reopened.next();
-        check(retryCaption!=null&&retryCaption.optString("text").equals("Synthetic caption")&&retryCaption.optString("reply").equals("original")
-            &&!retryCaption.has("media")&&!retryCaption.has("file"),"Retrying a caption would resend its photo");
-        reopened.remove(failedCaption.optString("id"));reopened.remove(unsureCaption.optString("id"));
         Activity activity=startActivitySync(new Intent(getTargetContext(),PairedActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         waitForIdleSync();check(activity!=null,"Activity did not launch");
         // Render a synthetic chat in the bubble window: replies, several people's reactions, iPhone fallback text.
@@ -713,14 +701,20 @@ public final class OnDeviceSmoke extends Instrumentation {
         java.lang.reflect.Method render=PairedActivity.class.getDeclaredMethod("renderMessages",boolean.class);render.setAccessible(true);
         runOnMainSync(()->{try{render.invoke(bubble,false);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
         bubble.getWindow().getDecorView().findViewsWithText(found,"Saved • waiting for connection",android.view.View.FIND_VIEWS_WITH_TEXT);check(!found.isEmpty(),"Offline attachment has no saved status");found.clear();
-        // Text can arrive before the image's metadata; it must remain its own message.
-        long attempt=savedMedia.begin(jid).optLong("attempt");savedMedia.finish(jid,attempt,new JSONObject("{mediaTmpID:'photo-submission',captionTmpID:'text-submission'}"));long nowUs=System.currentTimeMillis()*1000;
-        try(PairedStore store=new PairedStore(getTargetContext())){JSONObject textEcho=new JSONObject("{messageID:'echo-text',tmpID:'text-submission',conversationID:'smoke',participantID:'me',timestamp:"+nowUs+",messageStatus:{status:'OUTGOING_SENDING'},messageInfo:[{messageContent:{content:'Synthetic attachment text'}}]}");store.message(textEcho,0,true);savedMedia.reconcile(textEcho);}
+        // The photo goes alone; its text waits until your phone has sent the photo, so it can't arrive first.
+        long attempt=savedMedia.begin(jid,false).optLong("attempt");savedMedia.finish(jid,attempt,new JSONObject("{mediaTmpID:'photo-submission'}"));long nowUs=System.currentTimeMillis()*1000;
+        check(!MediaOutbox.captionReady(savedMedia.get(jid),System.currentTimeMillis()),"The text would go before your phone sent the photo");
         runOnMainSync(()->{try{render.invoke(bubble,false);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
-        check(savedMedia.get(jid).optString("mediaEcho").isEmpty(),"The text claimed the photo's preview");
-        bubble.getWindow().getDecorView().findViewsWithText(found,"Synthetic attachment text",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.size()==1,"The accompanying text is duplicated ("+found.size()+")");found.clear();
+        bubble.getWindow().getDecorView().findViewsWithText(found,"Text will follow the attachment",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.size()==1,"The waiting text isn't labelled ("+found.size()+")");found.clear();
         try(PairedStore store=new PairedStore(getTargetContext())){JSONObject imageEcho=new JSONObject("{messageID:'echo1',tmpID:'photo-submission',conversationID:'smoke',participantID:'me',timestamp:"+nowUs+",messageStatus:{status:'OUTGOING_DELIVERED'},messageInfo:[{mediaContent:{mediaID:'echo1-photo',mimeType:'image/jpeg',size:4000}}]}");store.message(imageEcho,0,true);savedMedia.reconcile(imageEcho);}
-        check(MediaOutbox.DELIVERED.equals(savedMedia.get(jid).optString("state")),"Google's delivery state wasn't reflected");savedMedia.retireCompleted();check(savedMedia.get(jid)==null&&!durable.exists(),"A completed attachment's saved files weren't released");
+        check(MediaOutbox.DELIVERED.equals(savedMedia.get(jid).optString("state")),"Google's delivery state wasn't reflected");
+        check(MediaOutbox.captionNext(savedMedia.next(),System.currentTimeMillis()),"The text didn't follow once the photo was sent");
+        long textAttempt=savedMedia.begin(jid,true).optLong("attempt");savedMedia.captionAccepted(jid,textAttempt,"text-submission");
+        try(PairedStore store=new PairedStore(getTargetContext())){JSONObject textEcho=new JSONObject("{messageID:'echo-text',tmpID:'text-submission',conversationID:'smoke',participantID:'me',timestamp:"+(nowUs+1000)+",messageStatus:{status:'OUTGOING_SENDING'},messageInfo:[{messageContent:{content:'Synthetic attachment text'}}]}");store.message(textEcho,0,true);savedMedia.reconcile(textEcho);}
+        check("echo1".equals(savedMedia.get(jid).optString("mediaEcho")),"The text claimed the photo's copy");
+        runOnMainSync(()->{try{render.invoke(bubble,false);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
+        bubble.getWindow().getDecorView().findViewsWithText(found,"Synthetic attachment text",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.size()==1,"The accompanying text is duplicated ("+found.size()+")");found.clear();
+        savedMedia.retireCompleted();check(savedMedia.get(jid)==null&&!durable.exists(),"A completed attachment's saved files weren't released");
         try(PairedStore store=new PairedStore(getTargetContext())){store.deleteMessage("echo1");store.deleteMessage("echo-text");}
         runOnMainSync(()->{try{render.invoke(bubble,false);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
         // Screenshots are allowed.

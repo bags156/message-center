@@ -32,8 +32,9 @@ dependencies {
     implementation 'androidx.media3:media3-transformer:1.9.3'
     implementation 'androidx.media3:media3-effect:1.9.3'
     implementation 'androidx.media3:media3-common:1.9.3'
-    // Bundled recognition model: picture text stays on device and works offline.
-    implementation 'com.google.mlkit:text-recognition:16.0.1'
+    // Picture text search: Tesseract OCR (Apache-2.0; Leptonica, libpng and libjpeg are permissive too).
+    // Open source and offline, so it fits the AGPL and sends nothing anywhere. Model: assets/tessdata.
+    implementation 'cz.adaptech.tesseract4android:tesseract4android:4.9.0'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20240303'
 }

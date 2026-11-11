@@ -110,8 +110,12 @@ func TestPhotoAndTextUseIndependentSubmissions(t *testing.T) {
 			calls := 0
 			result, err := sendMediaParts(media, caption, "original-id", func(reply string, parts []*gmproto.MessageInfo) (string, error) {
 				calls++
-				if reply != "original-id" || len(parts) != 1 {
-					t.Fatalf("reply changed or a mixed request was sent: %v", parts)
+				if len(parts) != 1 {
+					t.Fatalf("a mixed request was sent: %v", parts)
+				}
+				// Only the attachment carries the reply link, so the original isn't quoted twice.
+				if want := map[bool]string{true: "original-id", false: ""}[calls == 1]; reply != want {
+					t.Fatalf("submission %d has reply %q, want %q", calls, reply, want)
 				}
 				if calls == 1 {
 					if parts[0].GetMediaContent().GetMediaID() != "m1" {

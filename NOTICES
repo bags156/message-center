@@ -25,6 +25,8 @@ Its dependencies (Guava, Kotlin standard library and coroutines, AndroidX annota
 collection, concurrent-futures and exifinterface) are licensed Apache-2.0; JSpecify, Checker
 Framework qualifiers and Error Prone annotations use Apache-2.0 or MIT.
 
-Picture text recognition uses Google's ML Kit Text Recognition 16.0.1 SDK and its
-bundled Latin-script model. SDK terms and notices: https://developers.google.com/ml-kit/terms
-The recognition runs on the device; the model is packaged in the APK.
+Picture text recognition uses Tesseract4Android 4.9.0 by Adaptech s.r.o. (Apache-2.0,
+https://github.com/adaptech-cz/Tesseract4Android), which includes Tesseract OCR 5.5.1 (Apache-2.0),
+Leptonica 1.85.0 (BSD-2-Clause), libpng 1.6.48 (libpng license) and libjpeg 9f (IJG license).
+The English model (eng.traineddata) is from tesseract-ocr/tessdata_fast, Apache-2.0:
+https://github.com/tesseract-ocr/tessdata_fast. Recognition runs on the device.
