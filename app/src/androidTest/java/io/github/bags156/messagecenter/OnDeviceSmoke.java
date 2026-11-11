@@ -368,6 +368,19 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(!Arrivals.arrived(c,id,true),"A second arrival without leaving sent again");
         check(!Arrivals.arrived(c,id,false)&&Arrivals.arrived(c,id,true)&&Arrivals.forChat(c,"arrive").size()==1,"Every-time arrival didn't repeat");
         Arrivals.cancel(c,id);check(Arrivals.forChat(c,"arrive").isEmpty(),"Canceling didn't stop it");
+        // When I leave: arriving doesn't send; leaving does. Set up away from the place, it waits until you've been there.
+        JSONObject leaving=Arrivals.add(c,"arrive",place,"Leaving home now.",false,ArrivalPlan.ARMED,true,0,"");
+        check(!Arrivals.arrived(c,leaving.optString("id"),true)&&Arrivals.arrived(c,leaving.optString("id"),false),"A leaving text didn't send on leaving");
+        JSONObject later=Arrivals.add(c,"arrive",place,"Off now",false,ArrivalPlan.AWAY_FIRST,true,0,"");String lid=later.optString("id");
+        check(!Arrivals.arrived(c,lid,false),"A leaving text sent before you'd been there");check(!Arrivals.arrived(c,lid,true)&&Arrivals.arrived(c,lid,false),"A leaving text didn't send after you'd been there");
+        // Check-in: the late text goes at the time unless you've arrived; the arrival text still goes after.
+        JSONObject checkIn=Arrivals.add(c,"arrive",place,"Made it home!",false,ArrivalPlan.ARMED,false,System.currentTimeMillis()+30_000,"Not home yet, running late.");String cid=checkIn.optString("id");
+        check(Arrivals.late(c,cid),"The check-in's late text didn't go");check(!Arrivals.late(c,cid),"The late text went twice");
+        check(Arrivals.arrived(c,cid,true)&&Arrivals.forChat(c,"arrive").isEmpty(),"After a late text, arriving didn't send the arrival text");
+        JSONObject onTime=Arrivals.add(c,"arrive",place,"Made it home!",false,ArrivalPlan.ARMED,false,System.currentTimeMillis()+30_000,"Running late");
+        check(Arrivals.arrived(c,onTime.optString("id"),true)&&!Arrivals.late(c,onTime.optString("id")),"A late text went although you'd arrived");
+        java.util.List<String> said=new java.util.ArrayList<>();for(JSONObject o:outbox.forChat("arrive"))said.add(o.optString("text"));
+        check(said.contains("Leaving home now.")&&said.contains("Off now")&&said.contains("Not home yet, running late.")&&!said.contains("Running late"),"The leaving and check-in texts weren't queued right: "+said);
         for(JSONObject o:outbox.forChat("arrive"))outbox.remove(o.optString("id"));Arrivals.removePlace(c,"Home");check(Arrivals.places(c).isEmpty(),"The saved place wasn't forgotten");}
     /** New conversation: finds people in the phone's contacts and in your chats, not just Google's partial list. */
     private void checkNewConversationSearch(PairedActivity a)throws Exception{

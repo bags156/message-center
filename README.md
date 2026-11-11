@@ -27,7 +27,7 @@ For Obtainium, use `https://github.com/bags156/message-center`. Regular releases
 - An independent foreground connection and incoming-message notifications, including a boot receiver for an enabled saved connection.
 - Google-reported send/delivery/read status. Request acceptance is labeled separately from delivery.
 - Authenticated encryption of the paired session with Android Keystore, private app storage for synced messages, and disabled cloud backup.
-- Photos and videos are made a sensible size before sending: videos are re-encoded to H.264 at up to 1080p and 30 frames a second for RCS (HDR is converted so colours stay right), or squeezed under 1 MB for MMS.
+- Photos and videos are made a sensible size before sending: videos are re-encoded to H.264 at up to 1080p and 30 frames a second for RCS (HDR is converted so colours stay right), or squeezed under 1 MB for MMS. Video quality is its own Fast / Standard / Full choice.
 - Attachments and their accompanying text are separate messages, to avoid the paired protocol's mixed media/text stall. The text goes once your phone has sent the photo, so it arrives after it, and a reply is attached to the first attachment only. If only the text fails, it can be retried without resending the photo; uncertain outcomes wait for you to check Google Messages.
 - Details → Shared: the chat's photos & videos, links and files, each in its own tab, newest first under month headings. Hold any item to jump to it in the chat, copy or share it.
 - Message effects: when an iPhone sends Balloons, Confetti, Slam, Invisible Ink and the rest, RCS only delivers a "(sent with …)" note. The chat plays the effect and hides the note (tap "Replay" to see it again); "Happy birthday", "Congratulations" and "Happy New Year" play theirs too. RCS can't carry an effect, so none are sent.
@@ -36,9 +36,13 @@ For Obtainium, use `https://github.com/bags156/message-center`. Regular releases
 
 Text on arrival (⊕ › Text on arrival) texts someone when you get to a place you pick: where you are now, an address search, or a saved place. It uses Android's own proximity alerts (no Google Play services), needs location "all the time" only for that, and sends through the normal outbox. Just once lasts a day; every time waits for you to leave before it can send again. If you're already there, it waits until you next arrive.
 
+It can text when you leave a place instead (if you're not there yet, it waits until you've arrived and then left). A one-time arrival can also be a check-in: pick a time, and if you haven't arrived by then a second text goes ("Not home yet, running late."). Arriving cancels it. If your phone's last location fix shows you're already there, the late text isn't sent.
+
 ## Sending and follow-ups
 
 Photos prepare locally while you type. Select Fast, Standard or Full quality next to the attachment strip; the prepared size appears before sending. Full keeps supported originals, while MMS limits and format conversions still apply.
+
+Videos have their own quality setting (next to the strip when a video is attached, or Settings → Video quality): Fast is up to 720p (about 20 MB a minute), Standard up to 1080p (about 40 MB a minute), and Full sends the original whenever it's under 100 MB and otherwise sharp 1080p at up to twice Standard's bitrate. Picture messages (MMS) always squeeze videos under 1 MB.
 
 Attachments are saved outside cache in a private, persistent outbox. The foreground service processes them independently of the app window and resumes queued work when connected. An upload interrupted before submission starts again on its own; an interrupted submission (it may have been sent) waits for review to prevent duplicates. Text accompanying attachments is a separate message sent after your phone has sent the last attachment (so it can't arrive first), and only the first attachment carries a reply. Retrying only the text never resubmits its photo. Settings → Saved attachments opens waiting work. The chat shows actual preparation, upload and phone/delivery stages.
 
@@ -47,6 +51,8 @@ Needs a reply uses the latest meaningful incoming or successfully sent outgoing 
 Picture text search uses Tesseract (open source) with its English model, packed in the app; it runs on the phone and sends nothing anywhere. It indexes new downloaded pictures, with a lightweight backfill on launch and a manual scan of older downloaded pictures in Settings. Inbox and in-chat search merge text and picture matches. Long-press a photo message to read/copy its recognized text. Indexing does not download remote pictures, and deleting messages removes them from search. It reads printed text in screenshots and documents best, and can miss text in photos of signs, handwriting or busy scenes.
 
 Group chats use a stable collage of participant photos or initials, a group marker and an additional-member count. The group design appears in the inbox and in Android bubble/shortcut icons, with every face inside the adaptive icon’s visible area. Your own and hidden participants are excluded.
+
+Group details (RCS groups) has Rename group…, which renames it for everyone. Group photo on this phone… sets a picture for the group that only you see; it replaces the collage here and isn't sent to anyone. Adding or removing people, leaving a group, and changing the group's photo for everyone aren't available: Google's linked-device connection doesn't offer them.
 
 ## Current limits
 

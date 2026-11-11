@@ -52,11 +52,16 @@ final class VideoPrep {
 
     /** The video to send (a new file next to the original if it was changed). Blocks; call off the main thread. */
     static PhotoPrep.Ready prepare(Context context, File in, String name, String mime, boolean mms, Progress progress) throws IOException {
+        return prepare(context, in, name, mime, mms, PhotoQuality.STANDARD, progress);
+    }
+
+    /** quality: Fast, Standard or Full (PhotoQuality's names; see VideoPlan). MMS ignores it. */
+    static PhotoPrep.Ready prepare(Context context, File in, String name, String mime, boolean mms, String quality, Progress progress) throws IOException {
         String m = mime == null ? "" : mime.toLowerCase(Locale.ROOT);
         if (!m.startsWith("video/")) return new PhotoPrep.Ready(in, name, mime);
         VideoPlan.Source source = read(in, m);
         if (source == null) return new PhotoPrep.Ready(in, name, mime); // not a video this phone can read: as it is
-        VideoPlan plan = VideoPlan.of(source, mms);
+        VideoPlan plan = VideoPlan.of(source, mms, quality);
         if (plan.problem != null) throw new IOException(plan.problem);
         if (plan.asIs) return new PhotoPrep.Ready(in, name, mime);
         long limit = mms ? VideoPlan.MMS_BYTES : VideoPlan.RCS_LIMIT;
@@ -97,7 +102,7 @@ final class VideoPrep {
             return new PhotoPrep.Ready(in, name, mime);
         }
         if (made) {
-            Diagnostics.note("Video prepared for " + (mms ? "MMS" : "RCS") + ": " + from + " → " + done.width + "×" + done.height
+            Diagnostics.note("Video prepared for " + (mms ? "MMS" : "RCS " + PhotoQuality.normalize(quality)) + ": " + from + " → " + done.width + "×" + done.height
                     + " " + out.length() / 1024 + " KB (" + plan + ") in " + took + " ms" + (done.encoder.isEmpty() ? "" : " with " + done.encoder));
             return new PhotoPrep.Ready(out, base + ".mp4", "video/mp4");
         }

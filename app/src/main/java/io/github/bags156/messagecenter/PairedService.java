@@ -773,7 +773,7 @@ public final class PairedService extends Service {
                 java.io.File original=new java.io.File(job.optString("file"));if(!original.isFile())throw new java.io.IOException("The saved attachment is missing. Choose it again.");
                 boolean mms=job.optBoolean("forceSmall")||!PairedProtocol.rcs(conversation);PhotoPrep.Ready prepared=null;java.io.File cached=new java.io.File(job.optString("prepared"));
                 if(cached.isFile()&&job.optBoolean("mms")==mms)prepared=new PhotoPrep.Ready(cached,job.optString("preparedName"),job.optString("preparedMime"));
-                if(prepared==null){if(job.optString("mime").startsWith("video/")){int[] bucket={-1};prepared=VideoPrep.prepare(this,original,job.optString("name"),job.optString("mime"),mms,percent->{
+                if(prepared==null){if(job.optString("mime").startsWith("video/")){int[] bucket={-1};prepared=VideoPrep.prepare(this,original,job.optString("name"),job.optString("mime"),mms,job.optString("quality"),percent->{
                     if(percent/5!=bucket[0]){bucket[0]=percent/5;attachmentOutbox.progress(id,attempt,MediaOutbox.PREPARING,percent,"");changed("MEDIA_OUTBOX");}});
                 }else prepared=PhotoPrep.prepare(original,job.optString("name"),job.optString("mime"),mms,job.optString("quality"));
                     if(!prepared.error.isEmpty())throw new java.io.IOException(prepared.error);attachmentOutbox.prepared(id,attempt,prepared);}

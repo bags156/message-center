@@ -14,6 +14,9 @@ import java.util.Locale;
  * </ul>
  * A video already small and in a format every phone plays (H.264 with AAC sound, in MP4) is
  * sent as it is. Plain Java, so it can be tested without a phone.
+ * <p>Quality (RCS only; MMS always has to fit 1 MB), see PhotoQuality's names:
+ * Fast is up to 720p (about 20 MB a minute), Standard up to 1080p (about 40 MB a minute), and
+ * Full sends the original whenever it's under 100 MB, otherwise 1080p at twice the bitrate.
  */
 final class VideoPlan {
     /** The most Google Messages sends over RCS, and what's aimed for (variable bitrate can run over). */
@@ -54,7 +57,22 @@ final class VideoPlan {
         return (int) Math.max(400_000, Math.round(5_000_000 * s * s));
     }
 
-    static VideoPlan of(Source s, boolean mms) {
+    static VideoPlan of(Source s, boolean mms) { return of(s, mms, PhotoQuality.STANDARD); }
+
+    /** The largest short side for a quality, and how much more bitrate than Standard it gets. */
+    static int topSide(String quality) { return PhotoQuality.FAST.equals(PhotoQuality.normalize(quality)) ? 720 : 1080; }
+    static double richness(String quality) { return PhotoQuality.FULL.equals(PhotoQuality.normalize(quality)) ? 2.0 : 1.0; }
+
+    /** What a quality means for videos, for the chooser. */
+    static String describe(String quality) {
+        switch (PhotoQuality.normalize(quality)) {
+            case PhotoQuality.FAST: return "Up to 720p, about 20 MB a minute";
+            case PhotoQuality.FULL: return "The original when it's under 100 MB, otherwise sharp 1080p";
+            default: return "Up to 1080p, about 40 MB a minute";
+        }
+    }
+
+    static VideoPlan of(Source s, boolean mms, String quality) {
         int shortIn = Math.max(2, Math.min(s.width, s.height));
         double seconds = Math.max(1, s.durationMs / 1000.0);
         String video = lower(s.video), audio = lower(s.audio), box = lower(s.container);
@@ -76,15 +94,20 @@ final class VideoPlan {
             return new VideoPlan(false, null, side < shortIn ? even(side) : 0, s.frameRate > 0 && s.frameRate <= fps + 1 ? 0 : fps,
                     (int) videoBps, audioBps, audioBps > 0);
         }
+        // Full: the original, whatever its format, as long as it can be sent at all.
+        if (PhotoQuality.FULL.equals(PhotoQuality.normalize(quality)) && s.bytes > 0 && s.bytes <= RCS_LIMIT) return keep();
+        int top = topSide(quality);double rich = richness(quality);
         int audioGuess = audio.isEmpty() ? 0 : aac ? 256_000 : 128_000;
         long most = Math.round(RCS_BUDGET * 8 / seconds) - audioGuess;
-        int side = Math.min(RCS_SIDES[0], shortIn), bps = rcsBitrate(side);
-        for (int i = 1; i < RCS_SIDES.length && bps > most; i++)
-            if (RCS_SIDES[i] < side) { side = RCS_SIDES[i]; bps = rcsBitrate(side); }
-        if (bps > most) bps = (int) Math.max(RCS_LEAST, most);
+        // Step down a size only when even Standard's bitrate for it won't fit; Full then gets as
+        // much more than Standard as fits, rather than a smaller picture.
+        int side = Math.min(top, shortIn);
+        for (int i = 0; i < RCS_SIDES.length && rcsBitrate(side) > most; i++)
+            if (RCS_SIDES[i] < side) side = RCS_SIDES[i];
+        int bps = (int) Math.max(RCS_LEAST, Math.min(Math.round(rcsBitrate(side) * rich), most));
         boolean smaller = side < shortIn, fast = s.frameRate > 31;
         // Already a sensible size and bitrate (a third over what it'd be made into is fine).
-        double fair = (rcsBitrate(Math.min(RCS_SIDES[0], shortIn)) + audioGuess) * seconds / 8 * 1.35;
+        double fair = (rcsBitrate(Math.min(top, shortIn)) * rich + audioGuess) * seconds / 8 * 1.35;
         if (plain && !smaller && !fast && s.bytes > 0 && s.bytes <= RCS_BUDGET && s.bytes <= fair) return keep();
         return new VideoPlan(false, null, smaller ? even(side) : 0, fast ? 30 : 0, bps, 0, false);
     }

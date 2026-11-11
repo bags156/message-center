@@ -137,6 +137,8 @@ final class Avatars {
         return out;
     }
     private static final class GroupCache {static final android.util.LruCache<String,Bitmap> images=new android.util.LruCache<>(32);}
+    /** Drops this group's drawn pictures (after its photo or name changed). */
+    static void forgetGroup(String chat){for(String key:GroupCache.images.snapshot().keySet())if(key.startsWith(chat+"|"))GroupCache.images.remove(key);}
     static boolean isGroup(JSONObject chat){return chat!=null&&(chat.optBoolean("isGroupChat")||PairedProtocol.members(chat).size()>1);}
     /** Stable participant ordering keeps a group's identity from shuffling after a refresh. */
     static List<JSONObject> groupMembers(JSONObject chat){List<JSONObject> people=new ArrayList<>(PairedProtocol.members(chat));
@@ -144,7 +146,14 @@ final class Avatars {
     static String groupLabel(JSONObject chat){List<JSONObject> people=groupMembers(chat);List<String> names=new ArrayList<>();for(int i=0;i<Math.min(3,people.size());i++)names.add(PairedProtocol.name(people.get(i)));
         return "Group: "+(names.isEmpty()?PairedProtocol.title(chat):String.join(", ",names))+(people.size()>3?" and "+(people.size()-3)+" others":"");}
     /** Photos or initials for three actual members, excluding you, with an unmistakable group marker. */
-    static Bitmap group(Context context,JSONObject chat,int size){List<JSONObject> people=groupMembers(chat);StringBuilder key=new StringBuilder(chat.optString("conversationID")).append('|').append(size).append('|').append(people.size());
+    /** A group photo you picked, kept on this phone only (Google's connection can't change a group's own photo). */
+    static File ownGroupPhoto(Context context,String chat){return new File(new File(context.getFilesDir(),"group-photos"),chat.replaceAll("[^A-Za-z0-9_-]","_")+".jpg");}
+    static Bitmap group(Context context,JSONObject chat,int size){File own=ownGroupPhoto(context,chat.optString("conversationID"));
+        if(own.isFile()){String key=chat.optString("conversationID")+"|own|"+size+"|"+own.lastModified()+"|"+own.length();Bitmap hit=GroupCache.images.get(key);if(hit!=null)return hit;
+            BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;BitmapFactory.decodeFile(own.getPath(),bounds);
+            BitmapFactory.Options options=new BitmapFactory.Options();options.inSampleSize=Math.max(1,Integer.highestOneBit(Math.max(1,Math.min(bounds.outWidth,bounds.outHeight)/Math.max(1,size))));
+            Bitmap photo=BitmapFactory.decodeFile(own.getPath(),options);if(photo!=null){Bitmap square=scaleSquare(photo,size);GroupCache.images.put(key,square);return square;}}
+        List<JSONObject> people=groupMembers(chat);StringBuilder key=new StringBuilder(chat.optString("conversationID")).append('|').append(size).append('|').append(people.size());
         for(int i=0;i<Math.min(3,people.size());i++){JSONObject p=people.get(i);File file=best(context,PairedProtocol.participantID(p));key.append('|').append(PairedProtocol.participantID(p)).append(':').append(PairedProtocol.name(p)).append(':').append(p.optString("avatarHexColor")).append(':').append(file.length()).append(':').append(file.lastModified());}
         Bitmap cached=GroupCache.images.get(key.toString());if(cached!=null)return cached;
         List<Bitmap> photos=new ArrayList<>();List<String> letters=new ArrayList<>();List<Integer> colors=new ArrayList<>();

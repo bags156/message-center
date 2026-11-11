@@ -44,4 +44,38 @@ public class ArrivalPlanTest {
         assertEquals("Made it to Work!", ArrivalPlan.defaultText("Work"));
         assertEquals("Made it!", ArrivalPlan.defaultText(""));
     }
+    @Test public void leavingTextsWaitUntilYouveBeenThere() {
+        assertEquals(ArrivalPlan.ARMED, ArrivalPlan.startState(20, ArrivalPlan.RADIUS_M, true));
+        assertEquals(ArrivalPlan.ARMED, ArrivalPlan.startState(-1, ArrivalPlan.RADIUS_M, true));
+        assertEquals(ArrivalPlan.AWAY_FIRST, ArrivalPlan.startState(5_000, ArrivalPlan.RADIUS_M, true));
+        assertTrue(ArrivalPlan.sends(ArrivalPlan.ARMED, false, true));
+        assertFalse(ArrivalPlan.sends(ArrivalPlan.ARMED, true, true));
+        assertFalse(ArrivalPlan.sends(ArrivalPlan.AWAY_FIRST, false, true));
+        assertEquals(ArrivalPlan.ARMED, ArrivalPlan.after(ArrivalPlan.AWAY_FIRST, true, true));
+        assertEquals(ArrivalPlan.AWAY_FIRST, ArrivalPlan.after(ArrivalPlan.AWAY_FIRST, false, true));
+        assertEquals("Leaving home now.", ArrivalPlan.defaultLeaveText("Home"));
+        assertEquals("Leaving Work now.", ArrivalPlan.defaultLeaveText("Work"));
+    }
+
+    @Test public void checkInTimeIsTheNextOneAhead() {
+        java.util.TimeZone zone = java.util.TimeZone.getTimeZone("America/Chicago");
+        java.util.Calendar now = java.util.Calendar.getInstance(zone); now.clear(); now.set(2026, java.util.Calendar.NOVEMBER, 11, 20, 30);
+        long nine = ArrivalPlan.deadline(now.getTimeInMillis(), zone, 21, 0), eight = ArrivalPlan.deadline(now.getTimeInMillis(), zone, 20, 0);
+        assertEquals(30 * 60_000L, nine - now.getTimeInMillis());
+        assertEquals(23 * 3_600_000L + 30 * 60_000L, eight - now.getTimeInMillis());
+    }
+
+    @Test public void theLateTextGoesOnlyIfYouHaventMadeIt() {
+        long deadline = 1_800_000_000_000L;
+        assertTrue(ArrivalPlan.late(deadline, deadline, 0, false, false));
+        assertFalse(ArrivalPlan.late(deadline, deadline - 10 * 60_000L, 0, false, false));
+        assertFalse(ArrivalPlan.late(deadline, deadline, deadline - 1000, false, false));
+        assertFalse(ArrivalPlan.late(deadline, deadline, 0, true, false));
+        assertFalse(ArrivalPlan.late(deadline, deadline, 0, false, true));
+        assertFalse(ArrivalPlan.late(0, deadline, 0, false, false));
+        assertEquals("Not home yet, running late.", ArrivalPlan.defaultLateText("home"));
+        // It keeps watching for "made it" well after the check-in time.
+        assertEquals(deadline + 12 * 3_600_000L, ArrivalPlan.expires(deadline - 20 * 3_600_000L, false, deadline));
+        assertEquals(0, ArrivalPlan.expires(deadline, true, deadline));
+    }
 }

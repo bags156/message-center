@@ -20,6 +20,7 @@ import (
 	"go.mau.fi/mautrix-gmessages/pkg/libgm/gmproto"
 	"go.mau.fi/util/exhttp"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -583,6 +584,40 @@ func (c *Client) ArchiveChat(conversationID string, archive bool) error {
 // MuteChat silences (or unsilences) a conversation's notifications in Google Messages.
 func (c *Client) MuteChat(conversationID string, mute bool) error {
 	return c.updateConversation(muteRequest(conversationID, mute), "Google could not change this conversation's notifications.")
+}
+
+// RenameGroup renames an RCS group for everyone in it.
+func (c *Client) RenameGroup(conversationID, name string) error {
+	req, e := renameRequest(conversationID, name)
+	if e != nil {
+		return e
+	}
+	return c.updateConversation(req, "Google could not rename this group. Only RCS groups can be renamed.")
+}
+
+// renameGroupAction and renameDataField are the group-rename request mautrix-gmessages added
+// upstream on 2026-11-09 (#134): action RENAME_GROUP = 17 with RenameGroupData{name = 1} in
+// UpdateConversationRequest field 7. The pinned gmproto predates them, so they're encoded here.
+const (
+	renameGroupAction = gmproto.ConversationActionStatus(17)
+	renameDataField   = protowire.Number(7)
+)
+
+func renameRequest(conversationID, name string) (*gmproto.UpdateConversationRequest, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, errors.New("A group name can't be empty.")
+	}
+	if conversationID == "" {
+		return nil, errors.New("This group isn't synced. Open it, then try again.")
+	}
+	req := &gmproto.UpdateConversationRequest{Action: renameGroupAction, ConversationID: conversationID}
+	data := protowire.AppendTag(nil, 1, protowire.BytesType)
+	data = protowire.AppendString(data, name)
+	raw := protowire.AppendTag(nil, renameDataField, protowire.BytesType)
+	raw = protowire.AppendBytes(raw, data)
+	req.ProtoReflect().SetUnknown(raw)
+	return req, nil
 }
 
 // DeleteChat deletes the conversation from the phone.

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"go.mau.fi/mautrix-gmessages/pkg/libgm/gmproto"
+	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
 	"os"
 	"path/filepath"
 	"strings"
@@ -243,5 +245,50 @@ func TestLatestCountStaysInRange(t *testing.T) {
 		if got := latestCount(in); got != want {
 			t.Fatalf("latestCount(%d) = %d, want %d", in, got, want)
 		}
+	}
+}
+
+func TestRenameRequestMatchesUpstreamEncoding(t *testing.T) {
+	req, err := renameRequest("conv-1", "  Weekend crew ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := proto.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Decode field by field: action 17 (field 2), the conversation (field 3), RenameGroupData{name} (field 7).
+	var action uint64
+	var conv, name string
+	for len(raw) > 0 {
+		num, typ, n := protowire.ConsumeTag(raw)
+		if n < 0 {
+			t.Fatalf("bad tag")
+		}
+		raw = raw[n:]
+		switch {
+		case num == 2 && typ == protowire.VarintType:
+			v, m := protowire.ConsumeVarint(raw)
+			action, raw = v, raw[m:]
+		case num == 3 && typ == protowire.BytesType:
+			v, m := protowire.ConsumeString(raw)
+			conv, raw = v, raw[m:]
+		case num == 7 && typ == protowire.BytesType:
+			inner, m := protowire.ConsumeBytes(raw)
+			raw = raw[m:]
+			f, ft, k := protowire.ConsumeTag(inner)
+			if f != 1 || ft != protowire.BytesType {
+				t.Fatalf("rename data has field %d", f)
+			}
+			name, _ = protowire.ConsumeString(inner[k:])
+		default:
+			t.Fatalf("unexpected field %d", num)
+		}
+	}
+	if action != 17 || conv != "conv-1" || name != "Weekend crew" {
+		t.Fatalf("got action %d, conversation %q, name %q", action, conv, name)
+	}
+	if _, err := renameRequest("conv-1", "   "); err == nil {
+		t.Fatal("an empty name was accepted")
 	}
 }

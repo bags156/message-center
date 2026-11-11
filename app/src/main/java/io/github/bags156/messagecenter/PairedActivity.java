@@ -583,6 +583,32 @@ public class PairedActivity extends Activity {
     private void pickBackgroundPhoto(String id){backgroundFor=id;try{startActivityForResult(new Intent(MediaStore.ACTION_PICK_IMAGES).setType("image/*"),PICK_BACKGROUND);}
         catch(Exception e){try{startActivityForResult(new Intent(Intent.ACTION_GET_CONTENT).setType("image/*"),PICK_BACKGROUND);}catch(Exception e2){toast("No photo picker is available.");}}}
     /** Keeps a screen-sized copy of the chosen photo, so the original can be moved or deleted. */
+    // ---- Group name (for everyone, RCS groups) and photo (this phone only) ----
+    private static final int PICK_GROUP_PHOTO=86;private String groupPhotoFor="";
+    private void renameGroup(String id){JSONObject c=store.chat(id);if(c==null)return;EditText name=input("Group name");name.setSingleLine(true);
+        String now=PairedProtocol.string(c,"name");name.setText(now);name.setSelection(name.getText().length());FrameLayout box=new FrameLayout(this);box.setPadding(dp(20),dp(8),dp(20),0);box.addView(name);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Rename group").setMessage("Everyone in the group sees the new name.").setView(box).setNegativeButton("Cancel",null).setPositiveButton("Rename",null).create();
+        dialog.setOnShowListener(x->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{String n=name.getText().toString().trim();if(n.isEmpty()){name.setError("Give it a name");return;}
+            if(n.equals(now)){dialog.dismiss();return;}if(!PairedService.ready()){toast("Connect first, then rename the group.");return;}dialog.dismiss();toast("Renaming…");
+            PairedService.execute(cl->{cl.renameGroup(id,n);return "";},(value,e)->{if(!e.isEmpty()){error(e);return;}
+                // Shown right away; Google's own update follows.
+                JSONObject latest=store.chat(id);if(latest!=null){try{latest.put("name",n);store.chat(latest);}catch(Exception ignored){}}
+                Avatars.forgetGroup(id);toast("Renamed to “"+n+"”.");if(screen.equals("details")&&chatId.equals(id))details();});}));
+        dialog.show();name.requestFocus();}
+    private void groupPhotoMenu(String id){boolean own=Avatars.ownGroupPhoto(this,id).isFile();
+        List<String> labels=new ArrayList<>(java.util.Arrays.asList(own?"Choose a different photo":"Choose a photo"));List<Runnable> actions=new ArrayList<>(java.util.Arrays.<Runnable>asList(()->{groupPhotoFor=id;
+            try{startActivityForResult(new Intent(MediaStore.ACTION_PICK_IMAGES).setType("image/*"),PICK_GROUP_PHOTO);}catch(Exception e){try{startActivityForResult(new Intent(Intent.ACTION_GET_CONTENT).setType("image/*"),PICK_GROUP_PHOTO);}catch(Exception e2){toast("No photo picker is available.");}}}));
+        if(own){labels.add("Use members' photos again");actions.add(()->{Avatars.ownGroupPhoto(this,id).delete();Avatars.forgetGroup(id);toast("Back to members' photos.");if(screen.equals("details"))details();});}
+        menuSheet("Group photo (only you see it; Google can't change a group's photo from here)",labels,actions);}
+    private void saveGroupPhoto(Uri uri){String id=groupPhotoFor;if(id.isEmpty())return;
+        decoder.execute(()->{boolean ok=false;File target=Avatars.ownGroupPhoto(this,id);
+            try{android.graphics.ImageDecoder.Source src=android.graphics.ImageDecoder.createSource(getContentResolver(),uri);
+                Bitmap b=android.graphics.ImageDecoder.decodeBitmap(src,(dec,info,s2)->{int lw=info.getSize().getWidth(),lh=info.getSize().getHeight();float k=Math.min(1f,720f/Math.max(1,Math.min(lw,lh)));
+                    dec.setTargetSize(Math.max(1,Math.round(lw*k)),Math.max(1,Math.round(lh*k)));dec.setAllocator(android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE);});
+                Bitmap square=Avatars.scaleSquare(b,Math.min(720,Math.min(b.getWidth(),b.getHeight())));
+                File dir=target.getParentFile();if(!dir.isDirectory())dir.mkdirs();File part=new File(target.getPath()+".part");
+                try(java.io.FileOutputStream out=new java.io.FileOutputStream(part)){square.compress(Bitmap.CompressFormat.JPEG,90,out);}ok=part.renameTo(target);}catch(Exception ignored){}
+            boolean saved=ok;ui.post(()->{if(!saved){toast("That photo couldn't be used.");return;}Avatars.forgetGroup(id);toast("Group photo set on this phone.");if(screen.equals("details")&&chatId.equals(id))details();else if(screen.equals("inbox"))renderInbox();});});}
     private void saveBackgroundPhoto(Uri uri){String id=backgroundFor;if(id.isEmpty())return;toast("Setting background…");
         decoder.execute(()->{boolean ok=false;File target=backgroundFile(id);
             try{android.graphics.ImageDecoder.Source src=android.graphics.ImageDecoder.createSource(getContentResolver(),uri);
@@ -1312,6 +1338,10 @@ public class PairedActivity extends Activity {
         sheetAction(content,chatSettings.snoozed(id)?"Snoozed until "+snoozeLabel(id)+" (tap to change)":"Snooze notifications…",()->snoozeMenu(id));
         String ownShows=NotificationPrivacy.own(this,id);
         sheetAction(content,"Notifications show: "+(ownShows.isEmpty()?"same as all chats ("+NotificationPrivacy.label(NotificationPrivacy.mode(this)).toLowerCase(Locale.ROOT)+")":NotificationPrivacy.label(ownShows).toLowerCase(Locale.ROOT)),()->chatNotificationContent(id));
+        if(group){
+            // Google's connection can rename RCS groups for everyone; a group photo can only be set here, on this phone.
+            if(PairedProtocol.rcs(c))sheetAction(content,"Rename group…",()->renameGroup(id));
+            sheetAction(content,Avatars.ownGroupPhoto(this,id).isFile()?"Group photo: yours, on this phone (change)":"Group photo on this phone…",()->groupPhotoMenu(id));}
         sheetAction(content,"Search in chat",()->{thread(id);searchChat();});
         sheetAction(content,"Needs a reply / mark handled…",()->replyFollowUp(c));
         if(!group&&!people.isEmpty()){JSONObject p0=people.get(0);String nick=Nicknames.get(PairedProtocol.number(p0));sheetAction(content,nick.isEmpty()?"Set a nickname…":"Nickname: "+nick+" (change)",()->setNickname(p0));}
@@ -1336,6 +1366,14 @@ public class PairedActivity extends Activity {
         Outgoing(File f,String n,String m){file=f;name=n;mime=m;}}
     private static final java.util.concurrent.ExecutorService photoPreparation=java.util.concurrent.Executors.newSingleThreadExecutor();
     private String photoQuality(){return PhotoQuality.normalize(getSharedPreferences("paired",MODE_PRIVATE).getString("photo_quality",PhotoQuality.STANDARD));}
+    /** Videos have their own Fast / Standard / Full choice (see VideoPlan). */
+    private String videoQuality(){return PhotoQuality.normalize(getSharedPreferences("paired",MODE_PRIVATE).getString("video_quality",PhotoQuality.STANDARD));}
+    private void chooseVideoQuality(){String[] values={PhotoQuality.FAST,PhotoQuality.STANDARD,PhotoQuality.FULL};String selected=videoQuality();int current=selected.equals(PhotoQuality.FAST)?0:selected.equals(PhotoQuality.FULL)?2:1;
+        String[] labels=new String[3];for(int i=0;i<3;i++)labels[i]=PhotoQuality.label(values[i])+" • "+VideoPlan.describe(values[i]);
+        new AlertDialog.Builder(this).setTitle("Video quality")
+            .setSingleChoiceItems(labels,current,(d,which)->{getSharedPreferences("paired",MODE_PRIVATE).edit().putString("video_quality",values[which]).apply();d.dismiss();if(screen.equals("settings"))settings();else renderAttachments();})
+            .setNeutralButton("About quality",(d,w)->new AlertDialog.Builder(this).setMessage("Videos are made smaller on this phone before sending, so they go faster. Fast keeps them small, Standard is sharp at a practical size, and Full sends your original whenever it's under 100 MB, the most RCS carries. Picture messages (MMS) always squeeze videos under 1 MB, whatever you choose.").setPositiveButton("OK",null).show())
+            .setNegativeButton("Close",null).show();}
     private void prepareWhileTyping(Outgoing o){if(o.sending||!o.mime.startsWith("image/"))return;JSONObject c=store.chat(chatId);boolean mms=c==null||!PairedProtocol.rcs(c);String quality=photoQuality(),variant=quality+"|"+mms;
         if(variant.equals(o.variant))return;o.variant=variant;int token=++o.preparationToken;o.preparing=true;o.preparationError="";
         photoPreparation.execute(()->{PhotoPrep.Ready ready=PhotoPrep.prepare(o.file,o.name,o.mime,mms,quality);
@@ -1703,6 +1741,7 @@ public class PairedActivity extends Activity {
     @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);
         if(request==RESTORE_BACKUP){if(result==RESULT_OK&&data!=null&&data.getData()!=null)restoreBackup(data.getData());return;}
         if(request==PICK_BACKGROUND){if(result==RESULT_OK&&data!=null&&data.getData()!=null)saveBackgroundPhoto(data.getData());return;}
+        if(request==PICK_GROUP_PHOTO){if(result==RESULT_OK&&data!=null&&data.getData()!=null)saveGroupPhoto(data.getData());return;}
         if(request==TAKE_PHOTO){File shot=pendingCapture;pendingCapture=null;if(shot==null)return;
             if(result==RESULT_OK&&shot.length()>0){outgoing.add(new Outgoing(shot,"Photo.jpg","image/jpeg"));outgoingChat=chatId;renderAttachments();}else shot.delete();return;}
         if((request!=PICK_MEDIA&&request!=PICK_FILES)||result!=RESULT_OK||data==null)return;List<Uri> uris=new ArrayList<>();
@@ -1743,7 +1782,13 @@ public class PairedActivity extends Activity {
             LinearLayout.LayoutParams tl=new LinearLayout.LayoutParams(dp(72),dp(72));tl.setMarginEnd(dp(8));attachStrip.addView(tile,tl);}
         boolean photos=false,preparing=false;long bytes=0;for(Outgoing o:outgoing)if(o.mime.startsWith("image/")){photos=true;preparing|=o.preparing;bytes+=o.prepared!=null?o.prepared.file.length():Math.min(o.file.length(),PhotoQuality.bytes(photoQuality(),false));}
         if(photos){TextView quality=text("Photo quality: "+PhotoQuality.label(photoQuality())+"\n"+(preparing?"Preparing size…":PhotoQuality.size(bytes))+" • Tap to change",13,ink,false);quality.setPadding(dp(12),dp(10),dp(12),dp(10));quality.setBackground(shape(surface,14));
-            quality.setContentDescription("Photo quality: "+PhotoQuality.label(photoQuality())+(preparing?", preparing":", "+PhotoQuality.size(bytes)));quality.setOnClickListener(v->{if(!busy)choosePhotoQuality();});attachStrip.addView(quality,new LinearLayout.LayoutParams(-2,dp(72)));}updateComposeButton();}
+            quality.setContentDescription("Photo quality: "+PhotoQuality.label(photoQuality())+(preparing?", preparing":", "+PhotoQuality.size(bytes)));quality.setOnClickListener(v->{if(!busy)choosePhotoQuality();});attachStrip.addView(quality,new LinearLayout.LayoutParams(-2,dp(72)));}
+        boolean videos=false;for(Outgoing o:outgoing)if(o.mime.startsWith("video/"))videos=true;
+        if(videos){JSONObject c=store.chat(chatId);boolean mms=c==null||!PairedProtocol.rcs(c);
+            TextView vq=text("Video quality: "+(mms?"picture message (under 1 MB)":PhotoQuality.label(videoQuality()))+"\n"+(mms?"Made to fit MMS":VideoPlan.describe(videoQuality()).replace(", otherwise sharp 1080p",""))+(mms?"":" • Tap to change"),13,ink,false);
+            vq.setPadding(dp(12),dp(10),dp(12),dp(10));vq.setBackground(shape(surface,14));vq.setMaxWidth(dp(220));if(!mms)vq.setOnClickListener(v->{if(!busy)chooseVideoQuality();});
+            LinearLayout.LayoutParams vl=new LinearLayout.LayoutParams(-2,dp(72));vl.setMarginStart(dp(8));attachStrip.addView(vq,vl);}
+        updateComposeButton();}
     /** Opens an attached photo to draw on, add text to, or crop; the edited copy takes its place. */
     private void markUp(Outgoing o){if(o.sending)return;MarkupEditor.open(this,o.file,edited->{int i=outgoing.indexOf(o);if(i<0||o.sending){edited.delete();return;}
         String name=o.name.replaceAll("\\.[A-Za-z0-9]+$","")+".jpg";outgoing.set(i,new Outgoing(edited,name,"image/jpeg"));discardPicked(o);renderAttachments();});}
@@ -1763,12 +1808,12 @@ public class PairedActivity extends Activity {
      * which are cleared once saved (a resend of a failed message leaves your draft alone).
      */
     private void queueAttachments(JSONObject c,List<Outgoing> batch,String caption,String reply,String replaces,boolean fromComposer){
-        if(batch.isEmpty())return;String id=c.optString("conversationID"),quality=photoQuality();boolean mms=!PairedProtocol.rcs(c);
+        if(batch.isEmpty())return;String id=c.optString("conversationID"),quality=photoQuality(),videos=videoQuality();boolean mms=!PairedProtocol.rcs(c);
         for(Outgoing o:batch)o.sending=true;if(fromComposer){busy=true;if(composer!=null)composer.setEnabled(false);renderAttachments();}
         android.content.Context app=getApplicationContext();
         photoPreparation.execute(()->{List<Outgoing> saved=new ArrayList<>();String problem="";MediaOutbox box=new MediaOutbox(app);
             for(int i=0;i<batch.size();i++){Outgoing o=batch.get(i);try{
-                boolean fit=mms||o.small;String chosen=o.small?PhotoQuality.FAST:quality;PhotoPrep.Ready ready=(chosen+"|"+fit).equals(o.variant)?o.prepared:null;
+                boolean fit=mms||o.small;String chosen=o.small?PhotoQuality.FAST:o.mime.startsWith("video/")?videos:quality;PhotoPrep.Ready ready=(chosen+"|"+fit).equals(o.variant)?o.prepared:null;
                 if(ready!=null&&!ready.error.isEmpty())throw new java.io.IOException(ready.error);
                 box.enqueue(id,o.file,o.name,o.mime,i==batch.size()-1?caption:"",i==0?reply:"",chosen,fit,o.small,ready,i==0?replaces:"");saved.add(o);
             }catch(Exception e){problem=e.getMessage()==null?"The attachment couldn't be saved. Check free space.":e.getMessage();break;}}
@@ -2111,27 +2156,59 @@ public class PairedActivity extends Activity {
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Save this place").setView(box).setNegativeButton("Cancel",null).setPositiveButton("Next",null).create();
         dialog.setOnShowListener(x->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{String n=name.getText().toString().trim();if(n.isEmpty()){name.setError("Give it a name");return;}
             dialog.dismiss();arrivalDetails(id,Arrivals.savePlace(this,n,lat,lng),metersAway);}));dialog.show();name.requestFocus();}
+    /** When (arriving or leaving), what to say, once or every time, and an optional check-in time for arrivals. */
     private void arrivalDetails(String id,JSONObject place,double metersAway){String where=place.optString("name");LinearLayout box=vertical();box.setPadding(dp(20),dp(8),dp(20),0);
+        android.widget.RadioGroup when=new android.widget.RadioGroup(this);when.setOrientation(LinearLayout.HORIZONTAL);
+        android.widget.RadioButton arrive=new android.widget.RadioButton(this),leave=new android.widget.RadioButton(this);arrive.setText("When I arrive");leave.setText("When I leave");
+        for(android.widget.RadioButton r:new android.widget.RadioButton[]{arrive,leave}){r.setId(View.generateViewId());r.setTextColor(ink);when.addView(r,new LinearLayout.LayoutParams(0,-2,1));}
+        arrive.setChecked(true);box.addView(when);gap(box,6);
         EditText message=input("Message");message.setText(ArrivalPlan.defaultText(where));box.addView(message);
-        android.widget.CheckBox every=new android.widget.CheckBox(this);every.setText("Every time I arrive here");every.setTextColor(ink);LinearLayout.LayoutParams el=new LinearLayout.LayoutParams(-2,-2);el.topMargin=dp(8);box.addView(every,el);
-        TextView note=text("Just once lasts a day. Location stays on this phone; only the message is sent.",13,muted,false);note.setPadding(dp(4),dp(4),dp(4),0);box.addView(note);
-        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Text "+arrivalWho(id)+" at "+where).setView(box).setNegativeButton("Cancel",null).setPositiveButton("Turn on",null).create();
-        dialog.setOnShowListener(x->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{String text=message.getText().toString().trim();if(text.isEmpty()){message.setError("Write what to send");return;}dialog.dismiss();boolean repeat=every.isChecked();
-            java.util.function.Consumer<Double> start=away->{String state=ArrivalPlan.startState(away,ArrivalPlan.RADIUS_M);Arrivals.add(this,id,place,text,repeat,state);
-                toast(ArrivalPlan.AWAY_FIRST.equals(state)?"You're there now, so it'll text "+arrivalWho(id)+" the next time you arrive.":"It'll text "+arrivalWho(id)+" when you arrive at "+where+".");if(screen.equals("chat"))renderMessages(false);};
+        android.widget.CheckBox every=new android.widget.CheckBox(this);every.setText("Every time");every.setTextColor(ink);LinearLayout.LayoutParams el=new LinearLayout.LayoutParams(-2,-2);el.topMargin=dp(8);box.addView(every,el);
+        // Check-in: "if I'm not there by…", for a one-time arrival text.
+        android.widget.CheckBox check=new android.widget.CheckBox(this);check.setText("If I'm not there by…");check.setTextColor(ink);box.addView(check);
+        LinearLayout lateBox=vertical();lateBox.setVisibility(View.GONE);long[] deadline={0};
+        TextView time=text("Pick a time",16,chatSettings.theme(id).accent(dark),true);time.setPadding(dp(4),dp(6),dp(4),dp(10));pressable(time);lateBox.addView(time);
+        EditText late=input("Text if I'm late");late.setText(ArrivalPlan.defaultLateText(where));lateBox.addView(late);box.addView(lateBox);
+        Runnable pickTime=()->{java.util.Calendar soon=java.util.Calendar.getInstance();soon.add(java.util.Calendar.HOUR_OF_DAY,1);
+            new android.app.TimePickerDialog(this,(tp,h,m)->{deadline[0]=ArrivalPlan.deadline(System.currentTimeMillis(),java.util.TimeZone.getDefault(),h,m);
+                time.setText("By "+android.text.format.DateFormat.getTimeFormat(this).format(new java.util.Date(deadline[0]))+(deadline[0]-System.currentTimeMillis()>18*3_600_000L?" tomorrow":"")+" • change");},
+                soon.get(java.util.Calendar.HOUR_OF_DAY),0,android.text.format.DateFormat.is24HourFormat(this)).show();};
+        time.setOnClickListener(v->pickTime.run());
+        check.setOnCheckedChangeListener((cb,on)->{lateBox.setVisibility(on?View.VISIBLE:View.GONE);if(on&&deadline[0]==0)pickTime.run();});
+        TextView note=text("",13,muted,false);note.setPadding(dp(4),dp(4),dp(4),0);box.addView(note);
+        String[] lastDefault={message.getText().toString()};
+        Runnable sync=()->{boolean leaving=leave.isChecked(),repeat=every.isChecked();String fresh=leaving?ArrivalPlan.defaultLeaveText(where):ArrivalPlan.defaultText(where);
+            // Swap the suggested words when switching, unless you've written your own.
+            if(message.getText().toString().equals(lastDefault[0])){message.setText(fresh);lastDefault[0]=fresh;}
+            every.setText(leaving?"Every time I leave here":"Every time I arrive here");boolean checkIn=!leaving&&!repeat;check.setVisibility(checkIn?View.VISIBLE:View.GONE);if(!checkIn)check.setChecked(false);
+            note.setText((repeat?"Every time keeps going until you cancel it.":"Just once lasts a day.")+" Location stays on this phone; only the message is sent.");};
+        when.setOnCheckedChangeListener((g,c2)->sync.run());every.setOnCheckedChangeListener((cb,on)->sync.run());sync.run();
+        ScrollView sv=new ScrollView(this);sv.addView(box);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Text "+arrivalWho(id)+" • "+where).setView(sv).setNegativeButton("Cancel",null).setPositiveButton("Turn on",null).create();
+        dialog.setOnShowListener(x->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{String text=message.getText().toString().trim();if(text.isEmpty()){message.setError("Write what to send");return;}
+            boolean repeat=every.isChecked(),leaving=leave.isChecked(),checkIn=check.isChecked();String lateText=late.getText().toString().trim();
+            if(checkIn&&deadline[0]<=System.currentTimeMillis()){toast("Pick the time you'll be there by.");pickTime.run();return;}
+            if(checkIn&&lateText.isEmpty()){late.setError("Write what to send if you're late");return;}dialog.dismiss();
+            java.util.function.Consumer<Double> start=away->{String state=ArrivalPlan.startState(away,ArrivalPlan.RADIUS_M,leaving);
+                Arrivals.add(this,id,place,text,repeat,state,leaving,checkIn?deadline[0]:0,checkIn?lateText:"");String who=arrivalWho(id);
+                toast(leaving?(ArrivalPlan.AWAY_FIRST.equals(state)?"It'll text "+who+" when you leave "+where+", after you get there.":"It'll text "+who+" when you leave "+where+".")
+                    :ArrivalPlan.AWAY_FIRST.equals(state)?"You're there now, so it'll text "+who+" the next time you arrive.":"It'll text "+who+" when you arrive at "+where+(checkIn?", or at the check-in time if you're not there.":"."));
+                if(screen.equals("chat"))renderMessages(false);};
             if(metersAway>=0)start.accept(metersAway);
             else currentLocation(loc->start.accept(loc==null?-1:ArrivalPlan.meters(loc.getLatitude(),loc.getLongitude(),place.optDouble("lat"),place.optDouble("lng"))));}));
         dialog.show();}
     private void renderArrivals(ChatTheme theme){for(JSONObject a:Arrivals.forChat(this,chatId)){String id=a.optString("id");gap(items,8);
         LinearLayout line=row();line.setGravity(Gravity.END);TextView b=text(a.optString("text"),17,theme.onBubble(dark),false);b.setPadding(dp(16),dp(11),dp(16),dp(11));
         b.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));b.setBackground(shape(theme.bubble(dark),22));b.setAlpha(0.55f);line.addView(b);items.addView(line);
-        boolean away=ArrivalPlan.AWAY_FIRST.equals(a.optString("state"));
-        TextView s=text("🏁 Sends when you "+(away?"next ":"")+"arrive at "+a.optString("place")+(a.optBoolean("everyTime")?" • every time":"")+" • tap for options",12,muted,false);s.setGravity(Gravity.END);s.setPadding(0,dp(4),dp(6),0);items.addView(s,new LinearLayout.LayoutParams(-1,-2));
+        boolean away=ArrivalPlan.AWAY_FIRST.equals(a.optString("state")),leaving=Arrivals.leaving(a);String place=a.optString("place");
+        String when=leaving?"leave "+place+(away?" (after you get there)":""):(away?"next ":"")+"arrive at "+place;
+        String checkIn=a.optLong("deadline")<=0?"":a.optBoolean("lateSent")?" • late text sent":a.optLong("arrivedAt")>0?"":" • if you're not there by "+android.text.format.DateFormat.getTimeFormat(this).format(new java.util.Date(a.optLong("deadline")))+": “"+a.optString("lateText")+"”";
+        TextView s=text("🏁 Sends when you "+when+(a.optBoolean("everyTime")?" • every time":"")+checkIn+" • tap for options",12,muted,false);s.setGravity(Gravity.END);s.setPadding(0,dp(4),dp(6),0);items.addView(s,new LinearLayout.LayoutParams(-1,-2));
         View.OnClickListener act=v->menuSheet("Text on arrival",java.util.Arrays.asList("Cancel it"),java.util.Arrays.<Runnable>asList(()->{Arrivals.cancel(this,id);renderMessages(false);}));
         b.setOnClickListener(act);s.setOnClickListener(act);}}
     /** Settings: what's watching, and the places you've saved. */
     private void arrivalSettings(){List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
-        for(JSONObject a:Arrivals.all(this)){String id=a.optString("id");labels.add("🏁 "+arrivalWho(a.optString("chat"))+" at "+a.optString("place")+(a.optBoolean("everyTime")?" (every time)":"")+" • tap to cancel");actions.add(()->{Arrivals.cancel(this,id);toast("Canceled.");if(screen.equals("settings"))settings();});}
+        for(JSONObject a:Arrivals.all(this)){String id=a.optString("id");labels.add("🏁 "+arrivalWho(a.optString("chat"))+(Arrivals.leaving(a)?" when you leave ":" at ")+a.optString("place")+(a.optBoolean("everyTime")?" (every time)":"")+(a.optLong("deadline")>0?" (with check-in)":"")+" • tap to cancel");actions.add(()->{Arrivals.cancel(this,id);toast("Canceled.");if(screen.equals("settings"))settings();});}
         for(JSONObject p:Arrivals.places(this)){String n=p.optString("name");labels.add("📍 Forget "+n);actions.add(()->{Arrivals.removePlace(this,n);toast("Forgot "+n+".");if(screen.equals("settings"))settings();});}
         if(labels.isEmpty()){toast("Set one up from a chat: ⊕ › Text on arrival.");return;}menuSheet("Text on arrival",labels,actions);}
     private void renderScheduled(ChatTheme theme){for(JSONObject o:Scheduled.forChat(this,chatId)){String id=o.optString("id");gap(items,8);
@@ -2971,6 +3048,7 @@ public class PairedActivity extends Activity {
 
         LinearLayout chats=settingsGroup(content,"Chats");
         settingRow(chats,"Photo quality","Photos prepare on this phone while you type",PhotoQuality.label(photoQuality()),this::choosePhotoQuality);
+        settingRow(chats,"Video quality",VideoPlan.describe(videoQuality()),PhotoQuality.label(videoQuality()),this::chooseVideoQuality);
         int arrivals=Arrivals.all(this).size(),places=Arrivals.places(this).size();
         settingRow(chats,"Text on arrival","Texts someone when you get to a place you pick (set it up from a chat's ⊕)",arrivals>0?arrivals+" on":places>0?places+(places==1?" place":" places"):"Off",this::arrivalSettings);
         settingRow(chats,"Saved attachments","Queued photos and videos survive closing the app; unconfirmed sends wait for review",String.valueOf(new MediaOutbox(this).all().size()),this::savedAttachments);

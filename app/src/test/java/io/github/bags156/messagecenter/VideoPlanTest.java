@@ -95,4 +95,36 @@ public class VideoPlanTest {
         VideoPlan c = a.smaller(m, true, 3_800_000L);
         assertTrue(c.videoBitrate < a.videoBitrate / 4); assertTrue(c.videoBitrate >= VideoPlan.MMS_LEAST);
     }
+
+    @Test public void fastKeepsVideosAt720p() {
+        VideoPlan p = VideoPlan.of(video(3840, 2160, 30, 60, 400_000_000L, "video/hevc", "audio/mp4a-latm", false), false, PhotoQuality.FAST);
+        assertEquals(720, p.shortSide); assertEquals(VideoPlan.rcsBitrate(720), p.videoBitrate);
+        // A sensible 1080p clip still comes down to 720p.
+        assertEquals(720, VideoPlan.of(video(1920, 1080, 30, 20, 15_000_000L, "video/avc", "audio/mp4a-latm", false), false, PhotoQuality.FAST).shortSide);
+        // Picture messages don't change.
+        VideoPlan.Source m = video(1920, 1080, 30, 10, 20_000_000L, "video/avc", "audio/mp4a-latm", false);
+        assertEquals(VideoPlan.of(m, true).toString(), VideoPlan.of(m, true, PhotoQuality.FAST).toString());
+    }
+
+    @Test public void fullSendsTheOriginalWhenItFits() {
+        // Even HEVC or HDR: Full means the original.
+        assertTrue(VideoPlan.of(video(3840, 2160, 60, 20, 90_000_000L, "video/hevc", "audio/mp4a-latm", true), false, PhotoQuality.FULL).asIs);
+        // Too big for RCS: sharp 1080p at twice Standard's bitrate.
+        VideoPlan p = VideoPlan.of(video(3840, 2160, 60, 60, 420_000_000L, "video/hevc", "audio/mp4a-latm", true), false, PhotoQuality.FULL);
+        assertFalse(p.asIs); assertEquals(1080, p.shortSide); assertEquals(10_000_000, p.videoBitrate);
+        assertTrue((p.videoBitrate + 256_000L) * 60 / 8 <= VideoPlan.RCS_BUDGET);
+        // Longer: it stays 1080p with as much as fits, never worse than Standard.
+        VideoPlan q = VideoPlan.of(video(3840, 2160, 30, 120, 800_000_000L, "video/hevc", "audio/mp4a-latm", false), false, PhotoQuality.FULL);
+        VideoPlan std = VideoPlan.of(video(3840, 2160, 30, 120, 800_000_000L, "video/hevc", "audio/mp4a-latm", false), false);
+        assertEquals(1080, q.shortSide); assertTrue(q.videoBitrate >= std.videoBitrate);
+        assertTrue((q.videoBitrate + 256_000L) * 120 / 8 <= VideoPlan.RCS_BUDGET);
+        // Picture messages still squeeze under 1 MB.
+        assertFalse(VideoPlan.of(video(1920, 1080, 30, 10, 20_000_000L, "video/avc", "audio/mp4a-latm", false), true, PhotoQuality.FULL).asIs);
+    }
+
+    @Test public void standardIsTheDefault() {
+        VideoPlan.Source s = video(3840, 2160, 60, 60, 420_000_000L, "video/hevc", "audio/mp4a-latm", true);
+        assertEquals(VideoPlan.of(s, false).toString(), VideoPlan.of(s, false, PhotoQuality.STANDARD).toString());
+        assertEquals(VideoPlan.of(s, false).toString(), VideoPlan.of(s, false, "").toString());
+    }
 }
