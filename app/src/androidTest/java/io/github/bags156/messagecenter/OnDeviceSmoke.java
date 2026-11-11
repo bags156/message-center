@@ -148,6 +148,45 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(MarkupEditor.shown==null,"Markup editor didn't close after saving");
         saved[0].delete();photo.delete();}
     /** Battery: how long a full redraw of a busy 300-message chat takes (median of five), for comparing versions. */
+    /** Runs action on the main thread and waits for the frame it causes to be drawn; the time from start to that frame, in ms. */
+    private long untilDrawn(Activity a,Runnable action)throws Exception{java.util.concurrent.CountDownLatch drawn=new java.util.concurrent.CountDownLatch(1);long[] at=new long[2];
+        runOnMainSync(()->{android.view.View decor=a.getWindow().getDecorView();at[0]=System.nanoTime();action.run();
+            decor.getViewTreeObserver().registerFrameCommitCallback(()->{at[1]=System.nanoTime();drawn.countDown();});decor.invalidate();});
+        check(drawn.await(20,java.util.concurrent.TimeUnit.SECONDS),"No frame was drawn after opening or leaving a chat");waitForIdleSync();return (at[1]-at[0])/1_000_000;}
+    /**
+     * Opening a busy chat from a full inbox and going back, timed to the first frame drawn, with
+     * where the time went. The inbox has 120 chats (80 with full-size contact photos, 40 groups).
+     */
+    private String measureOpenAndBack(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();
+        SessionVault vault=new SessionVault(ctx);vault.save("synthetic session for the speed check only");
+        android.graphics.Bitmap face=android.graphics.Bitmap.createBitmap(900,900,android.graphics.Bitmap.Config.ARGB_8888);android.graphics.Canvas cv=new android.graphics.Canvas(face);
+        android.graphics.Paint paint=new android.graphics.Paint();for(int y=0;y<900;y+=6){paint.setColor(0xff000000|(y*37%256)<<16|(y*11%256)<<8|(y*5%256));cv.drawRect(0,y,900,y+6,paint);}
+        java.io.ByteArrayOutputStream jpeg=new java.io.ByteArrayOutputStream();face.compress(android.graphics.Bitmap.CompressFormat.JPEG,90,jpeg);
+        long newest=1794300000000000L;java.util.List<java.io.File> made=new java.util.ArrayList<>();Avatars.dir(ctx).mkdirs();
+        try(PairedStore store=new PairedStore(ctx)){
+            for(int i=0;i<120;i++){boolean group=i%3==2;StringBuilder people=new StringBuilder("{ID:{participantID:'me',number:'+15550000000'},isMe:true}");
+                for(int k=0;k<(group?4:1);k++){String pid="sp"+i+"_"+k;people.append(",{ID:{participantID:'").append(pid).append("',number:'+1555").append(String.format(java.util.Locale.ROOT,"%07d",i*10+k)).append("'},fullName:'Person ").append(i).append('-').append(k).append("'}");
+                    java.io.File f=Avatars.phoneFile(ctx,pid);try(java.io.FileOutputStream out=new java.io.FileOutputStream(f)){out.write(jpeg.toByteArray());}made.add(f);}
+                store.chat(new JSONObject("{conversationID:'speed"+i+"',name:'"+(group?"Group ":"Person ")+i+"',type:'RCS',isGroupChat:"+group+",lastMessageTimestamp:"+(newest-i*600_000_000L)
+                    +",latestMessage:{displayContent:'See you at the game tonight, I will bring the snacks'},participants:["+people+"]}"));}
+            String[] kinds={"Sounds good, see you then","Call me at (479) 555-0134 when you land, the gate code is 4417","Meet at 123 Main St, Bentonville, AR 72712 on Friday at 6",
+                "Here's the link https://example.com/menu and the other one www.example.org/hours","Your package 1Z999AA10123456784 is out for delivery, flight AA 1234 lands at 7:45 PM",
+                "Haha yes!! 😂😂","Can you grab milk and eggs on the way home? Also bread if they have the good kind"};
+            for(int i=0;i<300;i++){boolean mine=i%3==0;store.message(new JSONObject().put("messageID","speedmsg"+i).put("conversationID","speed0").put("participantID",mine?"me":"sp0_0").put("timestamp",newest-(300-i)*300_000_000L)
+                .put("messageStatus",new JSONObject().put("status",mine?"OUTGOING_DELIVERED":"INCOMING_COMPLETE"))
+                .put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content",kinds[i%kinds.length])))),0,true);}}
+        java.lang.reflect.Method open=PairedActivity.class.getDeclaredMethod("thread",String.class),back=PairedActivity.class.getDeclaredMethod("inbox");open.setAccessible(true);back.setAccessible(true);
+        Runnable toChat=()->{try{open.invoke(a,"speed0");}catch(Exception e){throw new RuntimeException(e);}},toInbox=()->{try{back.invoke(a);}catch(Exception e){throw new RuntimeException(e);}};
+        String result;
+        try{untilDrawn(a,toInbox);
+            // The first time pays for decoding photos; after that, what you'd feel opening and closing chats.
+            long firstOpen=untilDrawn(a,toChat),firstBack=untilDrawn(a,toInbox);
+            Perf.clear();Perf.on=true;long[] opens=new long[5],backs=new long[5];
+            for(int r=0;r<5;r++){opens[r]=untilDrawn(a,toChat);backs[r]=untilDrawn(a,toInbox);}
+            Perf.on=false;java.util.Arrays.sort(opens);java.util.Arrays.sort(backs);
+            result="open chat "+firstOpen+" ms first, "+opens[2]+" ms after; back to inbox "+firstBack+" ms first, "+backs[2]+" ms after [where: "+Perf.report(5)+"]";}
+        finally{Perf.on=false;vault.clear();try(PairedStore store=new PairedStore(ctx)){for(int i=0;i<120;i++)store.deleteChat("speed"+i);}for(java.io.File f:made)f.delete();onMain(a,"inbox");}
+        return result;}
     private String measureRedraw()throws Exception{
         try(PairedStore store=new PairedStore(getTargetContext())){
             store.chat(new JSONObject("{conversationID:'perf',name:'Speed test',type:'RCS',lastMessageTimestamp:1794100000000000,participants:["
@@ -821,6 +860,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkVideoPrep();
         checkArrivalTexts();
         checkMarkup((PairedActivity)activity);
+        String openAndBack=measureOpenAndBack((PairedActivity)activity);
         String speed=measureRedraw();
         try(PairedStore store=new PairedStore(getTargetContext())){store.clear();}
         Outbox box=new Outbox(getTargetContext());for(JSONObject o:box.all())box.remove(o.optString("id"));
@@ -831,6 +871,6 @@ public final class OnDeviceSmoke extends Instrumentation {
         new ChatSettings(getTargetContext()).setBackground("smoke","");
         checkNotificationPrivacy();
         checkBubbleStepsAside();
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }

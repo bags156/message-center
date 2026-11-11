@@ -204,7 +204,7 @@ public class PairedActivity extends Activity {
         receiptStatusView=null;
         // Screenshots are always allowed (an older version could leave them blocked after signing in).
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);if(!name.equals("login"))setRecentsScreenshotEnabled(true);
-        if(recorder!=null)cancelRecording();if(dictation!=null)stopDictation();recordBar=null;composeRow=null;sendButton=null;recordClock=null;recordWave=null;recordDot=null;screen=name;reportChatOnScreen();batteryCard=null;jumpButton=null;statusView=null;statusRow=null;reconnectButton=null;receiptsMark=null;composer=null;items=null;scroll=null;searchRow=null;attachStrip=null;attachScroll=null;replyPanel=null;typingRow=null;messageViews.clear();bubbleViews.clear();playing=null;voiceCards.clear();voiceOrder.clear();ui.removeCallbacks(typingTick);if(typingPulse!=null){typingPulse.cancel();typingPulse=null;}
+        if(recorder!=null)cancelRecording();if(dictation!=null)stopDictation();recordBar=null;composeRow=null;sendButton=null;recordClock=null;recordWave=null;recordDot=null;screen=name;long perfBubbles=Perf.start();reportChatOnScreen();Perf.end("screen: bubbles",perfBubbles);batteryCard=null;jumpButton=null;statusView=null;statusRow=null;reconnectButton=null;receiptsMark=null;composer=null;items=null;scroll=null;searchRow=null;attachStrip=null;attachScroll=null;replyPanel=null;typingRow=null;messageViews.clear();bubbleViews.clear();playing=null;voiceCards.clear();voiceOrder.clear();ui.removeCallbacks(typingTick);if(typingPulse!=null){typingPulse.cancel();typingPulse=null;}
         dark=(getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;
         textScale=getSharedPreferences("paired",MODE_PRIVATE).getFloat("text_scale",1f);quickRow=null;quickScroll=null;searchChips=null;selecting=false;chosen.clear();selectionBar=null;chatFrame=null;
         int[] colors=palette(dark,dark&&"black".equals(getSharedPreferences("paired",MODE_PRIVATE).getString("theme","system")));
@@ -330,7 +330,7 @@ public class PairedActivity extends Activity {
     }
 
     // ---- Inbox ----
-    private void inbox(){if(bubble()){if(!chatId.isEmpty())thread(chatId);else finish();return;}remember();chatId="";replyId="";base("inbox");searchedFor="";
+    private void inbox(){if(bubble()){if(!chatId.isEmpty())thread(chatId);else finish();return;}long perfAll=Perf.start(),perf=perfAll;remember();chatId="";replyId="";base("inbox");searchedFor="";Perf.end("inbox: base",perf);perf=Perf.start();
         if(folder!=1){unknownOnly=false;promoOnly=false;needsReplyOnly=false;}
         LinearLayout bar=row();TextView title=text(folder==2?"Archived":folder==3?"Blocked & spam":unknownOnly?"Unknown senders":promoOnly?"Promotions":needsReplyOnly?"Needs a reply":"Messages",26,ink,false);title.setPadding(dp(folder!=1||unknownOnly||promoOnly||needsReplyOnly?8:4),0,0,0);
         if(folder!=1||unknownOnly||promoOnly||needsReplyOnly)bar.addView(icon(R.drawable.ic_back,ink,"Back",()->{folder=1;unknownOnly=false;promoOnly=false;needsReplyOnly=false;inbox();}));
@@ -365,8 +365,8 @@ public class PairedActivity extends Activity {
         FrameLayout.LayoutParams fl=new FrameLayout.LayoutParams(-2,dp(56),Gravity.BOTTOM|Gravity.END);fl.setMargins(0,0,dp(16),dp(16));frame.addView(start,fl);
         // Back from a chat (or Settings): the same rows in view, or the top if you replied (that chat moved up).
         if(inboxScrollY>0&&inboxKey.equals(inboxKey())&&!repliedSinceInbox){inboxRestore=inboxBack;inboxRestoreY=inboxScrollY;}
-        inboxBack=null;inboxScrollY=-1;repliedSinceInbox=false;
-        renderInbox();refreshInbox(false);
+        inboxBack=null;inboxScrollY=-1;repliedSinceInbox=false;Perf.end("inbox: screen",perf);
+        renderInbox();refreshInbox(false);Perf.end("inbox: total",perfAll);
     }
     private int inboxScrollY=-1;private String inboxKey="";private boolean repliedSinceInbox;
     // ---- Inbox: the rows you're looking at stay still when the list changes around them ----
@@ -424,7 +424,7 @@ public class PairedActivity extends Activity {
         boolean same=inboxKey().equals(drawnInboxKey);drawnInboxKey=inboxKey();List<RowSpot> keep=same?inboxSpotNow():null;int fallbackY=0;
         if(inboxPlacing!=null){scroll.getViewTreeObserver().removeOnPreDrawListener(inboxPlacing);inboxPlacing=null;}
         if(inboxRestoreY>0){keep=inboxRestore;fallbackY=inboxRestoreY;inboxRestore=null;inboxRestoreY=0;}
-        items.removeAllViews();
+        long perf=Perf.start();items.removeAllViews();Perf.end("inbox: clear",perf);perf=Perf.start();
         SmartText.Search filtered=SmartText.parseSearch(query);boolean filtering=SmartText.hasFilters(filtered);
         List<JSONObject> chats=filtering?new ArrayList<>():InboxOrder.sort(store.chats(query,folder),chatSettings::pinned);
         if(needsReplyOnly)chats.removeIf(c->!needsReply(c));
@@ -436,6 +436,7 @@ public class PairedActivity extends Activity {
         else if(folder==1&&!unknownOnly&&!needsReplyOnly&&query.trim().isEmpty()&&promotionsSeparate()){for(JSONObject c:chats)if(promotion(c))promos.add(c);chats.removeAll(promos);}
         if(chats.isEmpty()&&promos.isEmpty()&&!filtering){TextView empty=text(PairedService.ready()?(query.isEmpty()?(needsReplyOnly?"All caught up in your synced conversations.":promoOnly?"No promotions.":"No conversations here yet."):"No chats with that name."):"Your conversations will appear once the connection is ready.",15,muted,false);
             empty.setGravity(Gravity.CENTER);empty.setPadding(dp(24),dp(48),dp(24),dp(24));items.addView(empty);}
+        Perf.end("inbox: read",perf);perf=Perf.start();
         if(autoReplyActive())items.addView(autoReplyBanner());
         // Pinned chats sit in a grid at the top (three across), like iPhone Messages; the rest are rows.
         boolean grid=folder==1&&!unknownOnly&&!needsReplyOnly&&query.trim().isEmpty();List<JSONObject> pins=new ArrayList<>();
@@ -443,16 +444,16 @@ public class PairedActivity extends Activity {
         if(!pins.isEmpty()){View g=pinnedGrid(pins);g.setTag(R.id.chat_row,"\npinned");items.addView(g);}
         if(!promos.isEmpty())items.addView(promotionsRow(promos));
         for(JSONObject c:chats)if(pins.isEmpty()||!chatSettings.pinned(c)){View row=swipeableChat(c);row.setTag(R.id.chat_row,c.optString("conversationID"));row.setTag(R.id.chat_time,PairedProtocol.time(c));items.addView(row);}
-        renderMessageHits();
+        Perf.end("inbox: rows",perf);perf=Perf.start();renderMessageHits();
         String note=store.page("folder:"+folder,true);if(!chats.isEmpty()&&store.page("folder:"+folder,false).isEmpty()&&!note.isEmpty()){TextView end=text(note,12,muted,false);end.setGravity(Gravity.CENTER);end.setPadding(dp(16),dp(16),dp(16),dp(8));items.addView(end);}
         requestPhotos(chats);
-        if(keep!=null||fallbackY>0)placeInbox(keep==null?new ArrayList<>():keep,fallbackY);
+        if(keep!=null||fallbackY>0)placeInbox(keep==null?new ArrayList<>():keep,fallbackY);Perf.end("inbox: rest",perf);
     }
     private View inboxRow(JSONObject c){
         String id=c.optString("conversationID");boolean unread=chatSettings.unread(c),pinned=chatSettings.pinned(c);String draft=drafts.getOrDefault(id,"").trim();
         LinearLayout entry=row();entry.setPadding(dp(4),dp(9),dp(4),dp(9));entry.setGravity(Gravity.CENTER_VERTICAL);
         pressable(entry);
-        entry.addView(avatar(c,46));
+        long perf=Perf.start();entry.addView(avatar(c,46));Perf.end("row: photo",perf);perf=Perf.start();
         LinearLayout middle=vertical();middle.setPadding(dp(14),0,dp(8),0);
         TextView title=text(PairedProtocol.title(c),16,ink,unread);title.setTextSize(16.5f*textScale);title.setSingleLine(true);title.setEllipsize(TextUtils.TruncateAt.END);middle.addView(title);
         String snippet=Effects.preview(ChatText.withoutMediaEmoji(PairedProtocol.string(c.optJSONObject("latestMessage"),"displayContent")));boolean[] mine={PairedProtocol.latestFromMe(c)};
@@ -460,7 +461,7 @@ public class PairedActivity extends Activity {
         if(snippet.isEmpty()){JSONObject last=latestStored(id);if(last!=null)snippet=previewOf(last,c,mine);}
         // Google's preview of an iPhone reaction is its raw text ("❤️ to “…”"); show it as "Michael reacted ❤️ to “…”".
         else if(ChatText.tapback(snippet)!=null){String line=ChatText.reactionLine(mine[0]?"You":latestSenderFirst(c),snippet);if(line!=null){snippet=line;mine[0]=false;}}
-        boolean placeholder=snippet.isEmpty()&&draft.isEmpty();if(placeholder){snippet="Open to load messages";mine[0]=false;}
+        boolean placeholder=snippet.isEmpty()&&draft.isEmpty();if(placeholder){snippet="Open to load messages";mine[0]=false;}Perf.end("row: preview",perf);
         if(!draft.isEmpty())snippet="You: "+draft;else if(mine[0]&&!snippet.isEmpty())snippet="You: "+snippet;
         TextView preview=text(snippet,14,unread?ink:muted,unread);preview.setTextSize(14*textScale);preview.setMaxLines(2);preview.setEllipsize(TextUtils.TruncateAt.END);
         if(!draft.isEmpty()||placeholder)preview.setTypeface(Typeface.create(Typeface.DEFAULT,Typeface.ITALIC));
@@ -647,7 +648,7 @@ public class PairedActivity extends Activity {
         PairedService.loadChats(cursor,selected,(v,e)->{busy=false;if(!e.isEmpty()&&!more)toast(e);if(screen.equals("inbox"))renderInbox();});}
 
     // ---- Conversation ----
-    private void thread(String id){
+    private void thread(String id){long perfAll=Perf.start(),perf=perfAll;
         if(!id.equals(chatId))stopInline();
         Spot back=(screen.equals("details")||backFromSaved)&&id.equals(backChat)?backSpot:null;backChat="";backSpot=null;backFromSaved=false;
         // Opening a chat with unread messages: remember where they start, for the "New messages" line.
@@ -721,9 +722,10 @@ public class PairedActivity extends Activity {
             if(box.getMaxHeight()!=most)box.post(()->box.setMaxHeight(most));});
         sendButton=new ImageView(this);sendButton.setImageResource(R.drawable.ic_send);sendButton.setImageTintList(ColorStateList.valueOf(theme.onAccent(dark)));sendButton.setBackground(oval(theme.accent(dark)));
         sendButton.setPadding(dp(14),dp(14),dp(14),dp(14));sendButton.setContentDescription("Send");sendButton.setOnClickListener(v->sendOrRecord());sendButton.setOnLongClickListener(v->{if(micShowing())startRecording();else if(dictation==null)scheduleMessage();return true;});
-        LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(dp(52),dp(52));sl.setMarginStart(dp(8));compose.addView(sendButton,sl);root.addView(compose);renderAttachments();updateComposeButton();applyIncoming();
-        chatSettings.setMarkedUnread(id,false);if(!bubble())PairedService.clearNotification(this,id);if(back!=null){restoreSpot=back;renderMessages(false);}else renderMessages(true);if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();
-        if(c!=null)requestPhotos(java.util.Collections.singletonList(c));
+        LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(dp(52),dp(52));sl.setMarginStart(dp(8));compose.addView(sendButton,sl);root.addView(compose);renderAttachments();updateComposeButton();applyIncoming();Perf.end("open: screen",perf);
+        perf=Perf.start();chatSettings.setMarkedUnread(id,false);if(!bubble())PairedService.clearNotification(this,id);Perf.end("open: notification",perf);
+        if(back!=null){restoreSpot=back;renderMessages(false);}else renderMessages(true);perf=Perf.start();if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();
+        if(c!=null)requestPhotos(java.util.Collections.singletonList(c));Perf.end("open: after",perf);Perf.end("open: total",perfAll);
     }
     private void chatMenu(View anchor){JSONObject c=store.chat(chatId);if(c==null)return;PopupMenu menu=new PopupMenu(this,anchor);Menu m=menu.getMenu();
         m.add(0,1,0,chatSettings.pinned(c)?"Unpin":"Pin to top");m.add(0,2,1,"Theme & background");
@@ -823,7 +825,7 @@ public class PairedActivity extends Activity {
             ValueAnimator a=ValueAnimator.ofFloat(blur,0f);a.setDuration(420);a.addUpdateListener(x->{float r=(float)x.getAnimatedValue();content.setRenderEffect(r<0.5f?null:android.graphics.RenderEffect.createBlurEffect(r,r,android.graphics.Shader.TileMode.DECAL));});
             a.addListener(new android.animation.AnimatorListenerAdapter(){@Override public void onAnimationEnd(android.animation.Animator an){content.setRenderEffect(null);}});a.start();box.postDelayed(later,INK_SHOWN_MS);});
         cover.setOnLongClickListener(v->{messageSheet(m);return true;});return box;}
-    private void renderMessages(boolean bottom){if(items==null||!screen.equals("chat"))return;refreshSavedAttachments();voiceCards.clear();voiceOrder.clear();
+    private void renderMessages(boolean bottom){if(items==null||!screen.equals("chat"))return;long perfAll=Perf.start(),perf=perfAll;refreshSavedAttachments();voiceCards.clear();voiceOrder.clear();
         ScrollView sv=scroll;View content=sv.getChildAt(0);int y,before;boolean atBottom;Spot spot;
         // If the last redraw hasn't been laid out yet, its new views have no positions; keep aiming where it was aiming.
         if(placing!=null&&placingIn==sv){sv.getViewTreeObserver().removeOnPreDrawListener(placing);placing=null;y=placeY;before=placeBefore;atBottom=bottom||placeBottom;spot=atBottom?null:placeSpot;}
@@ -831,7 +833,7 @@ public class PairedActivity extends Activity {
         boolean restoring=restoreSpot!=null&&!bottom;if(restoreSpot!=null){if(!bottom){spot=restoreSpot;atBottom=false;}restoreSpot=null;}
         placeY=y;placeBefore=before;placeBottom=atBottom;placeSpot=spot;
         boolean toBottom=atBottom;String keepId=spot==null?null:spot.id;int keepOffset=spot==null?0:spot.offset;
-        items.removeAllViews();unreadDivider=null;inlineSeen=false;
+        items.removeAllViews();unreadDivider=null;inlineSeen=false;Perf.end("messages: clear",perf);perf=Perf.start();
         JSONObject c=store.chat(chatId);ChatTheme theme=chatSettings.theme(chatId);boolean group=c!=null&&PairedProtocol.other(c)==null;
         List<JSONObject> messages=new ArrayList<>();for(JSONObject m:store.messages(chatId,limit))if(!PairedProtocol.body(m).isEmpty()||!PairedProtocol.event(m,c).isEmpty()||!PairedProtocol.effect(m).isEmpty())messages.add(m);
         moreSaved=messages.size()>=limit-5;if(moreSaved)items.addView(button("Show more saved messages",false,()->{limit+=WINDOW;renderMessages(false);}));
@@ -839,6 +841,7 @@ public class PairedActivity extends Activity {
         tapbacks=new HashMap<>();messages=placeTapbacks(messages,tapbacks);
         if(messages.isEmpty()){TextView empty=text(PairedService.ready()?"No messages have synced for this conversation yet.":"Messages will appear once the connection is ready.",14,muted,false);empty.setGravity(Gravity.CENTER);empty.setPadding(dp(24),dp(48),dp(24),dp(24));items.addView(empty);}
         else if(store.page("messages:"+chatId,false).isEmpty()&&!store.page("messages:"+chatId,true).isEmpty()){TextView end=text(store.page("messages:"+chatId,true),12,muted,false);end.setGravity(Gravity.CENTER);end.setPadding(dp(16),dp(8),dp(16),dp(8));items.addView(end);}
+        Perf.end("messages: read",perf);perf=Perf.start();
         int n=messages.size();boolean[] out=new boolean[n],replyTo=new boolean[n],reacted=new boolean[n];String[] who=new String[n],line=new String[n],ev=new String[n];long[] at=new long[n];
         for(int i=0;i<n;i++){JSONObject m=messages.get(i);out[i]=PairedProtocol.outgoing(m,c);who[i]=out[i]?"":m.optString("participantID");at[i]=PairedProtocol.time(m);
             line[i]=ChatText.reactionLine(out[i]?"You":senderFirst(m,c),PairedProtocol.body(m));
@@ -857,7 +860,7 @@ public class PairedActivity extends Activity {
         JSONObject receipt=chatSettings.receipts(chatId)?new ReadReceiptQueue(this).get(chatId):null;
         // Link previews open the page, which tells its owner you looked; only do that for people you know or have written to.
         boolean wrote=false;for(boolean o:out)wrote|=o;chatTrusted=c!=null&&(PairedProtocol.allKnown(c)||wrote);
-        TimeZone zone=TimeZone.getDefault();String[] screenEffect=null;
+        TimeZone zone=TimeZone.getDefault();String[] screenEffect=null;Perf.end("messages: prepare",perf);perf=Perf.start();
         for(int i=0;i<n;i++){JSONObject m=messages.get(i);String mid=m.optString("messageID");boolean isNew=motionSeen.add(mid);
             boolean sep=InboxOrder.separator(i==0?0:at[i-1],at[i],zone);
             if(sep){TextView s=text(separatorStamp(at[i]),13,muted,false);s.setGravity(Gravity.CENTER);s.setPadding(0,dp(i==0?8:20),0,dp(10));items.addView(s,new LinearLayout.LayoutParams(-1,-2));}
@@ -893,6 +896,7 @@ public class PairedActivity extends Activity {
             if(!out[i]&&receipt!=null&&receipt.optString("messageID").equals(m.optString("messageID"))){View read=readLine(receipt);if(read!=null)items.addView(read,new LinearLayout.LayoutParams(-1,-2));}
             if(i==lastOut||(out[i]&&PairedProtocol.failed(m)))items.addView(statusRow(m,theme));
         }
+        Perf.end("messages: bubbles",perf);perf=Perf.start();
         renderOutbox(theme);renderPendingMedia(theme);renderScheduled(theme);renderArrivals(theme);if(inline!=null&&!inlineSeen)stopInline();
         int pendingHere=0;for(PendingMedia p:pendingMedia)if(p.chat.equals(chatId))pendingHere++;motionOutboxBefore=outbox.forChat(chatId).size()+pendingHere;
         watchSending(messages,c);
@@ -913,7 +917,7 @@ public class PairedActivity extends Activity {
                 // Going back to a message that isn't loaded any more: the newest is a better guess than the top.
                 if(!found&&restoring){sv.scrollTo(0,sv.getChildAt(0).getHeight());pinnedBottom=true;}else{moveTo(sv,found?Math.max(0,again.getTop()-keepOffset):y);pinnedBottom=sv.getChildAt(0).getHeight()-sv.getHeight()-sv.getScrollY()<dp(80);updateJumpButton();}}
             keepSpot=pinnedBottom?null:spotAt(sv.getScrollY());return true;};
-        placing=once[0];placingIn=sv;sv.getViewTreeObserver().addOnPreDrawListener(once[0]);
+        placing=once[0];placingIn=sv;sv.getViewTreeObserver().addOnPreDrawListener(once[0]);Perf.end("messages: rest",perf);Perf.end("messages: total",perfAll);
     }
     /** A message's reactions, including iPhone reactions that came as text and were placed on it. */
     private List<String[]> reactorsOf(JSONObject m){List<String[]> all=PairedProtocol.reactors(m),more=tapbacks.get(m.optString("messageID"));
