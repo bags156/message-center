@@ -11,6 +11,8 @@ import android.view.ScaleGestureDetector;
 import android.widget.ImageView;
 
 /** An image that fits the screen and can be pinched, double-tapped, and dragged; when not zoomed, swipe sideways for the next one. */
+// The app uses the platform Material theme and Activity, not AppCompat's widget inflater.
+@SuppressLint("AppCompatCustomView")
 final class ZoomImageView extends ImageView {
     private final Matrix matrix = new Matrix();
     private final ScaleGestureDetector scaler;
