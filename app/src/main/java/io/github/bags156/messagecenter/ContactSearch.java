@@ -30,6 +30,19 @@ final class ContactSearch {
         return -1;
     }
 
+    /** A "name" that's really just a phone number (or nothing): such people sort after everyone with a name. */
+    static boolean numberLike(String name) {
+        if (name == null) return true;
+        String t = name.trim();
+        return t.isEmpty() || t.matches("[+\\d\\s().\\-\u202a\u202c]+");
+    }
+
+    /** The same phone number written different ways ("+1 555…", "(555)…") gives the same key: its last 10 digits. */
+    static String key(String number) {
+        String d = number == null ? "" : number.replaceAll("\\D", "");
+        return d.length() > 10 ? d.substring(d.length() - 10) : d;
+    }
+
     private static boolean wordStarts(String name, String query) {
         for (int i = 1; i < name.length(); i++) {
             char before = name.charAt(i - 1);

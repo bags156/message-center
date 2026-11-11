@@ -354,6 +354,41 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(VideoPrep.prepare(getTargetContext(),src,"notes.pdf","application/pdf",false,null).file==src,"A file that isn't a video was touched");
         src.delete();
         android.util.Log.i("OnDeviceSmoke","Video prep: RCS took "+rcsMs+" ms, progress seen "+seen[0]);}
+    /** A poll shows as a results card with the votes tallied from replies; votes become quiet lines. */
+    private void checkPolls()throws Exception{
+        String poll=Polls.compose("Dinner Friday?",java.util.Arrays.asList("Tacos","Pizza"));long t=1794006000000000L;
+        try(PairedStore store=new PairedStore(getTargetContext())){
+            store.chat(new JSONObject("{conversationID:'pollchat',name:'Poll group',isGroupChat:true,type:'RCS',lastMessageTimestamp:"+(t+3_000_000)+",participants:["
+                +"{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'p1',number:'+15550102000'},fullName:'Daniel Example'},{ID:{participantID:'p2',number:'+15550103000'},fullName:'Sam Example'}]}"));
+            store.message(new JSONObject().put("messageID","poll1").put("conversationID","pollchat").put("participantID","me").put("timestamp",t).put("messageStatus",new JSONObject().put("status","OUTGOING_DELIVERED"))
+                .put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content",poll)))),0,true);
+            String[][] votes={{"v1","p1","2"},{"v2","p2","tacos"},{"v3","p2","2 (Pizza)"}};
+            for(int i=0;i<votes.length;i++)store.message(new JSONObject().put("messageID",votes[i][0]).put("conversationID","pollchat").put("participantID",votes[i][1]).put("timestamp",t+(i+1)*1_000_000L)
+                .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content",votes[i][2])))),0,true);}
+        PairedActivity reader=(PairedActivity)startActivitySync(new Intent(getTargetContext(),BubbleActivity.class).setAction(Intent.ACTION_VIEW).putExtra("chat","pollchat").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        waitForIdleSync();java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();android.view.View decor=reader.getWindow().getDecorView();
+        decor.findViewsWithText(found,"Dinner Friday?",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.size()==1,"The poll isn't shown as a card ("+found.size()+")");found.clear();
+        decor.findViewsWithText(found,"Pizza, 2 votes",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);check(found.size()==1,"Sam's changed vote and Daniel's vote weren't counted for Pizza");found.clear();
+        decor.findViewsWithText(found,"Tacos, 0 votes",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);check(found.size()==1,"A changed vote still counts for the old option");found.clear();
+        decor.findViewsWithText(found,"Daniel voted for Pizza",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.size()==1,"A vote isn't shown as a quiet line");found.clear();
+        decor.findViewsWithText(found,"Reply with a number to vote.",android.view.View.FIND_VIEWS_WITH_TEXT);check(found.isEmpty(),"The poll's plain text is still shown");found.clear();
+        reader.finish();waitForIdleSync();
+        try(PairedStore store=new PairedStore(getTargetContext())){store.deleteChat("pollchat");}}
+    /** Text on arrival: sends once on arriving (through the outbox), waits for you to leave first when you're already there, and repeats when asked. */
+    private void checkArrivalTexts()throws Exception{android.content.Context c=getTargetContext();for(JSONObject a:Arrivals.all(c))Arrivals.cancel(c,a.optString("id"));
+        JSONObject place=Arrivals.savePlace(c,"Home",36.37,-94.21);Outbox outbox=new Outbox(c);int before=outbox.forChat("arrive").size();
+        JSONObject once=Arrivals.add(c,"arrive",place,"Made it home!",false,ArrivalPlan.ARMED);
+        check(!Arrivals.arrived(c,once.optString("id"),false),"Leaving sent the arrival text");
+        check(Arrivals.arrived(c,once.optString("id"),true),"Arriving didn't send the text");check(Arrivals.forChat(c,"arrive").isEmpty(),"A one-time arrival text kept watching after it sent");
+        java.util.List<JSONObject> queued=outbox.forChat("arrive");check(queued.size()==before+1&&queued.get(queued.size()-1).optString("text").equals("Made it home!"),"The arrival text wasn't queued to send");
+        check(!Arrivals.arrived(c,once.optString("id"),true),"A finished arrival text sent again");
+        JSONObject every=Arrivals.add(c,"arrive",place,"Home again",true,ArrivalPlan.AWAY_FIRST);String id=every.optString("id");
+        check(!Arrivals.arrived(c,id,true),"It texted on the spot although you were already there");
+        check(!Arrivals.arrived(c,id,false)&&Arrivals.arrived(c,id,true),"Leaving and coming back didn't send");
+        check(!Arrivals.arrived(c,id,true),"A second arrival without leaving sent again");
+        check(!Arrivals.arrived(c,id,false)&&Arrivals.arrived(c,id,true)&&Arrivals.forChat(c,"arrive").size()==1,"Every-time arrival didn't repeat");
+        Arrivals.cancel(c,id);check(Arrivals.forChat(c,"arrive").isEmpty(),"Canceling didn't stop it");
+        for(JSONObject o:outbox.forChat("arrive"))outbox.remove(o.optString("id"));Arrivals.removePlace(c,"Home");check(Arrivals.places(c).isEmpty(),"The saved place wasn't forgotten");}
     /** New conversation: finds people in the phone's contacts and in your chats, not just Google's partial list. */
     private void checkNewConversationSearch(PairedActivity a)throws Exception{
         try(PairedStore store=new PairedStore(getTargetContext())){store.chat(new JSONObject("{conversationID:'riley',name:'Riley Chatfield',type:'RCS',lastMessageTimestamp:1794000000000000,participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'r1',number:'+15550104444'},fullName:'Riley Chatfield'}]}"));}
@@ -376,8 +411,18 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(shows.apply("Person 499","Person 499"),"The 500th contact can't be found (only part of the list is searched)");
         check(shows.apply("xqzv","No one called"),"No message when nobody matches");
         boolean asks=shows.apply("","Search all your contacts");check(asks==!PhoneContacts.allowed(a),"The \"Search all your contacts\" row "+(asks?"shows with":"is missing without")+" the contacts permission");
-        runOnMainSync(()->{try{phoneF.set(a,null);googleF.set(a,null);queryF.set(a,"");}catch(Exception e){throw new RuntimeException(e);}});
-        try(PairedStore store=new PairedStore(getTargetContext())){store.deleteChat("riley");}
+        // Google often lists people by number only: their name comes from the chat with them, and anyone still nameless goes last.
+        try(PairedStore store=new PairedStore(getTargetContext())){store.chat(new JSONObject("{conversationID:'nameless',name:'Jordan Example',type:'RCS',lastMessageTimestamp:1794000000000000,participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'j1',number:'+15550107777'},formattedNumber:'(555) 010-7777'}]}"));}
+        java.lang.reflect.Field knownF=PairedActivity.class.getDeclaredField("knownNames"),chatPeopleF=PairedActivity.class.getDeclaredField("chatPeople");knownF.setAccessible(true);chatPeopleF.setAccessible(true);
+        runOnMainSync(()->{try{googleF.set(a,new JSONObject("{top:[],all:[{name:'',number:{number:'+15550107777',formattedNumber:'(555) 010-7777'}},{name:'',number:{number:'+15550108888',formattedNumber:'(555) 010-8888'}}]}"));knownF.set(a,null);chatPeopleF.set(a,null);}catch(Exception e){throw new RuntimeException(e);}});
+        check(shows.apply("jordan","Jordan Example"),"A contact Google lists by number alone isn't shown by name");
+        java.util.List<String> names=new java.util.ArrayList<>();
+        runOnMainSync(()->{try{java.lang.reflect.Method every=PairedActivity.class.getDeclaredMethod("everyone");every.setAccessible(true);
+            for(Object person:(java.util.List<?>)every.invoke(a)){java.lang.reflect.Field n=person.getClass().getDeclaredField("name");n.setAccessible(true);names.add((String)n.get(person));}}catch(Exception e){throw new RuntimeException(e);}});
+        int lastNamed=-1,firstNumber=names.size();for(int i=0;i<names.size();i++){if(ContactSearch.numberLike(names.get(i)))firstNumber=Math.min(firstNumber,i);else lastNamed=i;}
+        check(names.contains("Jordan Example")&&firstNumber<names.size()&&lastNamed<firstNumber,"Number-only contacts aren't after everyone with a name ("+lastNamed+" vs "+firstNumber+" of "+names.size()+")");
+        runOnMainSync(()->{try{phoneF.set(a,null);googleF.set(a,null);queryF.set(a,"");knownF.set(a,null);chatPeopleF.set(a,null);}catch(Exception e){throw new RuntimeException(e);}});
+        try(PairedStore store=new PairedStore(getTargetContext())){store.deleteChat("riley");store.deleteChat("nameless");}
         onMain(a,"inbox");}
     /** The inbox: a chat further down getting a message moves to the top without sliding the rows you're looking at. */
     private void checkInboxKeepsItsPlace(PairedActivity a)throws Exception{
@@ -732,6 +777,8 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkPhotoPrep();
         checkPictureTextAndFollowUps();
         checkVideoPrep();
+        checkPolls();
+        checkArrivalTexts();
         checkMarkup((PairedActivity)activity);
         String speed=measureRedraw();
         try(PairedStore store=new PairedStore(getTargetContext())){store.clear();}

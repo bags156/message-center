@@ -2,6 +2,9 @@ package io.github.bags156.messagecenter;
 
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertTrue;
 
 /** What you type in New conversation finds the right people, best matches first. */
 public class ContactSearchTest {
@@ -33,5 +36,17 @@ public class ContactSearchTest {
     }
     @Test public void emptyQueryMatchesEveryone() {
         assertEquals(0, score("Anyone", ""));
+    }
+    @Test public void numbersWithoutNamesAreRecognized() {
+        for (String n : new String[]{"", "  ", "+1 555-010-0123", "(555) 010-0123", "\u202a+1 555 010 0123\u202c", "5550100123"}) assertTrue(n, ContactSearch.numberLike(n));
+        for (String n : new String[]{"Hannah Kay", "Mom", "Dr. Lee", "Apt 4B", "7-Eleven"}) assertFalse(n, ContactSearch.numberLike(n));
+        assertTrue(ContactSearch.numberLike(null));
+    }
+
+    @Test public void theSameNumberWrittenDifferentlyMatches() {
+        assertEquals(ContactSearch.key("+1 (555) 010-0123"), ContactSearch.key("5550100123"));
+        assertEquals(ContactSearch.key("+15550100123"), ContactSearch.key("\u202a+1 555 010 0123\u202c"));
+        assertEquals("", ContactSearch.key(null));
+        assertNotEquals(ContactSearch.key("+15550100123"), ContactSearch.key("+15550100124"));
     }
 }

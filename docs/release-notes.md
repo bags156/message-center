@@ -1,10 +1,7 @@
-Message Center 1.5.2.
+Message Center 1.5.3.
 
-- Picture text search now uses Tesseract, which is open source, instead of Google's ML Kit. It still runs entirely on your phone, and it no longer reports usage to Google. It reads printed text in screenshots and documents best. Pictures already indexed stay searchable. The app is also smaller.
-- Replying with a photo and text quotes the original once, on the photo, instead of on both.
-- Text sent with photos now goes after your phone has sent the last photo, so it can't arrive before them. If a photo fails, its text waits for you: tap it and choose Send text now.
-- Needs a reply leaves out login codes, and texts from short codes and businesses.
-- If the app is closed during an upload that hadn't been submitted yet, the upload starts again on its own instead of asking you to check.
-- Sending a failed photo again removes the failed copy once the new one is accepted, and leaves whatever you're typing alone.
+- Group polls: ⊕ › Poll. Ask a question with up to six options. Everyone votes by replying with a number, so it works with iPhones and any phone. The poll shows here as a live results card with who voted for what. Tap an option to vote or change your vote.
+- Text on arrival: ⊕ › Text on arrival. Pick where you are now, search an address, or use a saved place, and the app texts them when you get there ("Made it home!"). Choose just once or every time you arrive. It needs location "all the time", only for the places you set up, and doesn't need Google Play services. Manage it in Settings › Text on arrival.
+- New conversation: contacts that showed only a phone number now show their name, taken from your contacts, your nicknames or your chat with them. Anyone still known only by number is listed after everyone with a name.
 
 Install over the existing app through Obtainium. Your pairing, conversations and settings are retained.

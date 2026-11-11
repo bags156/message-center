@@ -814,6 +814,11 @@ public class PairedActivity extends Activity {
             if(line[i]==null&&PairedProtocol.body(m).isEmpty())line[i]="✨ "+(out[i]?"You":senderFirst(m,c))+" sent "+Effects.label(PairedProtocol.effect(m));
             replyTo[i]=ReplyReferences.isReply(m);
             reacted[i]=!reactorsOf(m).isEmpty();}
+        // Polls: each poll becomes a results card, and its votes ("2", "pizza") quiet lines under it.
+        List<Polls.Said> said=new ArrayList<>(n);for(int i=0;i<n;i++){JSONObject m=messages.get(i);said.add(new Polls.Said(m.optString("messageID"),out[i]?"me":m.optString("participantID"),at[i],PairedProtocol.text(m),ReplyReferences.primary(m)));}
+        pollBoard=Polls.board(said);
+        for(int i=0;i<n;i++){JSONObject m=messages.get(i);String poll=pollBoard.voteFor.get(m.optString("messageID"));if(poll==null||line[i]!=null||out[i]&&PairedProtocol.failed(m))continue;
+            Polls.Result r=pollBoard.results.get(poll);line[i]="🗳 "+(out[i]?"You":senderFirst(m,c))+" voted for "+r.poll.options.get(pollBoard.voteOption.get(m.optString("messageID")));}
         int lastOut=-1;for(int i=n-1;i>=0;i--)if(out[i]&&line[i]==null){lastOut=i;break;}
         // Opening a chat or loading older messages draws without motion; so does a catch-up that brings many at once.
         boolean fresh=!chatId.equals(motionChat)||anchorOlder;if(!chatId.equals(motionChat)){motionChat=chatId;motionSeen.clear();motionOutbox.clear();motionReactions.clear();motionRunning.clear();motionOutboxBefore=0;}
@@ -841,7 +846,8 @@ public class PairedActivity extends Activity {
             if(unreadSince>0&&unreadDivider==null&&i>0&&!out[i]&&at[i]>unreadSince){int count=0;for(int k=i;k<n;k++)if(!out[k]&&at[k]>unreadSince&&ev[k].isEmpty()&&line[k]==null)count++;
                 unreadCount=count;unreadDivider=newMessagesLine(count);items.addView(unreadDivider);}
             if(group&&!out[i]&&!joinPrev&&!replyTo[i]){TextView sender=text(senderName(m,c),12,muted,false);sender.setPadding(dp(14),0,0,dp(4));items.addView(sender);}
-            View b=timed(swipeToReply(bubble(m,c,theme,out[i],joinPrev,joinNext),m),at[i],out[i]);if(selecting)b=selectable(b,m);items.addView(b);messageViews.put(m.optString("messageID"),b);
+            Polls.Result poll=pollBoard.results.get(mid);
+            View b=timed(swipeToReply(poll!=null?pollCard(m,c,theme,out[i],poll):bubble(m,c,theme,out[i],joinPrev,joinNext),m),at[i],out[i]);if(selecting)b=selectable(b,m);items.addView(b);messageViews.put(m.optString("messageID"),b);
             // A new message's effect (an iPhone's Slam or Balloons, or "Happy birthday"): bubble effects replace the usual slide in.
             String fx=animate&&isNew&&!out[i]&&effectsOn()?effectOf(m):"";
             if(Effects.fullScreen(fx))screenEffect=new String[]{fx,mid,PairedProtocol.text(m)};
@@ -860,7 +866,7 @@ public class PairedActivity extends Activity {
             if(!out[i]&&receipt!=null&&receipt.optString("messageID").equals(m.optString("messageID"))){View read=readLine(receipt);if(read!=null)items.addView(read,new LinearLayout.LayoutParams(-1,-2));}
             if(i==lastOut||(out[i]&&PairedProtocol.failed(m)))items.addView(statusRow(m,theme));
         }
-        renderOutbox(theme);renderPendingMedia(theme);renderScheduled(theme);if(inline!=null&&!inlineSeen)stopInline();
+        renderOutbox(theme);renderPendingMedia(theme);renderScheduled(theme);renderArrivals(theme);if(inline!=null&&!inlineSeen)stopInline();
         int pendingHere=0;for(PendingMedia p:pendingMedia)if(p.chat.equals(chatId))pendingHere++;motionOutboxBefore=outbox.forChat(chatId).size()+pendingHere;
         watchSending(messages,c);
         // Played once the chat is laid out, so it can find the message on screen.
@@ -1680,7 +1686,54 @@ public class PairedActivity extends Activity {
         attachTile(tiles,R.drawable.ic_camera,"Camera",()->{d[0].dismiss();takePhoto();});
         attachTile(tiles,R.drawable.ic_file,"Files",()->{d[0].dismiss();pickFiles();});
         attachTile(tiles,R.drawable.ic_place,"Location",()->{d[0].dismiss();shareLocation();});
-        content.addView(tiles,new LinearLayout.LayoutParams(-1,-2));d[0]=sheet(content);}
+        content.addView(tiles,new LinearLayout.LayoutParams(-1,-2));
+        LinearLayout more=row();more.setGravity(Gravity.CENTER);
+        attachTile(more,R.drawable.ic_poll,"Poll",()->{d[0].dismiss();createPoll();});
+        attachTile(more,R.drawable.ic_arrive,"Text on arrival",()->{d[0].dismiss();arrivalText(chatId);});
+        // Two more spaces keep the tiles the same size as the row above.
+        more.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));more.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
+        content.addView(more,new LinearLayout.LayoutParams(-1,-2));d[0]=sheet(content);}
+    // ---- Polls (see Polls): a question with numbered options, sent as plain text so anyone can vote ----
+    private Polls.Board pollBoard=new Polls.Board();
+    private void createPoll(){String id=chatId;LinearLayout box=vertical();box.setPadding(dp(20),dp(8),dp(20),0);
+        EditText question=input("Question");question.setSingleLine(true);box.addView(question);gap(box,8);
+        LinearLayout options=vertical();box.addView(options);List<EditText> fields=new ArrayList<>();
+        Runnable[] add={null};add[0]=()->{EditText o=input("Option "+(fields.size()+1));o.setSingleLine(true);fields.add(o);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(6);options.addView(o,lp);};
+        add[0].run();add[0].run();
+        TextView more=text("+ Add option",15,chatSettings.theme(id).accent(dark),true);more.setPadding(dp(4),dp(12),dp(4),dp(8));pressable(more);box.addView(more);
+        more.setOnClickListener(v->{if(fields.size()<Polls.MOST_OPTIONS){add[0].run();fields.get(fields.size()-1).requestFocus();}if(fields.size()>=Polls.MOST_OPTIONS)more.setVisibility(View.GONE);});
+        TextView note=text("Everyone votes by replying with a number, so it works with iPhones and any phone. Results show here.",13,muted,false);note.setPadding(dp(4),dp(4),dp(4),dp(4));box.addView(note);
+        ScrollView sv=new ScrollView(this);sv.addView(box);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("New poll").setView(sv).setNegativeButton("Cancel",null).setPositiveButton("Send poll",null).create();
+        dialog.setOnShowListener(x->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{String q=question.getText().toString().trim();List<String> picked=new ArrayList<>();
+            for(EditText f:fields){String t=f.getText().toString().trim();if(!t.isEmpty())picked.add(t);}
+            if(q.isEmpty()){question.setError("Ask a question");return;}if(picked.size()<2){fields.get(picked.isEmpty()?0:1).setError("Add at least two options");return;}
+            dialog.dismiss();sendPollText(id,Polls.compose(q,picked),"");}));
+        dialog.show();question.requestFocus();}
+    private void sendPollText(String id,String text,String reply){PairedService.sendOrQueue(this,id,text,reply,(v,e)->{if(!e.isEmpty()){error(e);return;}if(screen.equals("chat")&&chatId.equals(id))loadMessages(false);});}
+    /** A poll's results, live from the replies; tap an option to vote (a reply to the poll, so it threads on phones that show replies). */
+    private View pollCard(JSONObject m,JSONObject c,ChatTheme theme,boolean outgoing,Polls.Result r){
+        int fg=outgoing?theme.onBubble(dark):ink,soft=(fg&0x00ffffff)|0x99000000,track=(fg&0x00ffffff)|0x22000000,fill=outgoing?(fg&0x00ffffff)|0x77000000:theme.accent(dark);
+        LinearLayout line=row();line.setGravity(outgoing?Gravity.END:Gravity.START);
+        LinearLayout card=vertical();card.setPadding(dp(16),dp(12),dp(16),dp(10));card.setBackground(shape(outgoing?theme.bubble(dark):surface,22));
+        card.addView(text("📊  POLL",11,soft,true));gap(card,4);TextView q=text(r.poll.question,17,fg,true);q.setTextSize(17*textScale);card.addView(q);gap(card,6);
+        int total=r.total();Integer mine=r.choices.get("me");
+        for(int k=0;k<r.poll.options.size();k++){int option=k;LinearLayout opt=vertical();opt.setPadding(0,dp(6),0,dp(6));pressable(opt);
+            LinearLayout top=row();top.setGravity(Gravity.CENTER_VERTICAL);TextView label=text((mine!=null&&mine==k?"✓ ":"")+r.poll.options.get(k),15,fg,mine!=null&&mine==k);top.addView(label,new LinearLayout.LayoutParams(0,-2,1));
+            top.addView(text(String.valueOf(r.counts[k]),15,fg,true));opt.addView(top);
+            LinearLayout bar=row();bar.setBackground(shape(track,4));View filled=new View(this);filled.setBackground(shape(fill,4));
+            bar.addView(filled,new LinearLayout.LayoutParams(0,dp(6),Math.max(0,r.counts[k])));bar.addView(new View(this),new LinearLayout.LayoutParams(0,dp(6),Math.max(0,total-r.counts[k])+(total==0?1:0)));
+            LinearLayout.LayoutParams bl=new LinearLayout.LayoutParams(-1,dp(6));bl.topMargin=dp(4);opt.addView(bar,bl);
+            List<String> names=new ArrayList<>();for(Map.Entry<String,Integer> e:r.choices.entrySet())if(e.getValue()==k)names.add(e.getKey().equals("me")?"You":PairedProtocol.personFirst(c,e.getKey(),null));
+            if(!names.isEmpty()){String shown=String.join(", ",names.subList(0,Math.min(3,names.size())))+(names.size()>3?" +"+(names.size()-3):"");TextView who=text(shown,12,soft,false);who.setPadding(0,dp(3),0,0);opt.addView(who);}
+            opt.setContentDescription(r.poll.options.get(k)+", "+r.counts[k]+(r.counts[k]==1?" vote":" votes")+(mine!=null&&mine==k?", your vote":""));
+            opt.setOnClickListener(v->votePoll(m,r,option));opt.setOnLongClickListener(v->{messageSheet(m);return true;});card.addView(opt);}
+        gap(card,4);card.addView(text((total==1?"1 vote":total+" votes")+" • "+(mine==null?"Tap an option to vote":"Tap another to change your vote"),12,soft,false));
+        card.setOnLongClickListener(v->{messageSheet(m);return true;});
+        line.addView(card,new LinearLayout.LayoutParams(Math.round(getResources().getDisplayMetrics().widthPixels*0.78f),-2));return line;}
+    private void votePoll(JSONObject m,Polls.Result r,int option){Integer mine=r.choices.get("me");String choice=r.poll.options.get(option);
+        if(mine!=null&&mine==option){toast("You voted for "+choice);return;}
+        sendPollText(chatId,Polls.ballot(r.poll,option),m.optString("messageID"));toast("Voted for "+choice);}
     private void attachTile(LinearLayout parent,int icon,String label,Runnable action){ChatTheme theme=chatSettings.theme(chatId);
         LinearLayout tile=vertical();tile.setGravity(Gravity.CENTER_HORIZONTAL);tile.setPadding(dp(4),dp(10),dp(4),dp(10));pressable(tile);
         ImageView i=new ImageView(this);i.setImageResource(icon);i.setImageTintList(ColorStateList.valueOf(theme.onAccent(dark)));i.setBackground(oval(theme.accent(dark)));i.setPadding(dp(17),dp(17),dp(17),dp(17));
@@ -2063,6 +2116,73 @@ public class PairedActivity extends Activity {
                 .setPositiveButton("Allow exact timing",(d,w)->{try{startActivity(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:"+getPackageName())));}catch(Exception ignored){}}).setNegativeButton("OK",null).show();
         else toast("Scheduled for "+separatorStamp(at));}
     /** Scheduled messages for this chat, after the conversation, faded, with send now / delete. */
+    // ---- Text them when I get there (see Arrivals and ArrivalPlan) ----
+    private static final int ARRIVAL_PERMISSION=83,ARRIVAL_BACKGROUND=84;private String arrivalChat="";
+    private String arrivalWho(String id){JSONObject c=store.chat(id);String t=c==null?"":PairedProtocol.title(c);return t.isEmpty()?"them":t;}
+    /** Location permission (precise, then all the time), then where. Each step says why before Android asks. */
+    private void arrivalText(String id){arrivalChat=id;
+        if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED){
+            if(checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)==PackageManager.PERMISSION_GRANTED&&!shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION)&&getSharedPreferences("paired",MODE_PRIVATE).getBoolean("asked_arrival",false)){
+                toast("Turn on “Use precise location” for Message Center under Permissions › Location.");openAppSettings();return;}
+            new AlertDialog.Builder(this).setTitle("Text them when you get there").setMessage("Pick a place, and when you arrive Message Center texts "+arrivalWho(id)+" for you. It needs your precise location to notice you've arrived. It only checks for the places you set up, and your location stays on this phone.")
+                .setPositiveButton("Continue",(d,w)->{getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("asked_arrival",true).apply();requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION,Manifest.permission.ACCESS_COARSE_LOCATION},ARRIVAL_PERMISSION);}).setNegativeButton("Not now",null).show();return;}
+        if(checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION)!=PackageManager.PERMISSION_GRANTED){
+            new AlertDialog.Builder(this).setTitle("Allow location all the time").setMessage("You'll usually arrive with your phone in your pocket, so Message Center needs location “all the time” to notice. On the next screen, choose “Allow all the time”. It only checks for the places you set up here.")
+                .setPositiveButton("Continue",(d,w)->requestPermissions(new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION},ARRIVAL_BACKGROUND)).setNegativeButton("Not now",null).show();return;}
+        if(!getSystemService(android.location.LocationManager.class).isLocationEnabled()){toast("Turn on Location in your phone's settings first.");return;}
+        List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
+        for(JSONObject p:Arrivals.places(this)){labels.add("📍 "+p.optString("name"));actions.add(()->arrivalDetails(id,p,-1));}
+        labels.add("Where I am now…");actions.add(()->currentLocation(loc->{if(loc==null){toast("Couldn't find your location. Try again outside or with Wi-Fi on.");return;}namePlace(id,loc.getLatitude(),loc.getLongitude(),Arrivals.places(this).isEmpty()?"Home":"",0);}));
+        labels.add("Search for an address…");actions.add(()->searchPlace(id));
+        menuSheet("Text "+arrivalWho(id)+" when I arrive at…",labels,actions);}
+    private void openAppSettings(){try{startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.fromParts("package",getPackageName(),null)));}catch(Exception ignored){}}
+    /** Your location now (or the last one Android knows), or null; on the main thread. */
+    private void currentLocation(java.util.function.Consumer<android.location.Location> done){android.location.LocationManager lm=getSystemService(android.location.LocationManager.class);
+        String provider=lm.hasProvider(android.location.LocationManager.FUSED_PROVIDER)&&lm.isProviderEnabled(android.location.LocationManager.FUSED_PROVIDER)?android.location.LocationManager.FUSED_PROVIDER
+            :lm.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)?android.location.LocationManager.GPS_PROVIDER:android.location.LocationManager.NETWORK_PROVIDER;
+        toast("Finding your location…");
+        try{lm.getCurrentLocation(provider,null,getMainExecutor(),loc->{android.location.Location use=loc;
+            if(use==null)for(String p:lm.getProviders(true)){try{android.location.Location last=lm.getLastKnownLocation(p);if(last!=null&&(use==null||last.getTime()>use.getTime()))use=last;}catch(SecurityException ignored){}}
+            done.accept(use);});}
+        catch(SecurityException|IllegalArgumentException e){done.accept(null);}}
+    private void searchPlace(String id){EditText q=input("Address or place name");q.setSingleLine(true);FrameLayout box=new FrameLayout(this);box.setPadding(dp(20),dp(8),dp(20),0);box.addView(q);
+        new AlertDialog.Builder(this).setTitle("Find a place").setView(box).setNegativeButton("Cancel",null).setPositiveButton("Search",(d,w)->{String text=q.getText().toString().trim();if(text.isEmpty())return;
+            if(!android.location.Geocoder.isPresent()){toast("Address search isn't available on this phone. Go there and choose “Where I am now”.");return;}
+            toast("Searching…");new android.location.Geocoder(this).getFromLocationName(text,5,new android.location.Geocoder.GeocodeListener(){
+                @Override public void onGeocode(List<android.location.Address> found){ui.post(()->{if(found.isEmpty()){toast("Nothing found for “"+text+"”.");return;}List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
+                    for(android.location.Address a:found){String line=a.getMaxAddressLineIndex()>=0?a.getAddressLine(0):text;labels.add(line);String suggest=a.getFeatureName()!=null&&!a.getFeatureName().matches("\\d+")?a.getFeatureName():text;
+                        actions.add(()->namePlace(id,a.getLatitude(),a.getLongitude(),suggest,-1));}
+                    menuSheet("Which one?",labels,actions);});}
+                @Override public void onError(String message){ui.post(()->toast("Address search didn't work. Check your connection, or go there and choose “Where I am now”."));}});}).show();q.requestFocus();}
+    /** metersAway: how far you are from it now (0 when it's where you are), or -1 to find out. */
+    private void namePlace(String id,double lat,double lng,String suggested,double metersAway){EditText name=input("Name it: Home, Work, Gym…");name.setSingleLine(true);name.setText(suggested);name.setSelection(name.getText().length());
+        FrameLayout box=new FrameLayout(this);box.setPadding(dp(20),dp(8),dp(20),0);box.addView(name);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Save this place").setView(box).setNegativeButton("Cancel",null).setPositiveButton("Next",null).create();
+        dialog.setOnShowListener(x->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{String n=name.getText().toString().trim();if(n.isEmpty()){name.setError("Give it a name");return;}
+            dialog.dismiss();arrivalDetails(id,Arrivals.savePlace(this,n,lat,lng),metersAway);}));dialog.show();name.requestFocus();}
+    private void arrivalDetails(String id,JSONObject place,double metersAway){String where=place.optString("name");LinearLayout box=vertical();box.setPadding(dp(20),dp(8),dp(20),0);
+        EditText message=input("Message");message.setText(ArrivalPlan.defaultText(where));box.addView(message);
+        android.widget.CheckBox every=new android.widget.CheckBox(this);every.setText("Every time I arrive here");every.setTextColor(ink);LinearLayout.LayoutParams el=new LinearLayout.LayoutParams(-2,-2);el.topMargin=dp(8);box.addView(every,el);
+        TextView note=text("Just once lasts a day. Location stays on this phone; only the message is sent.",13,muted,false);note.setPadding(dp(4),dp(4),dp(4),0);box.addView(note);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Text "+arrivalWho(id)+" at "+where).setView(box).setNegativeButton("Cancel",null).setPositiveButton("Turn on",null).create();
+        dialog.setOnShowListener(x->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{String text=message.getText().toString().trim();if(text.isEmpty()){message.setError("Write what to send");return;}dialog.dismiss();boolean repeat=every.isChecked();
+            java.util.function.Consumer<Double> start=away->{String state=ArrivalPlan.startState(away,ArrivalPlan.RADIUS_M);Arrivals.add(this,id,place,text,repeat,state);
+                toast(ArrivalPlan.AWAY_FIRST.equals(state)?"You're there now, so it'll text "+arrivalWho(id)+" the next time you arrive.":"It'll text "+arrivalWho(id)+" when you arrive at "+where+".");if(screen.equals("chat"))renderMessages(false);};
+            if(metersAway>=0)start.accept(metersAway);
+            else currentLocation(loc->start.accept(loc==null?-1:ArrivalPlan.meters(loc.getLatitude(),loc.getLongitude(),place.optDouble("lat"),place.optDouble("lng"))));}));
+        dialog.show();}
+    private void renderArrivals(ChatTheme theme){for(JSONObject a:Arrivals.forChat(this,chatId)){String id=a.optString("id");gap(items,8);
+        LinearLayout line=row();line.setGravity(Gravity.END);TextView b=text(a.optString("text"),17,theme.onBubble(dark),false);b.setPadding(dp(16),dp(11),dp(16),dp(11));
+        b.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));b.setBackground(shape(theme.bubble(dark),22));b.setAlpha(0.55f);line.addView(b);items.addView(line);
+        boolean away=ArrivalPlan.AWAY_FIRST.equals(a.optString("state"));
+        TextView s=text("🏁 Sends when you "+(away?"next ":"")+"arrive at "+a.optString("place")+(a.optBoolean("everyTime")?" • every time":"")+" • tap for options",12,muted,false);s.setGravity(Gravity.END);s.setPadding(0,dp(4),dp(6),0);items.addView(s,new LinearLayout.LayoutParams(-1,-2));
+        View.OnClickListener act=v->menuSheet("Text on arrival",java.util.Arrays.asList("Cancel it"),java.util.Arrays.<Runnable>asList(()->{Arrivals.cancel(this,id);renderMessages(false);}));
+        b.setOnClickListener(act);s.setOnClickListener(act);}}
+    /** Settings: what's watching, and the places you've saved. */
+    private void arrivalSettings(){List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
+        for(JSONObject a:Arrivals.all(this)){String id=a.optString("id");labels.add("🏁 "+arrivalWho(a.optString("chat"))+" at "+a.optString("place")+(a.optBoolean("everyTime")?" (every time)":"")+" • tap to cancel");actions.add(()->{Arrivals.cancel(this,id);toast("Canceled.");if(screen.equals("settings"))settings();});}
+        for(JSONObject p:Arrivals.places(this)){String n=p.optString("name");labels.add("📍 Forget "+n);actions.add(()->{Arrivals.removePlace(this,n);toast("Forgot "+n+".");if(screen.equals("settings"))settings();});}
+        if(labels.isEmpty()){toast("Set one up from a chat: ⊕ › Text on arrival.");return;}menuSheet("Text on arrival",labels,actions);}
     private void renderScheduled(ChatTheme theme){for(JSONObject o:Scheduled.forChat(this,chatId)){String id=o.optString("id");gap(items,8);
         LinearLayout line=row();line.setGravity(Gravity.END);TextView b=text(o.optString("text"),17,theme.onBubble(dark),false);b.setPadding(dp(16),dp(11),dp(16),dp(11));
         b.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));b.setBackground(shape(theme.bubble(dark),22));b.setAlpha(0.55f);line.addView(b);items.addView(line);
@@ -2496,14 +2616,14 @@ public class PairedActivity extends Activity {
         menuSheet("This chat's notifications show",labels,actions);}
 
     // Contacts and new conversations
-    private void newMessage(){if(!PairedService.ready()){toast("Connect first, then start a chat.");return;}picked.clear();groupMode=false;contactQuery="";chatPeople=null;newChat();
+    private void newMessage(){if(!PairedService.ready()){toast("Connect first, then start a chat.");return;}picked.clear();groupMode=false;contactQuery="";chatPeople=null;knownNames=null;newChat();
         loadPhoneContacts();if(contacts==null)loadContacts();}
     /** Google Messages' contacts: its "frequent" list, and the first few hundred of the rest. */
     private void loadContacts(){contactsFailed=false;PairedService.execute(c->c.contacts(),(raw,e)->{if(!e.isEmpty()){contactsFailed=true;if(screen.equals("newchat"))renderContacts();return;}
-        try{contacts=new JSONObject(raw);}catch(Exception ex){contactsFailed=true;}if(screen.equals("newchat"))renderContacts();});}
+        try{contacts=new JSONObject(raw);}catch(Exception ex){contactsFailed=true;}knownNames=null;if(screen.equals("newchat"))renderContacts();});}
     /** This phone's contacts (everyone, unlike Google's list), read in the background each time you start a conversation. */
     private void loadPhoneContacts(){if(!PhoneContacts.allowed(this))return;decoder.execute(()->{List<PhoneContacts.Entry> all=PhoneContacts.all(this);
-        ui.post(()->{phoneContacts=all;if(screen.equals("newchat"))renderContacts();});});}
+        ui.post(()->{phoneContacts=all;knownNames=null;if(screen.equals("newchat"))renderContacts();});});}
     private void newChat(){remember();base("newchat");header(groupMode?"New group":"New conversation",()->{if(groupMode){groupMode=false;picked.clear();newChat();}else inbox();});
         EditText search=input(groupMode?"Add people by name or number":"Type a name or phone number");search.setSingleLine(true);search.setText(contactQuery);
         LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-1,-2);sp.setMargins(dp(16),0,dp(16),dp(8));root.addView(search,sp);
@@ -2528,7 +2648,7 @@ public class PairedActivity extends Activity {
         if(!PhoneContacts.allowed(this))items.addView(allowContactsRow());
         String ql=ContactSearch.fold(q),qd=ChatText.digits(q);
         if(q.isEmpty()&&contacts!=null){org.json.JSONArray top=contacts.optJSONArray("top");if(top!=null&&top.length()>0){items.addView(sectionLabel("Frequent"));int added=0;
-            for(Person p:googlePeople(top)){if(added>=20)break;if(!shown.add(p.number))continue;items.addView(contactRow(p.name,p.number,p.formatted,p.hex));added++;}}}
+            Map<String,String> known=knownNames();for(Person g:googlePeople(top)){if(added>=20)break;if(!shown.add(g.number))continue;Person p=named(g,known);items.addView(contactRow(p.name,p.number,p.formatted,p.hex));added++;}}}
         List<Person> everyone=everyone();List<Person> hits=new ArrayList<>();List<Integer> scores=new ArrayList<>();
         for(Person p:everyone){if(shown.contains(p.number))continue;int sc=ContactSearch.score(p.folded,ContactSearch.fold(Nicknames.get(p.number)),p.digits,ql,qd);if(sc<0)continue;
             // Best matches first; ties keep the list's own (alphabetical) order.
@@ -2539,19 +2659,36 @@ public class PairedActivity extends Activity {
         else if(loading)items.addView(sectionLabel("Loading contacts…"));
         else if(!q.isEmpty()&&number.isEmpty()){TextView none=text("No one called “"+q+"”. Type their number to message them.",15,muted,false);none.setPadding(dp(8),dp(16),dp(8),dp(8));items.addView(none);}
         if(contactsFailed&&phoneContacts==null){TextView note=text("Google Messages didn't send its contact list. You can still type a number.",13,muted,false);note.setPadding(dp(8),dp(12),dp(8),dp(4));items.addView(note);}}
-    /** Everyone to search: this phone's contacts, then anyone else from Google's list, then people from your chats. One row per number. */
-    private List<Person> everyone(){List<Person> out=new ArrayList<>();Set<String> numbers=new HashSet<>();
-        if(phoneContacts!=null)for(PhoneContacts.Entry e:phoneContacts){String detail=e.label.isEmpty()?e.formatted:e.label+" · "+e.formatted;if(numbers.add(e.name+"\n"+e.number))out.add(new Person(e.name,e.number,detail,""));}
-        Set<String> phoneNumbers=new HashSet<>();for(Person p:out)phoneNumbers.add(p.number);
-        List<Person> more=new ArrayList<>();
-        if(contacts!=null){org.json.JSONArray all=contacts.optJSONArray("all");if(all!=null)for(Person p:googlePeople(all))if(!phoneNumbers.contains(p.number)&&numbers.add(p.number))more.add(p);}
-        if(chatPeople==null)chatPeople=peopleFromChats();for(Person p:chatPeople)if(!phoneNumbers.contains(p.number)&&numbers.add(p.number))more.add(p);
-        java.text.Collator order=java.text.Collator.getInstance();order.setStrength(java.text.Collator.PRIMARY);more.sort((a,b)->order.compare(a.name,b.name));
-        if(phoneContacts==null)return more;
-        // Merged into the phone's alphabetical list rather than tacked on the end.
-        List<Person> merged=new ArrayList<>(out.size()+more.size());int i=0,j=0;
-        while(i<out.size()||j<more.size()){if(j>=more.size()||i<out.size()&&order.compare(out.get(i).name,more.get(j).name)<=0)merged.add(out.get(i++));else merged.add(more.get(j++));}
-        return merged;}
+    /**
+     * Everyone to search: this phone's contacts, then anyone else from Google's list or your chats,
+     * one row per number. Google often sends a number with no name, so names are filled in from
+     * your contacts, your nicknames, the chat's own name and the people in your chats; anyone still
+     * known only by number goes after everyone with a name, instead of crowding the top.
+     */
+    private List<Person> everyone(){Map<String,String> known=knownNames();List<Person> out=new ArrayList<>();Set<String> seen=new HashSet<>(),keys=new HashSet<>();
+        if(phoneContacts!=null)for(PhoneContacts.Entry e:phoneContacts){String detail=e.label.isEmpty()?e.formatted:e.label+" · "+e.formatted;
+            if(seen.add(e.name+"\n"+e.number)){out.add(named(new Person(e.name,e.number,detail,""),known));keys.add(ContactSearch.key(e.number));}}
+        Set<String> phoneKeys=new HashSet<>(keys);List<Person> more=new ArrayList<>();
+        if(contacts!=null){org.json.JSONArray all=contacts.optJSONArray("all");if(all!=null)more.addAll(googlePeople(all));}
+        if(chatPeople==null)chatPeople=peopleFromChats();more.addAll(chatPeople);
+        for(Person p:more){String k=ContactSearch.key(p.number);if(k.isEmpty()||phoneKeys.contains(k)||!keys.add(k))continue;out.add(named(p,known));}
+        java.text.Collator order=java.text.Collator.getInstance();order.setStrength(java.text.Collator.PRIMARY);
+        out.sort((a,b)->{boolean na=ContactSearch.numberLike(a.name),nb=ContactSearch.numberLike(b.name);if(na!=nb)return na?1:-1;return na?a.number.compareTo(b.number):order.compare(a.name,b.name);});
+        return out;}
+    /** Number key → a real name, strongest source first: your contacts, then a 1:1 chat's name, then names Google gives people in your chats or its list. */
+    private Map<String,String> knownNames;
+    private Map<String,String> knownNames(){if(knownNames!=null)return knownNames;Map<String,String> names=new HashMap<>();
+        if(phoneContacts!=null)for(PhoneContacts.Entry e:phoneContacts)nameFor(names,e.number,e.name);
+        List<JSONObject> chats=new ArrayList<>();for(int folder:new int[]{1,2})chats.addAll(store.chats("",folder));
+        for(JSONObject c:chats){JSONObject o=PairedProtocol.other(c);if(o!=null)nameFor(names,PairedProtocol.number(o),PairedProtocol.string(c,"name"));}
+        for(JSONObject c:chats)for(JSONObject p:PairedProtocol.members(c)){String full=PairedProtocol.string(p,"fullName");nameFor(names,PairedProtocol.number(p),full.isEmpty()?PairedProtocol.string(p,"firstName"):full);}
+        if(contacts!=null)for(String list:new String[]{"top","all"}){org.json.JSONArray a=contacts.optJSONArray(list);if(a!=null)for(int i=0;i<a.length();i++){JSONObject ct=a.optJSONObject(i);JSONObject num=ct==null?null:ct.optJSONObject("number");
+            if(num!=null)nameFor(names,PairedProtocol.string(num,"number"),ct.optString("name"));}}
+        return knownNames=names;}
+    private static void nameFor(Map<String,String> names,String number,String name){String k=ContactSearch.key(number);if(!k.isEmpty()&&!ContactSearch.numberLike(name))names.putIfAbsent(k,name.trim());}
+    /** The person with their best name: your nickname for them, else a real name if theirs is only a number. */
+    private static Person named(Person p,Map<String,String> known){String nick=Nicknames.get(p.number);if(!nick.isEmpty()&&!nick.equals(p.name))return new Person(nick,p.number,p.formatted,p.hex);
+        if(!ContactSearch.numberLike(p.name))return p;String name=known.get(ContactSearch.key(p.number));return name==null?p:new Person(name,p.number,p.formatted,p.hex);}
     private List<Person> googlePeople(org.json.JSONArray list){List<Person> out=new ArrayList<>();
         for(int i=0;i<list.length();i++){JSONObject ct=list.optJSONObject(i);if(ct==null)continue;String name=ct.optString("name");JSONObject num=ct.optJSONObject("number");
             String raw=num==null?"":PairedProtocol.string(num,"number"),n=ChatText.normalizeNumber(raw);if(n.isEmpty()&&raw.startsWith("+"))n=raw;if(n.isEmpty())continue;
@@ -2706,6 +2843,8 @@ public class PairedActivity extends Activity {
     @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] results){super.onRequestPermissionsResult(request,permissions,results);GivenNames.forget();
         if(request==77){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)startRecording();else toast("Message Center needs the microphone to record voice messages.");}
         if(request==79){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)startDictation();else toast("Message Center needs the microphone for speech to text.");}
+        if(request==ARRIVAL_PERMISSION){boolean any=false;for(int r:results)if(r==PackageManager.PERMISSION_GRANTED)any=true;if(any)arrivalText(arrivalChat);else toast("Location is needed to text them when you arrive.");return;}
+        if(request==ARRIVAL_BACKGROUND){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)arrivalText(arrivalChat);else toast("Choose “Allow all the time” for Location, so the text can go while your phone is in your pocket.");return;}
         if(request==LOCATION_PERMISSION){boolean any=false;for(int r:results)if(r==PackageManager.PERMISSION_GRANTED)any=true;if(any)shareLocation();else toast("Location permission is needed to share where you are.");return;}
         if(request==CONTACTS_PERMISSION&&results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED){phoneChecked.clear();photos.clear();
             if(screen.equals("inbox"))renderInbox();else if(screen.equals("settings"))settings();else if(screen.equals("newchat"))loadPhoneContacts();}
@@ -2881,6 +3020,8 @@ public class PairedActivity extends Activity {
 
         LinearLayout chats=settingsGroup(content,"Chats");
         settingRow(chats,"Photo quality","Photos prepare on this phone while you type",PhotoQuality.label(photoQuality()),this::choosePhotoQuality);
+        int arrivals=Arrivals.all(this).size(),places=Arrivals.places(this).size();
+        settingRow(chats,"Text on arrival","Texts someone when you get to a place you pick (set it up from a chat's ⊕)",arrivals>0?arrivals+" on":places>0?places+(places==1?" place":" places"):"Off",this::arrivalSettings);
         settingRow(chats,"Saved attachments","Queued photos and videos survive closing the app; unconfirmed sends wait for review",String.valueOf(new MediaOutbox(this).all().size()),this::savedAttachments);
         settingSwitch(chats,"Search text in pictures","Reads printed English text in downloaded photos, on this phone (open-source Tesseract)",PhotoText.enabled(this),on->{prefs.edit().putBoolean("photo_text",on).apply();if(on)PhotoText.indexDownloaded(this,true);else PhotoText.clear(this);searchedFor="";});
         int indexed;try(PhotoText index=new PhotoText(this)){indexed=index.count();}
