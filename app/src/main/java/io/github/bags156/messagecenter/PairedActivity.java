@@ -883,7 +883,8 @@ public class PairedActivity extends Activity {
             if(unreadSince>0&&unreadDivider==null&&i>0&&!out[i]&&at[i]>unreadSince){int count=0;for(int k=i;k<n;k++)if(!out[k]&&at[k]>unreadSince&&ev[k].isEmpty()&&line[k]==null)count++;
                 unreadCount=count;unreadDivider=newMessagesLine(count);items.addView(unreadDivider);}
             if(group&&!out[i]&&!joinPrev&&!replyTo[i]){TextView sender=text(senderName(m,c),12,muted,false);sender.setPadding(dp(14),0,0,dp(4));items.addView(sender);}
-            View b=timed(swipeToReply(bubble(m,c,theme,out[i],joinPrev,joinNext),m),at[i],out[i]);if(selecting)b=selectable(b,m);items.addView(b);messageViews.put(m.optString("messageID"),b);
+            long perfB=Perf.start();View bub=bubble(m,c,theme,out[i],joinPrev,joinNext);Perf.end("bubble: build",perfB);perfB=Perf.start();
+            View b=timed(swipeToReply(bub,m),at[i],out[i]);if(selecting)b=selectable(b,m);items.addView(b);messageViews.put(m.optString("messageID"),b);Perf.end("bubble: wrap",perfB);perfB=Perf.start();
             // A new message's effect (an iPhone's Slam or Balloons, or "Happy birthday"): bubble effects replace the usual slide in.
             String fx=animate&&isNew&&!out[i]&&effectsOn()?effectOf(m):"";
             if(Effects.fullScreen(fx))screenEffect=new String[]{fx,mid,PairedProtocol.text(m)};
@@ -900,7 +901,7 @@ public class PairedActivity extends Activity {
             if(rem!=null){TextView rt=text("⏰ Reminder "+separatorStamp(rem.optLong("at")),11,muted,false);rt.setGravity(out[i]?Gravity.END:Gravity.START);rt.setPadding(dp(16),dp(2),dp(16),0);rt.setOnClickListener(v->remindMenu(m));items.addView(rt,new LinearLayout.LayoutParams(-1,-2));}
             if(starred.has(m.optString("messageID"))){TextView st=text("★ Starred",11,muted,false);st.setGravity(out[i]?Gravity.END:Gravity.START);st.setPadding(dp(16),dp(2),dp(16),0);items.addView(st,new LinearLayout.LayoutParams(-1,-2));}
             if(!out[i]&&receipt!=null&&receipt.optString("messageID").equals(m.optString("messageID"))){View read=readLine(receipt);if(read!=null)items.addView(read,new LinearLayout.LayoutParams(-1,-2));}
-            if(i==lastOut||(out[i]&&PairedProtocol.failed(m)))items.addView(statusRow(m,theme));
+            if(i==lastOut||(out[i]&&PairedProtocol.failed(m)))items.addView(statusRow(m,theme));Perf.end("bubble: extras",perfB);
         }
         Perf.end("messages: bubbles",perf);perf=Perf.start();
         renderOutbox(theme);renderPendingMedia(theme);renderScheduled(theme);renderArrivals(theme);if(inline!=null&&!inlineSeen)stopInline();
@@ -975,7 +976,7 @@ public class PairedActivity extends Activity {
         TextView text=text(fallback!=null?fallback:body,17,outgoing?theme.onBubble(dark):ink,false);text.setTextSize(17*textScale);text.setLineSpacing(0,1.1f);text.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));b.addView(text);
         // One to three emoji alone are shown large, without a bubble.
         if(media.isEmpty()&&target.isEmpty()&&fallback==null){int jumbo=ChatText.emojiOnly(body);if(jumbo>0){text.setTextSize(jumbo==1?48:jumbo==2?40:34);b.setBackground(null);b.setPadding(dp(4),0,dp(4),0);}}
-        TextScan scan=TextScan.of(text.getText().toString(),PairedProtocol.time(m)>0?PairedProtocol.time(m):System.currentTimeMillis());
+        long perfScan=Perf.start();TextScan scan=TextScan.of(text.getText().toString(),PairedProtocol.time(m)>0?PairedProtocol.time(m):System.currentTimeMillis());Perf.end("bubble: scan",perfScan);perfScan=Perf.start();
         if(applyLinks(text,scan)){text.setLinkTextColor(outgoing?theme.onBubble(dark):ink);text.setHighlightColor(Color.TRANSPARENT);text.setMovementMethod(LinkMovementMethod.getInstance());text.setOnLongClickListener(v->{messageSheet(m);return true;});}
         // Street addresses open in your maps app.
         List<int[]> places=scan.places;
@@ -989,7 +990,7 @@ public class PairedActivity extends Activity {
             for(SmartText.Hit h:smart){if(sp.getSpans(h.start,h.end,URLSpan.class).length>0||sp.getSpans(h.start,h.end,ClickableSpan.class).length>0)continue;added=true;
                 sp.setSpan(new ClickableSpan(){@Override public void onClick(View w){smartTap(h,m,c);}@Override public void updateDrawState(TextPaint ds){ds.setColor(linkColor);ds.setUnderlineText(true);}},h.start,h.end,Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);}
             if(added){text.setText(sp);text.setHighlightColor(Color.TRANSPARENT);text.setMovementMethod(LinkMovementMethod.getInstance());text.setOnLongClickListener(v->{messageSheet(m);return true;});}}
-        b.setOnLongClickListener(v->{messageSheet(m);return true;});b.setOnClickListener(v->tapped(m,b));if(text.getMovementMethod()!=null)text.setOnClickListener(v->tapped(m,b));
+        Perf.end("bubble: links",perfScan);b.setOnLongClickListener(v->{messageSheet(m);return true;});b.setOnClickListener(v->tapped(m,b));if(text.getMovementMethod()!=null)text.setOnClickListener(v->tapped(m,b));
         line.addView(b,new LinearLayout.LayoutParams(-2,-2));wrap.addView(line,new LinearLayout.LayoutParams(-1,-2));bubbleViews.put(m.optString("messageID"),b);
         String url=linkPreviewsOn()&&(outgoing||chatTrusted)?ChatText.firstUrl(fallback!=null?fallback:body):"";if(!url.isEmpty()){gap(wrap,4);wrap.addView(linkCard(url,outgoing),new LinearLayout.LayoutParams(-1,-2));}
         return wrap;
@@ -1948,7 +1949,7 @@ public class PairedActivity extends Activity {
         return new SwipeRow(this,message,hint,null,dp(64),dp(96)).onSwipeRight(()->startReply(m));}
     /** Inbox: swipe left to archive (or move back to the inbox), right to mark read or unread. */
     /** An inbox row: the one already drawn for this chat when nothing it shows has changed, else a new one. */
-    private View chatRow(JSONObject c){String id=c.optString("conversationID"),key=rowKey(c);Object[] hit=key==null?null:rowCache.get(id);
+    private View chatRow(JSONObject c){long perf=Perf.start();String id=c.optString("conversationID"),key=rowKey(c);Object[] hit=key==null?null:rowCache.get(id);Perf.end("row: key",perf);
         if(hit!=null&&key.equals(hit[0])){View v=(View)hit[1];if(v.getParent() instanceof ViewGroup)((ViewGroup)v.getParent()).removeView(v);
             if(v instanceof SwipeRow)((SwipeRow)v).settle();v.jumpDrawablesToCurrentState();return v;}
         View v=swipeableChat(c);if(key==null)rowCache.remove(id);else rowCache.put(id,new Object[]{key,v});return v;}
