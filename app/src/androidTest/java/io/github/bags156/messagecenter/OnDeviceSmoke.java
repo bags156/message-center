@@ -26,6 +26,10 @@ public final class OnDeviceSmoke extends Instrumentation {
         do{found=null;for(android.service.notification.StatusBarNotification sbn:nm.getActiveNotifications())if(("chat:"+chat).equals(sbn.getTag()))found=sbn.getNotification();
             if(found!=null&&(found.flags&android.app.Notification.FLAG_BUBBLE)!=0)return found;if(System.currentTimeMillis()<until)Thread.sleep(100);}
         while(System.currentTimeMillis()<until);return found;}
+    /** Android removes notifications in the background, so wait (up to ms) for this chat's to be gone. */
+    private boolean gone(android.app.NotificationManager nm,String chat,long ms)throws Exception{long until=System.currentTimeMillis()+ms;
+        while(true){boolean there=false;for(android.service.notification.StatusBarNotification sbn:nm.getActiveNotifications())if(("chat:"+chat).equals(sbn.getTag()))there=true;
+            if(!there)return true;if(System.currentTimeMillis()>=until)return false;Thread.sleep(100);}}
     /**
      * A chat's bubble steps aside while that chat is open in the full app and comes back, quiet
      * and collapsed, once you've left it; leaving a chat that had no bubble doesn't make one.
@@ -49,7 +53,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         android.app.Notification shown=chatNotification(nm,"bubble-check",4000);
         check(shown!=null&&(shown.flags&android.app.Notification.FLAG_BUBBLE)!=0,"The check notification didn't become a bubble ("+(shown==null?"not posted":"flags "+shown.flags)+")");
         runOnMainSync(()->ChatBubbles.showing(ctx,"bubble-check"));
-        check(chatNotification(nm,"bubble-check",0)==null,"Opening a chat left its bubble on screen");
+        check(gone(nm,"bubble-check",3000),"Opening a chat left its bubble on screen");
         // Switching away and straight back inside the delay doesn't flash it, and it stays away while the chat is open.
         runOnMainSync(()->ChatBubbles.showing(ctx,"no-bubble"));Thread.sleep(300);runOnMainSync(()->ChatBubbles.showing(ctx,"bubble-check"));
         Thread.sleep(ChatBubbles.RESTORE_DELAY_MS+600);check(chatNotification(nm,"bubble-check",0)==null,"The bubble came back while its chat was still open");
