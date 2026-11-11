@@ -1741,7 +1741,7 @@ public class PairedActivity extends Activity {
         b.show();
     }
     private static final int TAKE_PHOTO=43;private File pendingCapture;
-    /** ⊕ button: a panel with Photos & videos (Android's photo picker, no storage permission), Camera, and Files. */
+    /** ⊕ button: a panel with Photos & videos (Android's photo picker, no storage permission), Camera, Files, Location, Contact and Text on arrival. */
     private void attach(){LinearLayout content=vertical();Dialog[] d=new Dialog[1];LinearLayout tiles=row();tiles.setGravity(Gravity.CENTER);
         attachTile(tiles,R.drawable.ic_gallery,"Photos & videos",()->{d[0].dismiss();pickMedia();});
         attachTile(tiles,R.drawable.ic_camera,"Camera",()->{d[0].dismiss();takePhoto();});
@@ -1749,10 +1749,43 @@ public class PairedActivity extends Activity {
         attachTile(tiles,R.drawable.ic_place,"Location",()->{d[0].dismiss();shareLocation();});
         content.addView(tiles,new LinearLayout.LayoutParams(-1,-2));
         LinearLayout more=row();more.setGravity(Gravity.CENTER);
+        attachTile(more,R.drawable.ic_contact,"Contact",()->{d[0].dismiss();pickContact();});
         attachTile(more,R.drawable.ic_arrive,"Text on arrival",()->{d[0].dismiss();arrivalText(chatId);});
-        // Spaces keep the tile the same size as the ones in the row above.
-        for(int k=0;k<3;k++)more.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
+        // Spaces keep the tiles the same size as the ones in the row above.
+        for(int k=0;k<2;k++)more.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
         content.addView(more,new LinearLayout.LayoutParams(-1,-2));d[0]=sheet(content);}
+    private static final int PICK_CONTACT=87;
+    /**
+     * ⊕ → Contact: Android's own picker for one phone number (it asks which, when there are several;
+     * no contacts permission needed), then "Name: number" goes into the message box to send or edit.
+     */
+    private void pickContact(){try{startActivityForResult(new Intent(Intent.ACTION_PICK).setType(android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_TYPE),PICK_CONTACT);}
+        catch(android.content.ActivityNotFoundException e){toast("There's no contacts app to pick from.");}}
+    private void sharePickedContact(Uri picked){String chat=chatId;decoder.execute(()->{String name="",number="";long contact=-1;List<String> emails=new ArrayList<>();
+        String[] columns={android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER,android.provider.ContactsContract.CommonDataKinds.Phone.CONTACT_ID};
+        try(android.database.Cursor c=getContentResolver().query(picked,columns,null,null,null)){if(c!=null&&c.moveToFirst()){name=c.isNull(0)?"":c.getString(0);number=c.isNull(1)?"":c.getString(1);contact=c.isNull(2)?-1:c.getLong(2);}}
+        catch(Exception e){Diagnostics.note("Couldn't read the picked contact: "+e.getClass().getSimpleName());}
+        // Their email too, offered only when the app may already read contacts (for names and photos).
+        if(contact>=0&&checkSelfPermission(android.Manifest.permission.READ_CONTACTS)==PackageManager.PERMISSION_GRANTED)
+            try(android.database.Cursor c=getContentResolver().query(android.provider.ContactsContract.CommonDataKinds.Email.CONTENT_URI,new String[]{android.provider.ContactsContract.CommonDataKinds.Email.ADDRESS},
+                    android.provider.ContactsContract.CommonDataKinds.Email.CONTACT_ID+"=?",new String[]{String.valueOf(contact)},null)){
+                while(c!=null&&c.moveToNext()){String a=c.isNull(0)?"":c.getString(0).trim();if(!a.isEmpty()&&!emails.contains(a))emails.add(a);}}
+            catch(Exception ignored){}
+        String shown=readableNumber(number),who=name;
+        ui.post(()->{if(!screen.equals("chat")||!chatId.equals(chat)||composer==null)return;
+            if(shown.isEmpty()){toast("That contact has no phone number.");return;}
+            if(emails.isEmpty()){insertContact(who,shown,"");return;}
+            String[] choices=new String[emails.size()+1];choices[0]="Just the number";for(int i=0;i<emails.size();i++)choices[i+1]="Add "+emails.get(i);
+            new AlertDialog.Builder(this).setTitle(who.isEmpty()?shown:who).setItems(choices,(x,which)->insertContact(who,shown,which==0?"":emails.get(which-1))).setNegativeButton("Cancel",null).show();});});}
+    /** A number as people write it: "(479) 555-0134" for one saved as bare digits; anything already formatted stays as saved. */
+    private String readableNumber(String number){number=number==null?"":number.trim();if(!number.matches("\\+?\\d{7,15}"))return number;
+        String country="";try{country=getSystemService(android.telephony.TelephonyManager.class).getSimCountryIso();}catch(Exception ignored){}
+        if(country==null||country.isEmpty())country=Locale.getDefault().getCountry();
+        String formatted=android.telephony.PhoneNumberUtils.formatNumber(number,country.toUpperCase(Locale.ROOT));return formatted==null?number:formatted;}
+    /** Puts "Name: number" where the cursor is (on its own line next to other words). */
+    private void insertContact(String name,String number,String email){if(composer==null)return;String now=composer.getText().toString();
+        ContactText.Inserted in=ContactText.insert(now,composer.getSelectionStart(),composer.getSelectionEnd(),ContactText.of(name,number,email));
+        composer.setText(in.text);composer.setSelection(Math.min(in.cursor,composer.getText().length()));composer.requestFocus();}
     private void attachTile(LinearLayout parent,int icon,String label,Runnable action){ChatTheme theme=chatSettings.theme(chatId);
         LinearLayout tile=vertical();tile.setGravity(Gravity.CENTER_HORIZONTAL);tile.setPadding(dp(4),dp(10),dp(4),dp(10));pressable(tile);
         ImageView i=new ImageView(this);i.setImageResource(icon);i.setImageTintList(ColorStateList.valueOf(theme.onAccent(dark)));i.setBackground(oval(theme.accent(dark)));i.setPadding(dp(17),dp(17),dp(17),dp(17));
@@ -1771,6 +1804,7 @@ public class PairedActivity extends Activity {
         if(request==RESTORE_BACKUP){if(result==RESULT_OK&&data!=null&&data.getData()!=null)restoreBackup(data.getData());return;}
         if(request==PICK_BACKGROUND){if(result==RESULT_OK&&data!=null&&data.getData()!=null)saveBackgroundPhoto(data.getData());return;}
         if(request==PICK_GROUP_PHOTO){if(result==RESULT_OK&&data!=null&&data.getData()!=null)saveGroupPhoto(data.getData());return;}
+        if(request==PICK_CONTACT){if(result==RESULT_OK&&data!=null&&data.getData()!=null)sharePickedContact(data.getData());return;}
         if(request==TAKE_PHOTO){File shot=pendingCapture;pendingCapture=null;if(shot==null)return;
             if(result==RESULT_OK&&shot.length()>0){outgoing.add(new Outgoing(shot,"Photo.jpg","image/jpeg"));outgoingChat=chatId;renderAttachments();}else shot.delete();return;}
         if((request!=PICK_MEDIA&&request!=PICK_FILES)||result!=RESULT_OK||data==null)return;List<Uri> uris=new ArrayList<>();

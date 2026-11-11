@@ -20,6 +20,18 @@ public final class OnDeviceSmoke extends Instrumentation {
             .put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","Line "+i+" of a long conversation")))),0,true);}
     /** The inbox's first row tag, or null while the list is being rebuilt (it can be empty for a frame). */
     private static Object firstRow(android.view.ViewGroup list,int tag){android.view.View v=list==null?null:list.getChildAt(0);return v==null?null:v.getTag(tag);}
+    /** ⊕ → Contact puts "Name: number" into the message box: on its own line after words, with a bare-digits number written out. */
+    private void checkContactText(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();
+        try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'contact-check',name:'Contact Check',type:'RCS',participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'cc',number:'+15550108888'},fullName:'Contact Check'}]}"));}
+        java.lang.reflect.Method openChat=PairedActivity.class.getDeclaredMethod("thread",String.class),leaveChat=PairedActivity.class.getDeclaredMethod("inbox"),
+            insert=PairedActivity.class.getDeclaredMethod("insertContact",String.class,String.class,String.class),readable=PairedActivity.class.getDeclaredMethod("readableNumber",String.class);
+        for(java.lang.reflect.Method m:new java.lang.reflect.Method[]{openChat,leaveChat,insert,readable})m.setAccessible(true);
+        java.lang.reflect.Field box=PairedActivity.class.getDeclaredField("composer");box.setAccessible(true);String[] got=new String[2];
+        runOnMainSync(()->{try{openChat.invoke(a,"contact-check");android.widget.EditText e=(android.widget.EditText)box.get(a);e.setText("Here's his number");e.setSelection(e.getText().length());
+            got[1]=(String)readable.invoke(a,"4795550134");insert.invoke(a,"Ben Smith",got[1],"");got[0]=e.getText().toString();e.setText("");leaveChat.invoke(a);}catch(Exception x){throw new RuntimeException(x);}});
+        try(PairedStore store=new PairedStore(ctx)){store.deleteChat("contact-check");}
+        check(got[1].contains("555-0134"),"A bare-digits number wasn't written out: "+got[1]);
+        check(got[0].equals("Here's his number\nBen Smith: "+got[1]),"The contact didn't go into the message box as expected: "+got[0]);}
     private String shell(String command)throws Exception{android.os.ParcelFileDescriptor out=getUiAutomation().executeShellCommand(command);
         try(java.io.InputStream in=new android.os.ParcelFileDescriptor.AutoCloseInputStream(out)){return new String(in.readAllBytes());}}
     /** This app's notification for a chat, waiting up to ms for it (and for Android to make it a bubble when it's one). */
@@ -883,7 +895,8 @@ public final class OnDeviceSmoke extends Instrumentation {
         getTargetContext().getSharedPreferences("starred",0).edit().clear().commit();
         new ChatSettings(getTargetContext()).setBackground("smoke","");
         checkNotificationPrivacy();
+        checkContactText((PairedActivity)activity);
         checkBubbleStepsAside((PairedActivity)activity);
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, contact as text, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }
