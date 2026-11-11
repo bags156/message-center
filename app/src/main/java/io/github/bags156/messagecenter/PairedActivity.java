@@ -140,7 +140,7 @@ public class PairedActivity extends Activity {
     private final android.os.Handler loginTimer=new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable loginPoll=this::pollLogin;
     private final BroadcastReceiver receiver=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){
-        if("PHOTO_TEXT".equals(i.getStringExtra("kind"))){searchedFor="";if(screen.equals("inbox"))renderInbox();return;}
+        if("PHOTO_TEXT".equals(i.getStringExtra("kind"))){searchedFor="";if(screen.equals("inbox")){ui.removeCallbacks(refreshScreen);ui.postDelayed(refreshScreen,REDRAW_BURST_MS);}return;}
         if("TYPING".equals(i.getStringExtra("kind"))){updateTyping();return;}
         if(!bubble() && !PairedService.emoji().isEmpty() && !shownEmoji.equals(PairedService.emoji())){destroyLogin();pairing();return;}
         if(screen.equals("pair") && PairedService.ready()){CookieManager.getInstance().removeAllCookies(null);inbox();askNotifications();return;}
@@ -350,7 +350,7 @@ public class PairedActivity extends Activity {
             chip.setOnClickListener(v->{if(f[1].equals("from:")){pickFromFilter(search);return;}String t=search.getText().toString();
                 String next=t.contains(f[1])?t.replace(f[1],"").replaceAll("\\s+"," ").trim():(t.replaceAll("last:\\d+d","").trim()+" "+f[1]).trim();search.setText(next);search.setSelection(next.length());});}
         search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){query=s.toString();renderInbox();}public void afterTextChanged(Editable e){}});
-        scroll=new ScrollView(this);scroll.setVerticalScrollBarEnabled(false);items=vertical();items.setPadding(0,dp(4),0,dp(96));scroll.addView(items);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        scroll=new InboxScrollView(this);scroll.setVerticalScrollBarEnabled(false);items=vertical();items.setPadding(0,dp(4),0,dp(96));scroll.addView(items);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         scroll.setOnScrollChangeListener((v,x,y,ox,oy)->{View child=scroll.getChildAt(0);if(child!=null&&y+scroll.getHeight()>=child.getHeight()-dp(200))loadOlderChats();});
         TextView start=new TextView(this);start.setText("Start chat");start.setTextSize(16);start.setTextColor(onFab);start.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));
         start.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_chat,0,0,0);start.setCompoundDrawableTintList(ColorStateList.valueOf(onFab));start.setCompoundDrawablePadding(dp(12));
@@ -410,6 +410,9 @@ public class PairedActivity extends Activity {
     private void refreshInbox(boolean force){if(!PairedService.ready()||busy)return;long now=System.currentTimeMillis();if(!force&&now-lastInboxRefresh<30_000)return;lastInboxRefresh=now;loadChats(false);}
     private void loadOlderChats(){if(busy||!PairedService.ready())return;if(store.page("folder:"+folder,false).isEmpty())return;loadChats(true);}
     private void renderInbox(){if(items==null||!screen.equals("inbox"))return;
+        // Replacing a touched row cancels Android's gesture; restoring an anchor also stops a fling.
+        // Coalesce live updates until the finger is up and scrolling has actually settled.
+        if(scroll instanceof InboxScrollView&&((InboxScrollView)scroll).deferUpdate(this::renderInbox))return;
         // Note the rows on screen first, so a chat moving to the top doesn't slide the ones you're looking at.
         boolean same=inboxKey().equals(drawnInboxKey);drawnInboxKey=inboxKey();List<RowSpot> keep=same?inboxSpotNow():null;int fallbackY=0;
         if(inboxPlacing!=null){scroll.getViewTreeObserver().removeOnPreDrawListener(inboxPlacing);inboxPlacing=null;}

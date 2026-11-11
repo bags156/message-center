@@ -2,7 +2,7 @@
 
 An experimental Android client for Google Messages, with the paired connection running **on the phone**. No additional server, Matrix account, or Beeper account is required. Google Messages remains the default SMS/RCS app and must stay installed and online.
 
-**Current release: 1.5.0. The paired-client architecture began in 0.2.0.** It replaces the notification-based approach in 0.1.x. Compiling and offline device tests do not verify Google sign-in, live RCS delivery, complete history, or ColorOS background reliability. Those require testing on a paired phone.
+**Current release: 1.5.1. The paired-client architecture began in 0.2.0.** It replaces the notification-based approach in 0.1.x. Compiling and offline device tests do not verify Google sign-in, live RCS delivery, complete history, or ColorOS background reliability. Those require testing on a paired phone.
 
 ## Install and connect
 

@@ -390,7 +390,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         rootF.setAccessible(true);scrollF.setAccessible(true);itemsF.setAccessible(true);
         java.lang.reflect.Method render=PairedActivity.class.getDeclaredMethod("renderInbox");render.setAccessible(true);
         android.widget.ScrollView[] box=new android.widget.ScrollView[1];android.widget.LinearLayout[] list=new android.widget.LinearLayout[1];
-        runOnMainSync(()->{try{box[0]=new android.widget.ScrollView(a);list[0]=new android.widget.LinearLayout(a);list[0].setOrientation(android.widget.LinearLayout.VERTICAL);box[0].addView(list[0]);
+        runOnMainSync(()->{try{box[0]=new InboxScrollView(a);list[0]=new android.widget.LinearLayout(a);list[0].setOrientation(android.widget.LinearLayout.VERTICAL);box[0].addView(list[0]);
             ((android.view.ViewGroup)rootF.get(a)).addView(box[0],new android.widget.LinearLayout.LayoutParams(-1,Math.round(400*a.getResources().getDisplayMetrics().density)));
             scrollF.set(a,box[0]);itemsF.set(a,list[0]);render.invoke(a);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
         int slack=Math.round(3*a.getResources().getDisplayMetrics().density);
@@ -417,8 +417,39 @@ public final class OnDeviceSmoke extends Instrumentation {
         runOnMainSync(()->{try{render.invoke(a);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
         runOnMainSync(()->{y[0]=box[0].getScrollY();android.view.View v=row.apply("row20");y[1]=v==null?-1:v.getTop();});
         check(y[0]==0&&y[1]>=0&&y[1]<Math.round(80*a.getResources().getDisplayMetrics().density),"At the top, a chat that moved up isn't in view (scroll "+y[0]+", row at "+y[1]+")");
+        // Live refreshes must not remove the touched view or reset an in-progress vertical drag.
+        float density=a.getResources().getDisplayMetrics().density;
+        runOnMainSync(()->{box[0].scrollTo(0,row.apply("row10").getTop());at[0]=row.apply("row10");y[0]=box[0].getScrollY();});
+        long down=android.os.SystemClock.uptimeMillis();float x=box[0].getWidth()*.5f,start=box[0].getHeight()*.8f;
+        inboxTouch(box[0],down,android.view.MotionEvent.ACTION_DOWN,x,start);Thread.sleep(20);
+        inboxTouch(box[0],down,android.view.MotionEvent.ACTION_MOVE,x,start-40*density);Thread.sleep(20);
+        inboxTouch(box[0],down,android.view.MotionEvent.ACTION_MOVE,x,start-90*density);waitForIdleSync();
+        runOnMainSync(()->y[1]=box[0].getScrollY());check(y[1]>y[0],"A vertical inbox drag didn't scroll before a refresh");
+        int duringDrag=y[1];
+        try(PairedStore store=new PairedStore(getTargetContext())){store.chat(new JSONObject("{conversationID:'row25',name:'Row 25',type:'RCS',lastMessageTimestamp:"+(newest+240_000_000L)+","+people+"}"));}
+        runOnMainSync(()->{try{for(int n=0;n<4;n++)render.invoke(a);}catch(Exception e){throw new RuntimeException(e);}});
+        // A stationary finger still owns this gesture, even after the refresh debounce expires.
+        Thread.sleep(240);waitForIdleSync();
+        check(row.apply("row10")==at[0],"An inbox update replaced rows while a finger was held down");
+        inboxTouch(box[0],down,android.view.MotionEvent.ACTION_MOVE,x,start-170*density);waitForIdleSync();
+        runOnMainSync(()->y[1]=box[0].getScrollY());check(y[1]>duringDrag,"A background inbox update cancelled the ongoing drag");
+        inboxTouch(box[0],down,android.view.MotionEvent.ACTION_CANCEL,x,start-170*density);
+        boolean applied=false;for(int wait=0;wait<100&&!applied;wait++){Thread.sleep(25);runOnMainSync(()->{});applied=row.apply("row10")!=at[0]&&"row25".equals(list[0].getChildAt(0).getTag(rowTag));}
+        check(applied,"Deferred inbox updates weren't applied after the finger lifted");
+        // Momentum scrolling must continue too; restoring an anchor mid-fling used to stop it.
+        runOnMainSync(()->{box[0].scrollTo(0,row.apply("row8").getTop());at[0]=row.apply("row10");y[0]=box[0].getScrollY();box[0].fling(Math.round(2400*density));});
+        try(PairedStore store=new PairedStore(getTargetContext())){store.chat(new JSONObject("{conversationID:'row23',name:'Row 23',type:'RCS',lastMessageTimestamp:"+(newest+300_000_000L)+","+people+"}"));}
+        runOnMainSync(()->{try{for(int n=0;n<4;n++)render.invoke(a);}catch(Exception e){throw new RuntimeException(e);}});
+        Thread.sleep(80);runOnMainSync(()->y[1]=box[0].getScrollY());
+        check(row.apply("row10")==at[0],"A live inbox refresh replaced rows during a fling");
+        check(y[1]>y[0],"A live inbox refresh stopped momentum scrolling");
+        applied=false;for(int wait=0;wait<240&&!applied;wait++){Thread.sleep(25);runOnMainSync(()->{});applied=row.apply("row10")!=at[0]&&"row23".equals(list[0].getChildAt(0).getTag(rowTag));}
+        check(applied,"The latest inbox update didn't appear after the fling settled");
         try(PairedStore store=new PairedStore(getTargetContext())){for(int i=0;i<30;i++)store.deleteChat("row"+i);}
         onMain(a,"inbox");}
+    private void inboxTouch(android.widget.ScrollView box,long down,int action,float x,float y){runOnMainSync(()->{
+        android.view.MotionEvent event=android.view.MotionEvent.obtain(down,android.os.SystemClock.uptimeMillis(),action,x,y,0);
+        try{box.dispatchTouchEvent(event);}finally{event.recycle();}});}
     @Override public void onStart(){Bundle result=new Bundle();try {
         // Real JNI load on Android, not a mocked Java bridge.
         new MediaOutbox(getTargetContext()).clear();PhotoText.clear(getTargetContext());
