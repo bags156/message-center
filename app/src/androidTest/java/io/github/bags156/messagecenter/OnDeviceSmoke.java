@@ -18,6 +18,8 @@ public final class OnDeviceSmoke extends Instrumentation {
         store.message(new JSONObject().put("messageID",chat+i).put("conversationID",chat).put("participantID",mine?"me":"p1").put("timestamp",1794000400000000L+i*60_000_000L)
             .put("messageStatus",new JSONObject().put("status",mine?"OUTGOING_DELIVERED":"INCOMING_COMPLETE"))
             .put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","Line "+i+" of a long conversation")))),0,true);}
+    /** The inbox's first row tag, or null while the list is being rebuilt (it can be empty for a frame). */
+    private static Object firstRow(android.view.ViewGroup list,int tag){android.view.View v=list==null?null:list.getChildAt(0);return v==null?null:v.getTag(tag);}
     private String shell(String command)throws Exception{android.os.ParcelFileDescriptor out=getUiAutomation().executeShellCommand(command);
         try(java.io.InputStream in=new android.os.ParcelFileDescriptor.AutoCloseInputStream(out)){return new String(in.readAllBytes());}}
     /** This app's notification for a chat, waiting up to ms for it (and for Android to make it a bubble when it's one). */
@@ -519,7 +521,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         inboxTouch(box[0],down,android.view.MotionEvent.ACTION_MOVE,x,start-170*density);waitForIdleSync();
         runOnMainSync(()->y[1]=box[0].getScrollY());check(y[1]>duringDrag,"A background inbox update cancelled the ongoing drag");
         inboxTouch(box[0],down,android.view.MotionEvent.ACTION_CANCEL,x,start-170*density);
-        boolean applied=false;for(int wait=0;wait<100&&!applied;wait++){Thread.sleep(25);runOnMainSync(()->{});applied=row.apply("row10")!=at[0]&&"row25".equals(list[0].getChildAt(0).getTag(rowTag));}
+        boolean applied=false;for(int wait=0;wait<100&&!applied;wait++){Thread.sleep(25);runOnMainSync(()->{});applied=row.apply("row10")!=at[0]&&"row25".equals(firstRow(list[0],rowTag));}
         check(applied,"Deferred inbox updates weren't applied after the finger lifted");
         // Momentum scrolling must continue too; restoring an anchor mid-fling used to stop it.
         runOnMainSync(()->{box[0].scrollTo(0,row.apply("row8").getTop());at[0]=row.apply("row10");y[0]=box[0].getScrollY();box[0].fling(Math.round(2400*density));});
@@ -528,7 +530,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         Thread.sleep(80);runOnMainSync(()->y[1]=box[0].getScrollY());
         check(row.apply("row10")==at[0],"A live inbox refresh replaced rows during a fling");
         check(y[1]>y[0],"A live inbox refresh stopped momentum scrolling");
-        applied=false;for(int wait=0;wait<240&&!applied;wait++){Thread.sleep(25);runOnMainSync(()->{});applied=row.apply("row10")!=at[0]&&"row23".equals(list[0].getChildAt(0).getTag(rowTag));}
+        applied=false;for(int wait=0;wait<240&&!applied;wait++){Thread.sleep(25);runOnMainSync(()->{});applied=row.apply("row10")!=at[0]&&"row23".equals(firstRow(list[0],rowTag));}
         check(applied,"The latest inbox update didn't appear after the fling settled");
         try(PairedStore store=new PairedStore(getTargetContext())){for(int i=0;i<30;i++)store.deleteChat("row"+i);}
         onMain(a,"inbox");}
