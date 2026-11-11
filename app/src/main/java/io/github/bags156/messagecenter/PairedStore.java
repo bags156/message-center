@@ -115,12 +115,18 @@ final class PairedStore extends SQLiteOpenHelper {
     synchronized JSONObject chat(String id) {try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM chats WHERE id=?",new String[]{id})){return c.moveToFirst()?json(c.getString(0)):null;}}
     /** The saved text of each chat chats() handed out, so the inbox can tell cheaply whether a chat changed. */
     private final java.util.Map<JSONObject,String> saved=java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+    /**
+     * Chats as parsed from their saved text, reused while the text is unchanged: the inbox reads
+     * every chat on each redraw. So chats() hands out shared objects, which callers must not change.
+     */
+    private final java.util.Map<String,Object[]> parsed=new java.util.HashMap<>();
     /** The chat as saved, when it came from chats(); otherwise its text now. */
     String savedText(JSONObject chat){String text=saved.get(chat);return text!=null?text:chat.toString();}
     synchronized List<JSONObject> chats(String query,int folder) {
         List<JSONObject> out=new ArrayList<>();String q=query.toLowerCase(java.util.Locale.ROOT);
-        try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM chats WHERE folder=? ORDER BY updated DESC",new String[]{String.valueOf(folder)})) {
-            while(c.moveToNext()) {String text=c.getString(0);JSONObject o=json(text);saved.put(o,text);String title=PairedProtocol.title(o),preview=PairedProtocol.string(o.optJSONObject("latestMessage"),"displayContent");
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT id,data FROM chats WHERE folder=? ORDER BY updated DESC",new String[]{String.valueOf(folder)})) {
+            while(c.moveToNext()) {String id=c.getString(0),text=c.getString(1);Object[] hit=parsed.get(id);JSONObject o;
+                if(hit!=null&&text.equals(hit[0]))o=(JSONObject)hit[1];else{o=json(text);parsed.put(id,new Object[]{text,o});}saved.put(o,text);String title=PairedProtocol.title(o),preview=PairedProtocol.string(o.optJSONObject("latestMessage"),"displayContent");
                 if(q.isEmpty() || (title+" "+preview).toLowerCase(java.util.Locale.ROOT).contains(q))out.add(o);}
         }return out;
     }
@@ -197,5 +203,5 @@ final class PairedStore extends SQLiteOpenHelper {
         ContentValues v=new ContentValues();v.put("id",id);v.put("cursor",cursor);v.put("note",note);getWritableDatabase().insertWithOnConflict("pages",null,v,SQLiteDatabase.CONFLICT_REPLACE);
     }
     synchronized String page(String id,boolean note) {try(Cursor c=getReadableDatabase().rawQuery("SELECT cursor,note FROM pages WHERE id=?",new String[]{id})){return c.moveToFirst()?c.getString(note?1:0):"";}}
-    synchronized void clear() {SQLiteDatabase db=getWritableDatabase();db.beginTransaction();try{for(String table:new String[]{"chats","items","pages"})db.delete(table,null,null);db.setTransactionSuccessful();}finally{db.endTransaction();}}
+    synchronized void clear() {parsed.clear();SQLiteDatabase db=getWritableDatabase();db.beginTransaction();try{for(String table:new String[]{"chats","items","pages"})db.delete(table,null,null);db.setTransactionSuccessful();}finally{db.endTransaction();}}
 }
