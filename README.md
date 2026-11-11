@@ -64,7 +64,7 @@ This is an unofficial integration using an undocumented Google protocol. Sign-in
 
 History paging follows the responses Google supplies; reaching the end is **not proof of a complete phone archive**. SMS fallback reaction text can still be present when Google exposes it as a regular SMS instead of structured reaction metadata. Structured reactions use exact IDs and do not guess matches from quoted text.
 
-Media viewing/sending, voice messages, new groups, scheduled text sending, and a durable offline text outbox are implemented. An unread launcher number remains outside the agreed scope. Ambiguous message-send outcomes are not automatically retried.
+Media viewing/sending, voice messages, new groups, scheduled text sending, and a durable offline text outbox are implemented. Undo send holds a text for 3 to 30 seconds (Settings → Undo send, 5 by default, or Off) so you can tap it to take it back; it still sends if you close the app. An unread launcher number remains outside the agreed scope. Ambiguous message-send outcomes are not automatically retried.
 
 Reply navigation uses provider message IDs and exact identity aliases, with saved references retained across read/delivery updates. Tap an unlinked reply to refresh its source page. Native Google Messages may have a quote that its paired connection does not expose; when no usable reference is supplied, you can choose the actual earlier message and save that link locally. The app does not infer the original from nearby messages or similar text.
 
