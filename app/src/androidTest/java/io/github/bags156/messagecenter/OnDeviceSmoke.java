@@ -56,17 +56,17 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(shown!=null&&(shown.flags&android.app.Notification.FLAG_BUBBLE)!=0,"The check notification didn't become a bubble ("+(shown==null?"not posted":"flags "+shown.flags)+")");
         try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'bubble-check',name:'Sam Example',type:'RCS',participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'sam',number:'+15550109999'},fullName:'Sam Example'}]}"));}
         // Opened the way you open it: the chat screen also quiets that chat's notification, which used to post the bubble straight back.
-        java.lang.reflect.Method open=PairedActivity.class.getDeclaredMethod("thread",String.class),back=PairedActivity.class.getDeclaredMethod("inbox");open.setAccessible(true);back.setAccessible(true);
-        runOnMainSync(()->{try{open.invoke(a,"bubble-check");}catch(Exception e){throw new RuntimeException(e);}});
+        java.lang.reflect.Method openChat=PairedActivity.class.getDeclaredMethod("thread",String.class),leaveChat=PairedActivity.class.getDeclaredMethod("inbox");openChat.setAccessible(true);leaveChat.setAccessible(true);
+        runOnMainSync(()->{try{openChat.invoke(a,"bubble-check");}catch(Exception e){throw new RuntimeException(e);}});
         check(gone(nm,"bubble-check",3000),"Opening a chat left its bubble on screen");
         // And it stays away: Android finishing the removal late, the chat screen coming back, Google saying it's read.
         Thread.sleep(1500);runOnMainSync(()->PairedService.clearNotification(ctx,"bubble-check"));
         Thread.sleep(ChatBubbles.RESTORE_DELAY_MS+600);check(gone(nm,"bubble-check",0),"The bubble came back while its chat was open");
         // Switching away and straight back inside the delay doesn't flash it.
-        runOnMainSync(()->ChatBubbles.showing(ctx,"no-bubble"));Thread.sleep(300);runOnMainSync(()->{try{open.invoke(a,"bubble-check");}catch(Exception e){throw new RuntimeException(e);}});
+        runOnMainSync(()->ChatBubbles.showing(ctx,"no-bubble"));Thread.sleep(300);runOnMainSync(()->{try{openChat.invoke(a,"bubble-check");}catch(Exception e){throw new RuntimeException(e);}});
         Thread.sleep(ChatBubbles.RESTORE_DELAY_MS+600);check(gone(nm,"bubble-check",0),"The bubble came back while its chat was still open");
         // Leaving for the inbox brings it back.
-        runOnMainSync(()->{try{back.invoke(a);}catch(Exception e){throw new RuntimeException(e);}});
+        runOnMainSync(()->{try{leaveChat.invoke(a);}catch(Exception e){throw new RuntimeException(e);}});
         shown=chatNotification(nm,"bubble-check",ChatBubbles.RESTORE_DELAY_MS+4000);
         check(shown!=null&&(shown.flags&android.app.Notification.FLAG_BUBBLE)!=0,"Leaving the chat didn't bring its bubble back ("+(shown==null?"nothing":"flags "+shown.flags)+")");
         android.app.Notification.BubbleMetadata meta=shown.getBubbleMetadata();
