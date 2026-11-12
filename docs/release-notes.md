@@ -1,7 +1,7 @@
-Message Center 1.5.13.
+Message Center 1.5.14.
 
-- ⊕ → Contact now opens Message Center's own contact list instead of your phone's picker. Each person is listed once, with each of their numbers once, even when the same number is saved several times (Google account, SIM, other apps) or the same person is saved twice. Type to search; pick a number if they have more than one.
-- Screenshots work while choosing a contact (your phone's picker blocked them).
-- It needs to read your contacts, and asks the first time. Without that, Android's own picker is still available.
+- Pin a message to the top of a chat: long-press it → Pin to top of chat. It stays under the chat's name, so a gate code, address or Wi-Fi password is always one tap away. Tap it to jump to the message, tap the copy button to copy it, long-press to unpin. Up to 5 per chat (tapping moves through them). Pins are only on this phone and are included in app backups.
+- "Who's this?" for numbers you haven't saved: a chat with one shows "Not in your contacts", the name Google has for them (from a group you share or Google's contact list), the group chats you're both in (tap to open), and Save contact. Dismiss it with ×; it's gone for good once they're saved.
+- Details for a one-to-one chat now lists the group chats you're both in.
 
 Install over the existing app through Obtainium. Your pairing, conversations and settings are retained.

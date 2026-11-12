@@ -158,7 +158,7 @@ public class PairedActivity extends Activity {
     private static final long REDRAW_BURST_MS=80;private boolean drawnReady;
     private final Runnable refreshScreen=()->{if(screen.equals("inbox"))renderInbox();else if(screen.equals("chat")){renderMessages(false);markReadIfAllowed();updateTyping();}};
     @Override public void onCreate(Bundle state) {
-        super.onCreate(state);Diagnostics.init(this);HevcSandbox.init(this);GivenNames.init(this);drafts=new Drafts(this);drafts.prefs().registerOnSharedPreferenceChangeListener(draftChanged);store=new PairedStore(this);chatSettings=new ChatSettings(this);outbox=new Outbox(this);starred=new Starred(this);Nicknames.load(this);
+        super.onCreate(state);Diagnostics.init(this);HevcSandbox.init(this);GivenNames.init(this);drafts=new Drafts(this);drafts.prefs().registerOnSharedPreferenceChangeListener(draftChanged);store=new PairedStore(this);chatSettings=new ChatSettings(this);outbox=new Outbox(this);starred=new Starred(this);pins=new ChatPins(this);Nicknames.load(this);
         if(state!=null){String shot=state.getString("capture");if(shot!=null)pendingCapture=new File(shot);chatId=state.getString("chat","");replyId=state.getString("reply","");if(drafts.getOrDefault(chatId,"").isEmpty())drafts.put(chatId,state.getString("draft",""));}
         String target=getIntent().getStringExtra("chat");if(target!=null&&!target.isEmpty())chatId=target;
         // Android closed this screen in the background (or the theme changed): reopen the chat where you were reading.
@@ -674,6 +674,8 @@ public class PairedActivity extends Activity {
         else if(!number.isEmpty())bar.addView(icon(R.drawable.ic_call,ink,"Call",()->{try{startActivity(new Intent(Intent.ACTION_DIAL,Uri.parse("tel:"+number)));}catch(Exception e){toast("No phone app is available.");}}));
         ImageView more=icon(R.drawable.ic_more,ink,"More options",null);pressable(more);more.setOnClickListener(this::chatMenu);bar.addView(more);
         root.addView(bar,new LinearLayout.LayoutParams(-1,dp(64)));connection();
+        pinBar=vertical();root.addView(pinBar,new LinearLayout.LayoutParams(-1,-2));pinShown=0;renderPinBar();
+        if(c!=null){View who2=whoIsThisCard(c);if(who2!=null)root.addView(who2);}
         scroll=new ScrollView(this);scroll.setVerticalScrollBarEnabled(false);items=vertical();items.setPadding(dp(12),dp(8),dp(12),dp(8));
         // A short chat sits at the bottom, just above the message box, like any messaging app.
         scroll.setFillViewport(true);items.setGravity(Gravity.BOTTOM);scroll.addView(items);
@@ -1277,6 +1279,10 @@ public class PairedActivity extends Activity {
         String fx=effectOf(m);if(!fx.isEmpty()&&!Effects.INK.equals(fx)&&ValueAnimator.areAnimatorsEnabled())sheetAction(content,"Replay "+Effects.label(fx),()->{d[0].dismiss();replayEffect(m,fx);});
         String code=PairedProtocol.outgoing(m,c)?"":ChatText.oneTimeCode(PairedProtocol.text(m));if(!code.isEmpty())sheetAction(content,"Copy code "+code,()->{d[0].dismiss();copyCode(code);});
         sheetAction(content,starred.has(m.optString("messageID"))?"Unstar":"Star",()->{d[0].dismiss();starred.toggle(m);renderMessages(false);});
+        boolean pinnedHere=pins.has(chatId,m.optString("messageID"));
+        sheetAction(content,pinnedHere?"Unpin from top of chat":"Pin to top of chat",()->{d[0].dismiss();String mid=m.optString("messageID");
+            if(pinnedHere)pins.unpin(chatId,mid);else if(pins.pin(chatId,mid,pinText(m),PairedProtocol.time(m)))toast("Up to "+ChatPins.MAX+" pins per chat: the oldest was unpinned.");
+            pinShown=0;renderPinBar();});
         String typed=PairedProtocol.text(m),plain=ChatText.replyFallbackBody(typed)!=null?ChatText.replyFallbackBody(typed):typed;
         if(!plain.isEmpty())sheetAction(content,"Copy text",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Message",plain));});
         if(!plain.isEmpty())sheetAction(content,"Select text…",()->{d[0].dismiss();selectText(plain);});
@@ -1354,6 +1360,13 @@ public class PairedActivity extends Activity {
             LinearLayout r=row();r.setPadding(dp(4),dp(10),dp(4),dp(10));pressable(r);r.addView(personAvatar(p,name,44));
             LinearLayout texts=vertical();texts.setPadding(dp(16),0,dp(8),0);texts.addView(text(name,17,ink,false));if(!number.isEmpty()&&!number.equals(name))texts.addView(text(number,14,muted,false));
             r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));r.setOnClickListener(v->memberActions(p));content.addView(r);}
+        // One-to-one: the group chats you're both in.
+        if(!group){JSONObject other=PairedProtocol.other(c);List<JSONObject> common=WhoIsThis.find(PairedProtocol.number(other),id,allChats(),null).groups;
+            if(!common.isEmpty()){gap(content,16);content.addView(text("Groups in common",14,muted,true));gap(content,4);
+                for(JSONObject g:common){LinearLayout r=row();r.setPadding(dp(4),dp(10),dp(4),dp(10));pressable(r);r.addView(avatar(g,44));
+                    LinearLayout texts=vertical();texts.setPadding(dp(16),0,dp(8),0);texts.addView(text(PairedProtocol.title(g),17,ink,false));
+                    texts.addView(text((PairedProtocol.members(g).size()+1)+" people",14,muted,false));r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));
+                    r.setOnClickListener(v->thread(g.optString("conversationID")));content.addView(r);}}}
         if(group){LinearLayout me=row();me.setPadding(dp(4),dp(10),dp(4),dp(10));me.addView(personAvatar(null,"You",44));TextView you=text("You",17,ink,false);you.setPadding(dp(16),0,0,0);me.addView(you);content.addView(me);}
         // What's been shared here; filled in once it's been looked up.
         LinearLayout shared=vertical();content.addView(shared,new LinearLayout.LayoutParams(-1,-2));
@@ -1383,6 +1396,61 @@ public class PairedActivity extends Activity {
             sheetAction(content,archived?"Unarchive":"Archive",()->archive(c,!archived));sheetAction(content,blocked?"Unblock":"Block…",()->block(c));sheetAction(content,"Delete conversation…",()->deleteChat(c));}
         if(!bubble())sheetAction(content,"Open as bubble",()->openBubble(id));
         requestMemberPhotos(c,()->{if(screen.equals("details")&&chatId.equals(id))details();});}
+    // ---- Pinned messages and "Who's this?" (both under a chat's header) ----
+    private ChatPins pins;private LinearLayout pinBar;private int pinShown;
+    /** A pinned message in a line: its words, or what it is when it's only a photo or file. */
+    private String pinText(JSONObject m){String body=displayBody(m).trim();if(!body.isEmpty())return body;
+        for(JSONObject media:PairedProtocol.media(m)){String kind=PairedProtocol.mediaKind(media);return kind.equals("image")?"Photo":kind.equals("video")?"Video":kind.equals("audio")?"Voice message":"File";}
+        return "Message";}
+    /**
+     * The pinned message under the header: tap to go to it (with several, each tap moves on to the
+     * next), copy it with the button, long-press to unpin. Only on this phone.
+     */
+    private void renderPinBar(){if(pinBar==null)return;pinBar.removeAllViews();List<JSONObject> list=pins.list(chatId);
+        if(list.isEmpty()){pinBar.setVisibility(View.GONE);return;}pinBar.setVisibility(View.VISIBLE);if(pinShown>=list.size())pinShown=0;
+        JSONObject p=list.get(pinShown);String mid=p.optString("id"),words=p.optString("text");
+        LinearLayout r=row();r.setGravity(Gravity.CENTER_VERTICAL);r.setPadding(dp(12),dp(6),0,dp(6));r.setBackground(shape(surface,16));pressable(r);
+        ImageView mark=new ImageView(this);mark.setImageResource(R.drawable.ic_pin);mark.setImageTintList(ColorStateList.valueOf(muted));r.addView(mark,new LinearLayout.LayoutParams(dp(18),dp(18)));
+        LinearLayout texts=vertical();texts.setPadding(dp(10),0,dp(4),0);
+        if(list.size()>1)texts.addView(text("Pinned "+(pinShown+1)+" of "+list.size(),12,muted,false));
+        TextView t=text(words,15,ink,false);t.setMaxLines(2);t.setEllipsize(TextUtils.TruncateAt.END);texts.addView(t);r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));
+        ImageView copy=icon(R.drawable.ic_copy,muted,"Copy pinned message",()->{getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Pinned message",words));toast("Copied");});r.addView(copy);
+        r.setContentDescription("Pinned message: "+words+". Tap to go to it, long-press to unpin.");
+        r.setOnClickListener(v->{if(store.message(mid)==null)toast("That message isn't on this phone anymore. Long-press to unpin it.");else jumpTo(mid);
+            if(list.size()>1){pinShown=(pinShown+1)%list.size();renderPinBar();}});
+        r.setOnLongClickListener(v->{List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
+            for(JSONObject q:list){String qid=q.optString("id"),qt=q.optString("text");labels.add("Unpin “"+(qt.length()>40?qt.substring(0,39)+"…":qt)+"”");actions.add(()->{pins.unpin(chatId,qid);pinShown=0;renderPinBar();});}
+            if(list.size()>1){labels.add("Unpin all");actions.add(()->{pins.clear(chatId);renderPinBar();});}
+            menuSheet("Pinned messages",labels,actions);return true;});
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.setMargins(dp(8),dp(2),dp(8),dp(4));pinBar.addView(r,lp);}
+    /** Saved anywhere on this phone: Google's contact link first, then the phone's own contacts (when allowed). */
+    private boolean savedContact(JSONObject other,String number){if(PairedProtocol.known(other))return true;if(!PhoneContacts.allowed(this))return false;
+        try(android.database.Cursor c=getContentResolver().query(Uri.withAppendedPath(android.provider.ContactsContract.PhoneLookup.CONTENT_FILTER_URI,Uri.encode(number)),new String[]{android.provider.ContactsContract.PhoneLookup._ID},null,null,null)){return c!=null&&c.moveToFirst();}
+        catch(Exception e){return false;}}
+    private List<JSONObject> allChats(){List<JSONObject> all=new ArrayList<>();for(int folder:new int[]{1,2})all.addAll(store.chats("",folder));return all;}
+    /**
+     * "Who's this?" for a number you haven't saved: the name Google has for them, the group chats
+     * you're both in, and Save contact. Dismissed per chat; gone once they're saved.
+     */
+    private View whoIsThisCard(JSONObject c){JSONObject other=PairedProtocol.other(c);String id=chatId;if(other==null)return null;String number=PairedProtocol.number(other);
+        android.content.SharedPreferences seen=getSharedPreferences("whois",MODE_PRIVATE);
+        if(number.isEmpty()||SmartText.shortCodeSender(number)||seen.getBoolean(id,false)||savedContact(other,number))return null;
+        WhoIsThis.Found f=WhoIsThis.find(number,id,allChats(),contacts==null?null:contacts.optJSONArray("all"));
+        List<String> titles=new ArrayList<>();for(JSONObject g:f.groups)titles.add(PairedProtocol.title(g));
+        LinearLayout card=vertical();card.setPadding(dp(14),dp(10),dp(4),dp(10));card.setBackground(shape(surface,16));
+        LinearLayout top=row();top.setGravity(Gravity.CENTER_VERTICAL);TextView head=text("Not in your contacts",15,ink,true);top.addView(head,new LinearLayout.LayoutParams(0,-2,1));
+        View[] holder=new View[1];
+        top.addView(icon(R.drawable.ic_close,muted,"Dismiss",()->{seen.edit().putBoolean(id,true).apply();if(holder[0]!=null)holder[0].setVisibility(View.GONE);}));card.addView(top);
+        if(!f.name.isEmpty())card.addView(text("Google lists them as "+f.name,14,muted,false));
+        TextView groups=text(WhoIsThis.alsoIn(titles),14,f.groups.isEmpty()?muted:ink,false);card.addView(groups);
+        if(!f.groups.isEmpty()){pressable(groups);groups.setOnClickListener(v->{if(f.groups.size()==1){thread(f.groups.get(0).optString("conversationID"));return;}
+            List<Runnable> open=new ArrayList<>();for(JSONObject g:f.groups)open.add(()->thread(g.optString("conversationID")));menuSheet("Groups you're both in",titles,open);});}
+        TextView save=text("Save contact",15,fab,true);save.setPadding(0,dp(8),dp(12),0);pressable(save);
+        save.setOnClickListener(v->{Intent i=new Intent(android.provider.ContactsContract.Intents.Insert.ACTION).setType(android.provider.ContactsContract.RawContacts.CONTENT_TYPE)
+            .putExtra(android.provider.ContactsContract.Intents.Insert.PHONE,number);if(!f.name.isEmpty())i.putExtra(android.provider.ContactsContract.Intents.Insert.NAME,f.name);
+            try{startActivity(i);}catch(Exception e){toast("No contacts app is available.");}});
+        card.addView(save,new LinearLayout.LayoutParams(-2,-2));
+        FrameLayout wrap=new FrameLayout(this);FrameLayout.LayoutParams cl=new FrameLayout.LayoutParams(-1,-2);cl.setMargins(dp(8),dp(2),dp(8),dp(4));wrap.addView(card,cl);holder[0]=wrap;return wrap;}
     private void memberActions(JSONObject p){String number=PairedProtocol.number(p);if(number.isEmpty())return;String name=PairedProtocol.name(p);
         menuSheet(name,java.util.Arrays.asList("Message","Call","Copy number","Set a nickname…"),java.util.Arrays.<Runnable>asList(()->startChat(number),
             ()->{try{startActivity(new Intent(Intent.ACTION_DIAL,Uri.parse("tel:"+number)));}catch(Exception e){toast("No phone app is available.");}},

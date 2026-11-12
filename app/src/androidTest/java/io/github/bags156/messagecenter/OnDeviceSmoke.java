@@ -48,6 +48,40 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(shown[0]==1,"An accepted text wasn't shown while waiting for Google's copy ("+shown[0]+")");
         check(shown[1]==1,"A sent text was drawn "+shown[1]+" times while Google's copy and the queued one both existed");
         check(removed&&shown[2]==1,"Google's copy didn't replace the queued text ("+removed+", "+shown[2]+")");}
+    /**
+     * A chat with a number you haven't saved says who it might be (the name Google has, the groups
+     * you share) until dismissed; Details lists groups in common; a pinned message sits under the
+     * header, survives reopening the chat, and goes when unpinned.
+     */
+    private void checkPinsAndWhoIsThis(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();long now=System.currentTimeMillis();
+        try(PairedStore store=new PairedStore(ctx)){
+            store.chat(new JSONObject("{conversationID:'who-check',type:'RCS',lastMessageTimestamp:"+now*1000+",participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'wc',number:'+15550106666'}}]}"));
+            store.chat(new JSONObject("{conversationID:'who-group',name:'Pickup crew',type:'RCS',lastMessageTimestamp:"+now*1000+",participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'wc2',number:'(555) 010-6666'},fullName:'Dana Check'},{ID:{participantID:'o',number:'+15550105555'},fullName:'Other Person'}]}"));
+            store.message(new JSONObject().put("messageID","who-msg").put("conversationID","who-check").put("participantID","wc").put("timestamp",now*1000)
+                .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","The gate code is 4417")))),0,true);}
+        java.lang.reflect.Method openChat=PairedActivity.class.getDeclaredMethod("thread",String.class),leaveChat=PairedActivity.class.getDeclaredMethod("inbox"),details=PairedActivity.class.getDeclaredMethod("details"),
+            renderPins=PairedActivity.class.getDeclaredMethod("renderPinBar");
+        for(java.lang.reflect.Method m:new java.lang.reflect.Method[]{openChat,leaveChat,details,renderPins})m.setAccessible(true);
+        java.lang.reflect.Field pinsField=PairedActivity.class.getDeclaredField("pins"),barField=PairedActivity.class.getDeclaredField("pinBar");pinsField.setAccessible(true);barField.setAccessible(true);
+        java.util.function.Function<String,Integer> count=words->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(found,words,android.view.View.FIND_VIEWS_WITH_TEXT);return found.size();};
+        int[] got=new int[9];
+        try{runOnMainSync(()->{try{openChat.invoke(a,"who-check");got[0]=count.apply("Not in your contacts");got[1]=count.apply("Google lists them as Dana Check");got[2]=count.apply("Also in Pickup crew");
+                ChatPins pins=(ChatPins)pinsField.get(a);pins.pin("who-check","who-msg","The gate code is 4417",now);renderPins.invoke(a);
+                android.widget.LinearLayout bar=(android.widget.LinearLayout)barField.get(a);java.util.ArrayList<android.view.View> inBar=new java.util.ArrayList<>();bar.findViewsWithText(inBar,"gate code is 4417",android.view.View.FIND_VIEWS_WITH_TEXT);
+                got[3]=bar.getVisibility()==android.view.View.VISIBLE?inBar.size():-1;
+                details.invoke(a);got[4]=count.apply("Groups in common");got[5]=count.apply("Pickup crew");
+                openChat.invoke(a,"who-check");bar=(android.widget.LinearLayout)barField.get(a);inBar.clear();bar.findViewsWithText(inBar,"gate code is 4417",android.view.View.FIND_VIEWS_WITH_TEXT);got[6]=inBar.size();
+                pins.unpin("who-check","who-msg");renderPins.invoke(a);got[7]=bar.getVisibility()==android.view.View.GONE?1:0;
+                ctx.getSharedPreferences("whois",android.content.Context.MODE_PRIVATE).edit().putBoolean("who-check",true).commit();openChat.invoke(a,"who-check");got[8]=count.apply("Not in your contacts");
+                leaveChat.invoke(a);}catch(Exception x){throw new RuntimeException(x);}});}
+        finally{ctx.getSharedPreferences("whois",android.content.Context.MODE_PRIVATE).edit().remove("who-check").commit();new ChatPins(ctx).clear("who-check");
+            try(PairedStore store=new PairedStore(ctx)){store.deleteChat("who-check");store.deleteChat("who-group");}}
+        check(got[0]==1&&got[1]==1&&got[2]==1,"A number you haven't saved didn't get its Who's this card: "+got[0]+","+got[1]+","+got[2]);
+        check(got[3]==1,"The pinned message didn't show under the header ("+got[3]+")");
+        check(got[4]==1&&got[5]>=1,"Details didn't list the group in common ("+got[4]+","+got[5]+")");
+        check(got[6]==1,"The pin didn't survive reopening the chat");
+        check(got[7]==1,"Unpinning didn't hide the pin bar");
+        check(got[8]==0,"The Who's this card came back after it was dismissed");}
     /** The newest raw contact the shell just added: the highest "_id=12" it lists (arguments can't hold spaces, so no "DESC"). */
     private String newestRawContact()throws Exception{java.util.regex.Matcher m=java.util.regex.Pattern.compile("_id=(\\d+)").matcher(shell("content query --uri content://com.android.contacts/raw_contacts --projection _id"));
         long best=-1;while(m.find())best=Math.max(best,Long.parseLong(m.group(1)));return best<0?"":String.valueOf(best);}
@@ -950,8 +984,9 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkNotificationPrivacy();
         checkContactText((PairedActivity)activity);
         checkContactPickerDeduplicates();
+        checkPinsAndWhoIsThis((PairedActivity)activity);
         checkSentTextStays((PairedActivity)activity);
         checkBubbleStepsAside((PairedActivity)activity);
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }
