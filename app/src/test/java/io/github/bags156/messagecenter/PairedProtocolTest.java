@@ -19,6 +19,22 @@ public class PairedProtocolTest {
         assertEquals("Participant p9",PairedProtocol.person(new JSONObject(),"p9",null));
     }
     @Test public void timestampUnitsAreNormalized(){assertEquals(1794000000000L,PairedProtocol.millis(1794000000000000L));assertEquals(1794000000000L,PairedProtocol.millis(1794000000000L));}
+    @Test public void googleNoticesAreFromNobody()throws Exception {
+        JSONObject chat=json("{participants:[{ID:{participantID:'me'},isMe:true},{ID:{participantID:'biz'},fullName:'Topgolf'}]}");
+        // Google sends the business-chat notice under your own participant ID: it used to look like you sent it.
+        JSONObject rbm=json("{participantID:'me',messageStatus:{status:'MESSAGE_STATUS_TOMBSTONE_RBM_PRIVACY_NOTICE'},messageInfo:[{messageContent:{content:'This is an RCS for Business chat.'}}]}");
+        assertTrue(PairedProtocol.notice(rbm));assertFalse(PairedProtocol.outgoing(rbm,chat));
+        assertEquals("This is an RCS for Business chat.",PairedProtocol.event(rbm,chat));
+        // By number, when the app's list is older than Google's.
+        JSONObject numbered=json("{participantID:'me',messageStatus:{status:'241'}}");
+        assertTrue(PairedProtocol.notice(numbered));assertFalse(PairedProtocol.outgoing(numbered,chat));assertEquals("This is an RCS for Business chat",PairedProtocol.event(numbered,chat));
+        // Unknown newer notices show Google's words; tips Google's bridge hides stay hidden.
+        assertEquals("Satellite messaging ended",PairedProtocol.event(json("{messageStatus:{status:'MESSAGE_STATUS_TOMBSTONE_SATELLITE_END_OF_EMERGENCY_UNEXPECTED_END'},messageInfo:[{messageContent:{content:'Satellite messaging ended'}}]}"),chat));
+        assertEquals("",PairedProtocol.event(json("{messageStatus:{status:'MESSAGE_STATUS_TOMBSTONE_SUGGESTION_SHORTCUT_STAR_TOOLSTONE'},messageInfo:[{messageContent:{content:'Star messages to find them later'}}]}"),chat));
+        assertEquals("",PairedProtocol.event(json("{messageStatus:{status:'TOMBSTONE_SHOW_LINK_PREVIEWS'}}"),chat));
+        // Real messages aren't notices.
+        assertFalse(PairedProtocol.notice(json("{messageStatus:{status:'OUTGOING_DELIVERED'}}")));assertFalse(PairedProtocol.notice(json("{messageStatus:{status:'105'}}")));
+    }
     @Test public void statusIdentifiesOutgoingWithoutSender()throws Exception {
         assertTrue(PairedProtocol.outgoing(json("{messageStatus:{status:'OUTGOING_DELIVERED'}}")));
     }

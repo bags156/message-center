@@ -37,9 +37,11 @@ final class PairedProtocol {
         return sender!=null && sender.optBoolean("isMe");
     }
     static Boolean outgoingStatus(String s) {
+        // Google's notices ("This is an RCS for Business chat") are from nobody, never you.
+        if(s.contains("TOMBSTONE")) return false;
         if(s.startsWith("OUTGOING") || s.startsWith("MESSAGE_STATUS_OUTGOING")) return true;
         if(s.startsWith("INCOMING")) return false;
-        try { int n=Integer.parseInt(s); if(n>=1 && n<100) return true; if(n>=100 && n<200) return false; }
+        try { int n=Integer.parseInt(s); if(n>=1 && n<100) return true; if(n>=100 && n<300) return false; }
         catch(NumberFormatException ignored) { }
         return null;
     }
@@ -117,8 +119,17 @@ final class PairedProtocol {
      * Group and chat events Google records as messages without text ("Sam left",
      * "Group renamed", "Now end-to-end encrypted"), or "" for anything else.
      */
+    /**
+     * A notice from Google in the chat, not a message from anyone: group changes, "Now end-to-end
+     * encrypted", "This is an RCS for Business chat". Statuses 200-299 are these (Google numbers
+     * ones newer than this app's list).
+     */
+    static boolean notice(JSONObject m) {
+        String s=status(m);if(s.contains("TOMBSTONE"))return true;
+        try { int n=Integer.parseInt(s); return n>=200 && n<300; } catch(NumberFormatException e) { return false; }
+    }
     static String event(JSONObject m,JSONObject chat) {
-        String s=status(m);if(!s.contains("TOMBSTONE"))return "";
+        String s=status(m);if(!notice(m))return "";
         String who=person(chat,m.optString("participantID"),m.optJSONObject("senderParticipant"));if(who.isEmpty())who="Someone";
         String text=text(m);
         if(s.contains("SELF_REMOVED"))return "You were removed from the group";
@@ -133,7 +144,16 @@ final class PairedProtocol {
         if(s.endsWith("SWITCH_TO_TEXT"))return "Now texting with SMS/MMS";
         if(s.endsWith("SWITCH_TO_RCS"))return "Now chatting with RCS";
         if(s.endsWith("SWITCH_TO_GROUP_MMS"))return "Switched to group MMS";
-        return "";
+        if(s.endsWith("RBM_PRIVACY_NOTICE")||s.equals("241"))return text.isEmpty()?"This is an RCS for Business chat":text;
+        if(s.endsWith("MISSED_VIDEO_CALL"))return text.isEmpty()?"Missed video call":text;
+        if(s.endsWith("POSSIBLE_SCAM_TOOLSTONE"))return text.isEmpty()?"\u26A0\uFE0F Google flagged this as a possible scam":text;
+        if(s.endsWith("CHATBOT_UNSUBSCRIBE_CONFIRMED"))return text.isEmpty()?"Unsubscribed":text;
+        if(s.endsWith("CHATBOT_SUBSCRIBE_CONFIRMED"))return text.isEmpty()?"Subscribed":text;
+        // Ones Google's own bridge leaves out too: chat-created lines, theme changes, tips.
+        if(s.endsWith("ONE_ON_ONE_SMS_CREATED")||s.endsWith("ONE_ON_ONE_RCS_CREATED")||s.endsWith("SHOW_LINK_PREVIEWS")||s.endsWith("PARTICIPANT_THEME_CHANGE")
+            ||s.endsWith("ACTIVE_SELF_IDENTITY_CHANGED")||s.contains("TOOLSTONE")||s.endsWith("SUBSCRIBE_SENT")||s.contains("PROTOCOL_SWITCH")||s.endsWith("VERIFIED_SMS_APPLICABLE"))return "";
+        // Anything newer: Google's own words, shown as a notice.
+        return text;
     }
     /** Attachments in the order Google lists them. */
     static List<JSONObject> media(JSONObject m) {

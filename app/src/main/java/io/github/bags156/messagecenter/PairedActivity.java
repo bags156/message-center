@@ -846,7 +846,8 @@ public class PairedActivity extends Activity {
         // Scrolled up reading: new messages don't push the oldest ones drawn out of the window (only at the bottom does it slide).
         if(!atBottom&&chatId.equals(oldestChat)&&oldestTime>0){int keep=store.countSince(chatId,oldestTime);if(keep>limit)limit=keep;}
         List<JSONObject> saved=store.messages(chatId,limit);if(!saved.isEmpty()){oldestChat=chatId;oldestTime=PairedProtocol.time(saved.get(0));}
-        List<JSONObject> messages=new ArrayList<>();for(JSONObject m:saved)if(!PairedProtocol.body(m).isEmpty()||!PairedProtocol.event(m,c).isEmpty()||!PairedProtocol.effect(m).isEmpty())messages.add(m);
+        // Google's notices show as a centered line, or not at all; never as a message bubble.
+        List<JSONObject> messages=new ArrayList<>();for(JSONObject m:saved)if(PairedProtocol.notice(m)?!PairedProtocol.event(m,c).isEmpty():!PairedProtocol.body(m).isEmpty()||!PairedProtocol.effect(m).isEmpty())messages.add(m);
         moreSaved=messages.size()>=limit-5;if(moreSaved)items.addView(button("Show more saved messages",false,()->{limit+=WINDOW;renderMessages(false);}));
         // iPhone reactions sent as text ("Laughed at an image") go on the message they're about, like any other reaction.
         tapbacks=new HashMap<>();messages=placeTapbacks(messages,tapbacks);
@@ -2655,7 +2656,7 @@ public class PairedActivity extends Activity {
         decoder.execute(()->{String result;Uri item=null;
             try{List<JSONObject> list=store.messages(id,100_000);java.text.DateFormat f=java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM,java.text.DateFormat.SHORT);
                 StringBuilder b=new StringBuilder();b.append(title).append("\nExported from Message Center on ").append(f.format(new Date())).append(" • ").append(list.size()).append(" messages synced to this phone\n\n");
-                for(JSONObject m:list){String event=PairedProtocol.event(m,c);String body=event.isEmpty()?displayBody(m):"— "+event+" —";if(body.isEmpty())continue;
+                for(JSONObject m:list){String event=PairedProtocol.event(m,c);if(event.isEmpty()&&PairedProtocol.notice(m))continue;String body=event.isEmpty()?displayBody(m):"— "+event+" —";if(body.isEmpty())continue;
                     b.append('[').append(f.format(new Date(PairedProtocol.time(m)))).append("] ");if(event.isEmpty())b.append(PairedProtocol.outgoing(m,c)?"You":senderName(m,c)).append(": ");b.append(body).append('\n');
                     for(String[] r:PairedProtocol.reactors(m))b.append("    ").append(r[0]).append(' ').append(PairedProtocol.isMe(c,r[1])?"You":PairedProtocol.person(c,r[1],null)).append('\n');}
                 String name=("Chat - "+title.replaceAll("[\\\\/:*?\"<>|]","_")+" - "+new SimpleDateFormat("yyyy-MM-dd",Locale.US).format(new Date())+".txt");
