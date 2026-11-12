@@ -2744,11 +2744,14 @@ public class PairedActivity extends Activity {
     /** Only content from other apps: never a raw file path or this app's own storage (another app could point a share at it). */
     private boolean safeIncoming(Uri u){if(u==null)return false;String scheme=u.getScheme(),auth=u.getAuthority();
         if(!"content".equals(scheme))return false;return auth==null||!auth.startsWith(getPackageName());}
-    private String snoozeLabel(String id){long until=chatSettings.snoozedUntil(id);
+    private String snoozeLabel(String id){long until=chatSettings.snoozedUntil(id);if(chatSettings.untilQuiet(id))return "it's quiet";
         boolean today=android.text.format.DateUtils.isToday(until);return (today?"":new SimpleDateFormat("EEE ",Locale.getDefault()).format(new Date(until)))+timeOnly(until);}
     /** Pause this chat's notifications for a while. @-mentions of you still come through. */
     private void snoozeMenu(String id){List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();long now=System.currentTimeMillis();
         java.util.Calendar morning=java.util.Calendar.getInstance();morning.add(java.util.Calendar.DAY_OF_YEAR,1);morning.set(java.util.Calendar.HOUR_OF_DAY,8);morning.set(java.util.Calendar.MINUTE,0);morning.set(java.util.Calendar.SECOND,0);
+        // Until it's quiet: off while the chat keeps going, back on by itself after half an hour without new messages.
+        labels.add("Until it's quiet (30 minutes without messages)");actions.add(()->{chatSettings.snoozeUntilQuiet(id);if(!bubble())PairedService.clearNotification(this,id);
+            toast("Quiet until this chat has no new messages for 30 minutes. @-mentions still notify you.");refreshAfterSetting();});
         long[] times={now+3_600_000L,now+8*3_600_000L,morning.getTimeInMillis()};String[] names={"For 1 hour","For 8 hours","Until tomorrow, "+timeOnly(morning.getTimeInMillis())};
         for(int i=0;i<times.length;i++){long until=times[i];labels.add(names[i]);actions.add(()->{chatSettings.setSnooze(id,until);if(!bubble())PairedService.clearNotification(this,id);toast("Snoozed until "+snoozeLabel(id)+". @-mentions still notify you.");refreshAfterSetting();});}
         if(chatSettings.snoozed(id)){labels.add("Turn off snooze");actions.add(()->{chatSettings.setSnooze(id,0);toast("Notifications on for this chat");refreshAfterSetting();});}

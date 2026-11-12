@@ -65,7 +65,13 @@ final class ChatSettings {
     /** Notifications are paused for this chat until this time (0 when not snoozed). */
     long snoozedUntil(String id) { return prefs.getLong("snooze:" + id, 0); }
     boolean snoozed(String id) { return snoozedUntil(id) > System.currentTimeMillis(); }
-    void setSnooze(String id, long until) { if (until <= 0) prefs.edit().remove("snooze:" + id).apply(); else prefs.edit().putLong("snooze:" + id, until).apply(); }
+    void setSnooze(String id, long until) { if (until <= 0) prefs.edit().remove("snooze:" + id).remove("snooze-quiet:" + id).apply(); else prefs.edit().putLong("snooze:" + id, until).remove("snooze-quiet:" + id).apply(); }
+    /** "Until it's quiet": the snooze ends once the chat has had no new messages for this long. */
+    static final long QUIET_MS = 30 * 60_000L;
+    boolean untilQuiet(String id) { return prefs.getBoolean("snooze-quiet:" + id, false) && snoozed(id); }
+    void snoozeUntilQuiet(String id) { prefs.edit().putBoolean("snooze-quiet:" + id, true).putLong("snooze:" + id, System.currentTimeMillis() + QUIET_MS).apply(); }
+    /** A message arrived: a chat snoozed until it's quiet stays snoozed for QUIET_MS from now. */
+    void activity(String id) { if (untilQuiet(id)) prefs.edit().putLong("snooze:" + id, System.currentTimeMillis() + QUIET_MS).apply(); }
     /** Chat background: "" (none), "stock:<name>", or "photo" (a picture you chose, saved by the app). */
     String background(String id) { return prefs.getString("background:" + id, ""); }
     void setBackground(String id, String value) { if (value == null || value.isEmpty()) prefs.edit().remove("background:" + id).apply(); else prefs.edit().putString("background:" + id, value).apply(); }

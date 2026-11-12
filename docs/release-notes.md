@@ -1,6 +1,5 @@
-Message Center 1.5.18.
+Message Center 1.5.19.
 
-- Photos and videos you send now show straight away. Once Google had the photo, Message Center deleted its own copy and downloaded the photo back from Google to show it; it now keeps the copy that's already on your phone.
-- Any photo whose full copy is already on your phone (one you sent, or opened before) is shown as it is, even with "previews only" on, since it costs no download.
+- Snooze until it's quiet: in a chat's Snooze notifications menu, pick "Until it's quiet". Notifications stay off while the chat keeps going, and come back on by themselves once it's had no new messages for 30 minutes. @-mentions and your alert keywords still notify you.
 
 Install over the existing app through Obtainium. Your pairing, conversations and settings are retained.

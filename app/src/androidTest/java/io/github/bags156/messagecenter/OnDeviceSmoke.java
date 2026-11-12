@@ -128,6 +128,16 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(matched,"Google's copy of the sent photo wasn't matched to it");
         check(kept&&same,"A sent photo wasn't kept on the phone; it would be downloaded back from Google");
         check(box.get(id)==null,"The sent photo stayed queued after Google's copy arrived");}
+    /** Snoozed until it's quiet: each new message keeps it snoozed 30 more minutes; after a quiet half hour it's off and stays off. */
+    private void checkSnoozeUntilQuiet()throws Exception{ChatSettings s=new ChatSettings(getTargetContext());String id="quiet-check";
+        java.lang.reflect.Field f=ChatSettings.class.getDeclaredField("prefs");f.setAccessible(true);android.content.SharedPreferences prefs=(android.content.SharedPreferences)f.get(s);
+        try{s.snoozeUntilQuiet(id);check(s.snoozed(id)&&s.untilQuiet(id),"Until it's quiet didn't snooze the chat");
+            prefs.edit().putLong("snooze:"+id,System.currentTimeMillis()+1000).commit();s.activity(id);
+            check(s.snoozedUntil(id)>=System.currentTimeMillis()+ChatSettings.QUIET_MS-5000,"A new message didn't keep the chat quiet");
+            prefs.edit().putLong("snooze:"+id,System.currentTimeMillis()-1).commit();s.activity(id);
+            check(!s.snoozed(id)&&!s.untilQuiet(id),"A message after the quiet half hour snoozed the chat again");
+            s.snoozeUntilQuiet(id);s.setSnooze(id,System.currentTimeMillis()+3_600_000L);check(!s.untilQuiet(id),"Choosing a set time didn't replace until it's quiet");}
+        finally{s.setSnooze(id,0);}}
     /** React with any emoji: the picker opens in the app's own theme and fills with emoji. */
     private void checkEmojiPicker(PairedActivity a)throws Exception{java.lang.reflect.Method open=PairedActivity.class.getDeclaredMethod("emojiPicker",java.util.function.Consumer.class);open.setAccessible(true);
         android.app.AlertDialog[] d=new android.app.AlertDialog[1];
@@ -1045,8 +1055,9 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkEmojiPicker((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
+        checkSnoozeUntilQuiet();
         checkSentTextStays((PairedActivity)activity);
         checkBubbleStepsAside((PairedActivity)activity);
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, any-emoji reactions, gifs keep playing, sent photos kept, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, any-emoji reactions, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }
