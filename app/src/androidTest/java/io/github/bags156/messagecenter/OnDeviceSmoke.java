@@ -20,6 +20,34 @@ public final class OnDeviceSmoke extends Instrumentation {
             .put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","Line "+i+" of a long conversation")))),0,true);}
     /** The inbox's first row tag, or null while the list is being rebuilt (it can be empty for a frame). */
     private static Object firstRow(android.view.ViewGroup list,int tag){android.view.View v=list==null?null:list.getChildAt(0);return v==null?null:v.getTag(tag);}
+    /**
+     * A sent text never vanishes between Google accepting it and Google's copy arriving (the chat
+     * jumped up and back down), and it's never drawn twice while both exist.
+     */
+    private void checkSentTextStays(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();String words="Gap check, this text must not jump";
+        long now=System.currentTimeMillis();
+        try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'gap-check',name:'Gap Check',type:'RCS',participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'gc',number:'+15550107777'},fullName:'Gap Check'}]}"));
+            for(int i=0;i<12;i++)store.message(new JSONObject().put("messageID","gapold"+i).put("conversationID","gap-check").put("participantID",i%2==0?"gc":"me").put("timestamp",(now-600_000+i*1000)*1000)
+                .put("messageStatus",new JSONObject().put("status",i%2==0?"INCOMING_COMPLETE":"OUTGOING_DELIVERED")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","Earlier message "+i)))),0,true);}
+        Outbox box=new Outbox(ctx);JSONObject queued=box.add("gap-check",words,"");String qid=queued.optString("id");box.sent(qid,"tmp-gap-check");
+        java.lang.reflect.Method openChat=PairedActivity.class.getDeclaredMethod("thread",String.class),leaveChat=PairedActivity.class.getDeclaredMethod("inbox"),redraw=PairedActivity.class.getDeclaredMethod("renderMessages",boolean.class);
+        for(java.lang.reflect.Method m:new java.lang.reflect.Method[]{openChat,leaveChat,redraw})m.setAccessible(true);
+        int[] shown=new int[3];
+        java.util.function.IntSupplier count=()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(found,words,android.view.View.FIND_VIEWS_WITH_TEXT);return found.size();};
+        runOnMainSync(()->{try{openChat.invoke(a,"gap-check");}catch(Exception x){throw new RuntimeException(x);}});waitForIdleSync();
+        runOnMainSync(()->shown[0]=count.getAsInt());
+        // Google's copy is saved; the queued one hasn't been dropped yet (the order the service does it in).
+        JSONObject copy=new JSONObject().put("messageID","gap-real").put("tmpID","tmp-gap-check").put("conversationID","gap-check").put("participantID","me").put("timestamp",(System.currentTimeMillis()+500)*1000)
+            .put("messageStatus",new JSONObject().put("status","OUTGOING_DELIVERED")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content",words))));
+        try(PairedStore store=new PairedStore(ctx)){store.message(copy,0,true);}
+        runOnMainSync(()->{try{redraw.invoke(a,false);}catch(Exception x){throw new RuntimeException(x);}});waitForIdleSync();runOnMainSync(()->shown[1]=count.getAsInt());
+        boolean removed=box.arrived(copy);
+        runOnMainSync(()->{try{redraw.invoke(a,false);}catch(Exception x){throw new RuntimeException(x);}});waitForIdleSync();runOnMainSync(()->shown[2]=count.getAsInt());
+        runOnMainSync(()->{try{leaveChat.invoke(a);}catch(Exception x){throw new RuntimeException(x);}});
+        box.remove(qid);try(PairedStore store=new PairedStore(ctx)){store.deleteChat("gap-check");}
+        check(shown[0]==1,"An accepted text wasn't shown while waiting for Google's copy ("+shown[0]+")");
+        check(shown[1]==1,"A sent text was drawn "+shown[1]+" times while Google's copy and the queued one both existed");
+        check(removed&&shown[2]==1,"Google's copy didn't replace the queued text ("+removed+", "+shown[2]+")");}
     /** ⊕ → Contact puts "Name: number" into the message box: on its own line after words, with a bare-digits number written out. */
     private void checkContactText(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();
         try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'contact-check',name:'Contact Check',type:'RCS',participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'cc',number:'+15550108888'},fullName:'Contact Check'}]}"));}
@@ -896,7 +924,8 @@ public final class OnDeviceSmoke extends Instrumentation {
         new ChatSettings(getTargetContext()).setBackground("smoke","");
         checkNotificationPrivacy();
         checkContactText((PairedActivity)activity);
+        checkSentTextStays((PairedActivity)activity);
         checkBubbleStepsAside((PairedActivity)activity);
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, contact as text, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }

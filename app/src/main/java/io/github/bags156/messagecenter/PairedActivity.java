@@ -837,6 +837,9 @@ public class PairedActivity extends Activity {
         placeY=y;placeBefore=before;placeBottom=atBottom;placeSpot=spot;
         boolean toBottom=atBottom;String keepId=spot==null?null:spot.id;int keepOffset=spot==null?0:spot.offset;
         items.removeAllViews();unreadDivider=null;inlineSeen=false;Perf.end("messages: clear",perf);perf=Perf.start();
+        // Queued texts are read before the chat's messages: the service saves Google's copy of a sent text
+        // before it drops the queued one, so reading in this order can show both (one is then left out) but never neither.
+        List<JSONObject> queued=outbox.forChat(chatId);
         JSONObject c=store.chat(chatId);ChatTheme theme=chatSettings.theme(chatId);boolean group=c!=null&&PairedProtocol.other(c)==null;
         // Scrolled up reading: new messages don't push the oldest ones drawn out of the window (only at the bottom does it slide).
         if(!atBottom&&chatId.equals(oldestChat)&&oldestTime>0){int keep=store.countSince(chatId,oldestTime);if(keep>limit)limit=keep;}
@@ -904,7 +907,7 @@ public class PairedActivity extends Activity {
             if(i==lastOut||(out[i]&&PairedProtocol.failed(m)))items.addView(statusRow(m,theme));Perf.end("bubble: extras",perfB);
         }
         Perf.end("messages: bubbles",perf);perf=Perf.start();
-        renderOutbox(theme);renderPendingMedia(theme);renderScheduled(theme);renderArrivals(theme);if(inline!=null&&!inlineSeen)stopInline();
+        renderOutbox(theme,OutboxEcho.toDraw(queued,messages,System.currentTimeMillis()));renderPendingMedia(theme);renderScheduled(theme);renderArrivals(theme);if(inline!=null&&!inlineSeen)stopInline();
         int pendingHere=0;for(PendingMedia p:pendingMedia)if(p.chat.equals(chatId))pendingHere++;motionOutboxBefore=outbox.forChat(chatId).size()+pendingHere;
         watchSending(messages,c);
         // Played once the chat is laid out, so it can find the message on screen.
@@ -2677,15 +2680,15 @@ public class PairedActivity extends Activity {
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.setMargins(dp(12),dp(4),dp(12),dp(8));card.setLayoutParams(lp);return card;}
 
     /** Saved messages for this chat, shown at the end with their state; tap to retry or delete. */
-    private void renderOutbox(ChatTheme theme){
-        for(JSONObject o:outbox.forChat(chatId)){String state=o.optString("state");gap(items,8);
+    private void renderOutbox(ChatTheme theme,List<JSONObject> queued){
+        for(JSONObject o:queued){String state=o.optString("state");gap(items,8);
             LinearLayout line=row();line.setGravity(Gravity.END);TextView b=text(o.optString("text"),17,theme.onBubble(dark),false);b.setPadding(dp(16),dp(11),dp(16),dp(11));
             b.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));b.setBackground(shape(theme.bubble(dark),22));b.setAlpha(0.7f);line.addView(b);items.addView(line);
             String oid=o.optString("id");motion(line,"o:"+oid,LIFT,motionOutbox.add(oid)&&motionReady);
-            String label=switch(state){case Outbox.HOLD->"Sending… • Tap to undo";case Outbox.SENDING->"Sending…";case Outbox.UNSURE->"Not sure this sent • Tap for options";case Outbox.FAILED->"Not sent • Tap to retry";default->"Waiting for connection • will send automatically";};
+            String label=switch(state){case Outbox.HOLD->"Sending… • Tap to undo";case Outbox.SENDING,Outbox.SENT->"Sending…";case Outbox.UNSURE->"Not sure this sent • Tap for options";case Outbox.FAILED->"Not sent • Tap to retry";default->"Waiting for connection • will send automatically";};
             TextView s=text(label,12,state.equals(Outbox.FAILED)||state.equals(Outbox.UNSURE)?danger:muted,state.equals(Outbox.FAILED));s.setGravity(Gravity.END);s.setPadding(0,dp(4),dp(6),0);items.addView(s,new LinearLayout.LayoutParams(-1,-2));
             View.OnClickListener act=v->outboxOptions(o);b.setOnClickListener(act);s.setOnClickListener(act);}}
-    private void outboxOptions(JSONObject o){String id=o.optString("id"),state=o.optString("state");if(state.equals(Outbox.SENDING))return;
+    private void outboxOptions(JSONObject o){String id=o.optString("id"),state=o.optString("state");if(state.equals(Outbox.SENDING)||state.equals(Outbox.SENT))return;
         if(state.equals(Outbox.HOLD)){undoSend(id);return;}
         String msg=state.equals(Outbox.UNSURE)?"Google didn't confirm this message. It may already have been sent; check the chat in Google Messages before sending again.":o.optString("error");
         new AlertDialog.Builder(this).setMessage(msg.isEmpty()?"This message hasn't been sent yet.":msg).setPositiveButton(state.equals(Outbox.WAITING)?"Send now":"Send again",(d,w)->PairedService.retryOutbox(this,id))

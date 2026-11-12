@@ -17,6 +17,10 @@ final class Outbox {
     static final String WAITING = "waiting", SENDING = "sending", UNSURE = "unsure", FAILED = "failed";
     /** Held for a few seconds so it can be taken back ("Undo send"); sent once "due" passes. */
     static final String HOLD = "hold";
+    /** Google accepted it; still drawn as sending until Google's copy shows up in the chat (see OutboxEcho). */
+    static final String SENT = "sent";
+    /** How long a sent text stands in for Google's copy if the copy never shows up. */
+    static final long SENT_GRACE_MS = 2 * 60_000;
     private final SharedPreferences prefs;
 
     Outbox(Context context) { prefs = context.getSharedPreferences("outbox", Context.MODE_PRIVATE); }
@@ -61,6 +65,23 @@ final class Outbox {
         List<JSONObject> list = all(); list.removeIf(o -> id.equals(o.optString("id"))); save(list);
     }
 
+    /** Google accepted it under this temporary ID: it stays until its copy arrives (arrived) or the grace runs out. */
+    synchronized void sent(String id, String tmpID) {
+        List<JSONObject> list = all();
+        for (JSONObject o : list) if (id.equals(o.optString("id"))) { try { o.put("state", SENT).put("tmpID", tmpID).put("sentAt", System.currentTimeMillis()).put("error", ""); } catch (Exception ignored) {} }
+        save(list);
+    }
+
+    /** A message arrived in a chat: removes the sent text it's the copy of, and any whose copy never came. True if something changed. */
+    synchronized boolean arrived(JSONObject message) {
+        String tmp = message.optString("tmpID"), mid = message.optString("messageID"); long now = System.currentTimeMillis();
+        List<JSONObject> list = all();
+        boolean changed = list.removeIf(o -> SENT.equals(o.optString("state")) && (now - o.optLong("sentAt") > SENT_GRACE_MS
+                || (!tmp.isEmpty() && tmp.equals(o.optString("tmpID"))) || (!mid.isEmpty() && mid.equals(o.optString("tmpID")))));
+        if (changed) save(list);
+        return changed;
+    }
+
     /** The next message to send automatically, or null. Unsure and failed items wait for the person. */
     synchronized JSONObject next() {
         long now = System.currentTimeMillis();
@@ -72,6 +93,8 @@ final class Outbox {
     synchronized void recover() {
         List<JSONObject> list = all(); boolean changed = false;
         for (JSONObject o : list) if (SENDING.equals(o.optString("state"))) { try { o.put("state", UNSURE); changed = true; } catch (Exception ignored) {} }
+        long now = System.currentTimeMillis();
+        if (list.removeIf(o -> SENT.equals(o.optString("state")) && now - o.optLong("sentAt") > SENT_GRACE_MS)) changed = true;
         if (changed) save(list);
     }
 

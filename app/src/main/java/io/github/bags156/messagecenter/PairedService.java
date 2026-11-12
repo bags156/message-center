@@ -223,6 +223,7 @@ public final class PairedService extends Service {
                     JSONObject envelope=new JSONObject(payload),message=envelope.getJSONObject("message");
                     boolean existed=store.message(message,0,true);touch(message);fullArrived(message);
                     if(attachmentOutbox.reconcile(message)){attachmentOutbox.retireCompleted();changed("MEDIA_OUTBOX");main.post(this::flushMediaOutbox);}
+                    if(outbox.arrived(message))changed("OUTBOX");
                     if(!PairedProtocol.outgoing(message) && typing.remove(message.optString("conversationID"))!=null)changed("TYPING");
                     // Answered on the phone: this chat's notification here is no longer needed.
                     if(PairedProtocol.outgoing(message)&&!envelope.optBoolean("old",true))dismiss(message.optString("conversationID"));
@@ -336,7 +337,7 @@ public final class PairedService extends Service {
     }
     static void loadMessages(String id,String cursor,Result done) {
         execute(c->{PairedService s=current;long version=s.store.snapshot();JSONObject response=new JSONObject(c.messages(id,cursor));
-            JSONArray messages=response.optJSONArray("messages");if(messages!=null)for(int i=0;i<messages.length();i++){JSONObject m=messages.getJSONObject(i);s.store.message(m,version,false);JSONObject saved=s.store.message(m.optString("messageID"));if(saved!=null)s.attachmentOutbox.reconcile(saved);s.store.page("source-page:"+m.optString("messageID"),cursor,"known");}s.attachmentOutbox.retireCompleted();s.main.post(s::flushMediaOutbox);
+            JSONArray messages=response.optJSONArray("messages");if(messages!=null)for(int i=0;i<messages.length();i++){JSONObject m=messages.getJSONObject(i);s.store.message(m,version,false);JSONObject saved=s.store.message(m.optString("messageID"));if(saved!=null){s.attachmentOutbox.reconcile(saved);s.outbox.arrived(saved);}s.store.page("source-page:"+m.optString("messageID"),cursor,"known");}s.attachmentOutbox.retireCompleted();s.main.post(s::flushMediaOutbox);
             String next=PairedProtocol.cursor(response),note="";
             if(!next.isEmpty() && next.equals(cursor)){next="";note="Google repeated a history cursor; stopped to prevent a loop.";}
             if(next.isEmpty() && note.isEmpty())note=response.optString("someBytes","").isEmpty()?"End of the history pages Google supplied. This does not prove the full phone archive was shared.":"Google returned a history format this version cannot page. More messages may exist in Google Messages.";
@@ -820,8 +821,11 @@ public final class PairedService extends Service {
         String id=o.optString("id");JSONObject chat=store.chat(o.optString("chat"));
         if(chat==null){outbox.setState(id,Outbox.FAILED,"This conversation isn't synced yet. Open it, then retry.");changed("OUTBOX");main.post(this::flushOutbox);return;}
         flushing=true;outbox.setState(id,Outbox.SENDING,"");changed("OUTBOX");
+        String chatId=o.optString("chat");
         execute(c->c.sendText(chat.toString(),o.optString("text"),o.optString("reply")),(v,e)->{flushing=false;
-            if(e.isEmpty())outbox.remove(id);
+            // Accepted: it stays drawn until Google's copy is in the chat, so the message never vanishes for a moment.
+            // Marked first, then checked, so a copy that arrives at any point in between still clears it.
+            if(e.isEmpty()){if(v==null||v.isEmpty())outbox.remove(id);else{outbox.sent(id,v);if(store.hasSent(chatId,v))outbox.remove(id);}}
             else if(e.equals("Connect to Google Messages first.")){outbox.setState(id,Outbox.WAITING,"");changed("OUTBOX");return;}
             else outbox.setState(id,e.startsWith("Send outcome unknown")?Outbox.UNSURE:Outbox.FAILED,e);
             changed("OUTBOX");flushOutbox();});
