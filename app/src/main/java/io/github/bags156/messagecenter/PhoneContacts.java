@@ -51,6 +51,23 @@ final class PhoneContacts {
         return out;
     }
 
+    /** The phone's contacts as people, each once with each number once (see ContactPeople). Call off the main thread. */
+    static List<ContactPeople.Person> people(Context context) {
+        List<ContactPeople.Row> rows = new ArrayList<>();
+        if (!allowed(context)) return new ArrayList<>();
+        String[] columns = {Phone.CONTACT_ID, Phone.DISPLAY_NAME_PRIMARY, Phone.NUMBER, Phone.NORMALIZED_NUMBER, Phone.TYPE, Phone.LABEL};
+        try (Cursor c = context.getContentResolver().query(Phone.CONTENT_URI, columns, null, null, Phone.SORT_KEY_PRIMARY + " ASC, " + Phone.IS_SUPER_PRIMARY + " DESC")) {
+            if (c == null) return new ArrayList<>();
+            while (c.moveToNext()) {
+                CharSequence label = Phone.getTypeLabel(context.getResources(), c.isNull(4) ? Phone.TYPE_OTHER : c.getInt(4), text(c, 5));
+                rows.add(new ContactPeople.Row(c.isNull(0) ? -1 : c.getLong(0), text(c, 1), text(c, 2), text(c, 3), label == null ? "" : label.toString()));
+            }
+        } catch (Exception ignored) {
+            // A contacts app that misbehaves just means an empty list.
+        }
+        return ContactPeople.group(rows);
+    }
+
     private static String text(Cursor c, int i) { String s = c.isNull(i) ? null : c.getString(i); return s == null ? "" : s.trim(); }
 
     private PhoneContacts() {}

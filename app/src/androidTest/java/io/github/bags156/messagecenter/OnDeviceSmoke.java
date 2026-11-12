@@ -48,6 +48,31 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(shown[0]==1,"An accepted text wasn't shown while waiting for Google's copy ("+shown[0]+")");
         check(shown[1]==1,"A sent text was drawn "+shown[1]+" times while Google's copy and the queued one both existed");
         check(removed&&shown[2]==1,"Google's copy didn't replace the queued text ("+removed+", "+shown[2]+")");}
+    /** The newest raw contact the shell just added: the highest "_id=12" it lists (arguments can't hold spaces, so no "DESC"). */
+    private String newestRawContact()throws Exception{java.util.regex.Matcher m=java.util.regex.Pattern.compile("_id=(\\d+)").matcher(shell("content query --uri content://com.android.contacts/raw_contacts --projection _id"));
+        long best=-1;while(m.find())best=Math.max(best,Long.parseLong(m.group(1)));return best<0?"":String.valueOf(best);}
+    /**
+     * ⊕ → Contact lists each person once with each number once, from the phone's real contacts:
+     * the same number saved twice in different formats, and the same person saved twice, were
+     * listed several times by Android's picker.
+     */
+    private void checkContactPickerDeduplicates()throws Exception{android.content.Context ctx=getTargetContext();
+        getUiAutomation().grantRuntimePermission(ctx.getPackageName(),android.Manifest.permission.READ_CONTACTS);
+        java.util.List<String> made=new java.util.ArrayList<>();
+        for(String[] copy:new String[][]{{"4795550134","(479)555-0177"},{"+14795550134",""}}){
+            shell("content insert --uri content://com.android.contacts/raw_contacts --bind account_type:n: --bind account_name:n:");String raw=newestRawContact();if(raw.isEmpty())continue;made.add(raw);
+            shell("content insert --uri content://com.android.contacts/data --bind raw_contact_id:i:"+raw+" --bind mimetype:s:vnd.android.cursor.item/name --bind data1:s:DupeCheck");
+            shell("content insert --uri content://com.android.contacts/data --bind raw_contact_id:i:"+raw+" --bind mimetype:s:vnd.android.cursor.item/phone_v2 --bind data1:s:"+copy[0]+" --bind data2:i:2");
+            shell("content insert --uri content://com.android.contacts/data --bind raw_contact_id:i:"+raw+" --bind mimetype:s:vnd.android.cursor.item/phone_v2 --bind data1:s:479-555-0134 --bind data2:i:2");
+            if(!copy[1].isEmpty())shell("content insert --uri content://com.android.contacts/data --bind raw_contact_id:i:"+raw+" --bind mimetype:s:vnd.android.cursor.item/phone_v2 --bind data1:s:"+copy[1]+" --bind data2:i:3");}
+        java.util.List<ContactPeople.Person> people;int rows=0;
+        try{people=PhoneContacts.people(ctx);
+            for(PhoneContacts.Entry e:PhoneContacts.all(ctx))if(e.name.equals("DupeCheck"))rows++;}
+        finally{for(String raw:made)shell("content delete --uri content://com.android.contacts/raw_contacts?caller_is_syncadapter=true --where _id="+raw);}
+        check(made.size()==2,"The emulator didn't take the test contacts ("+made.size()+")");
+        int found=0;ContactPeople.Person dupe=null;for(ContactPeople.Person p:people)if(p.name.equals("DupeCheck")){found++;dupe=p;}
+        check(found==1,"The same person was listed "+found+" times");
+        check(dupe.numbers.size()==2,"Their numbers weren't each listed once: "+dupe.numbers.size()+" (Android has "+rows+" rows)");}
     /** ⊕ → Contact puts "Name: number" into the message box: on its own line after words, with a bare-digits number written out. */
     private void checkContactText(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();
         try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'contact-check',name:'Contact Check',type:'RCS',participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'cc',number:'+15550108888'},fullName:'Contact Check'}]}"));}
@@ -924,8 +949,9 @@ public final class OnDeviceSmoke extends Instrumentation {
         new ChatSettings(getTargetContext()).setBackground("smoke","");
         checkNotificationPrivacy();
         checkContactText((PairedActivity)activity);
+        checkContactPickerDeduplicates();
         checkSentTextStays((PairedActivity)activity);
         checkBubbleStepsAside((PairedActivity)activity);
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }

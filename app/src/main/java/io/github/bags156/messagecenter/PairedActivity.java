@@ -1757,23 +1757,60 @@ public class PairedActivity extends Activity {
         // Spaces keep the tiles the same size as the ones in the row above.
         for(int k=0;k<2;k++)more.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
         content.addView(more,new LinearLayout.LayoutParams(-1,-2));d[0]=sheet(content);}
-    private static final int PICK_CONTACT=87;
+    private static final int PICK_CONTACT=87,SHARE_CONTACT_PERMISSION=88;
     /**
-     * ⊕ → Contact: Android's own picker for one phone number (it asks which, when there are several;
-     * no contacts permission needed), then "Name: number" goes into the message box to send or edit.
+     * ⊕ → Contact: a searchable list of your contacts, each person once, then "Name: number" goes
+     * into the message box to send or edit. Android's own picker listed every saved copy of a
+     * number as its own row and blocks screenshots, so it's only used without contacts access.
      */
-    private void pickContact(){try{startActivityForResult(new Intent(Intent.ACTION_PICK).setType(android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_TYPE),PICK_CONTACT);}
+    private void pickContact(){if(PhoneContacts.allowed(this)){showContactPicker();return;}
+        new AlertDialog.Builder(this).setTitle("Share a contact").setMessage("To list your contacts here, Message Center needs to read them. They stay on this phone.")
+            .setPositiveButton("Allow",(d,w)->requestPermissions(new String[]{Manifest.permission.READ_CONTACTS},SHARE_CONTACT_PERMISSION))
+            .setNeutralButton("Use Android's picker",(d,w)->systemContactPicker()).setNegativeButton("Cancel",null).show();}
+    private void systemContactPicker(){try{startActivityForResult(new Intent(Intent.ACTION_PICK).setType(android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_TYPE),PICK_CONTACT);}
         catch(android.content.ActivityNotFoundException e){toast("There's no contacts app to pick from.");}}
+    private void showContactPicker(){String chat=chatId;decoder.execute(()->{List<ContactPeople.Person> people=PhoneContacts.people(this);ui.post(()->{
+        if(!screen.equals("chat")||!chatId.equals(chat)||isFinishing())return;
+        if(people.isEmpty()){toast("No contacts with a phone number.");return;}
+        LinearLayout box=vertical();box.setPadding(dp(16),dp(8),dp(16),0);EditText search=input("Search contacts");search.setSingleLine(true);box.addView(search,new LinearLayout.LayoutParams(-1,-2));
+        List<ContactPeople.Person> shown=new ArrayList<>(people);android.widget.ListView list=new android.widget.ListView(this);list.setDivider(null);
+        android.widget.BaseAdapter adapter=new android.widget.BaseAdapter(){public int getCount(){return shown.size();}public Object getItem(int i){return shown.get(i);}public long getItemId(int i){return i;}
+            public View getView(int i,View reuse,android.view.ViewGroup parent){LinearLayout r=reuse instanceof LinearLayout?(LinearLayout)reuse:null;TextView name,detail;
+                if(r==null){r=vertical();r.setPadding(dp(4),dp(10),dp(4),dp(10));name=text("",16,ink,false);detail=text("",13,muted,false);r.addView(name);r.addView(detail);}
+                else{name=(TextView)r.getChildAt(0);detail=(TextView)r.getChildAt(1);}
+                ContactPeople.Person p=shown.get(i);name.setText(p.name);ContactPeople.Number first=p.numbers.get(0);
+                detail.setText(p.numbers.size()==1?(first.label.isEmpty()?first.shown:first.label+" · "+first.shown):p.numbers.size()+" numbers");return r;}};
+        list.setAdapter(adapter);box.addView(list,new LinearLayout.LayoutParams(-1,dp(420)));
+        AlertDialog d=new AlertDialog.Builder(this).setTitle("Share a contact").setView(box).setNegativeButton("Cancel",null).create();
+        search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void afterTextChanged(Editable e){}
+            public void onTextChanged(CharSequence s,int st,int b,int c){String q=ContactSearch.fold(s.toString().trim()),qd=ChatText.digits(s.toString());shown.clear();
+                for(ContactPeople.Person p:people){int best=-1;for(ContactPeople.Number n:p.numbers)best=Math.max(best,ContactSearch.score(p.folded,"",ChatText.digits(n.shown),q,qd));if(q.isEmpty()||best>=0)shown.add(p);}
+                adapter.notifyDataSetChanged();}});
+        list.setOnItemClickListener((parent,v,i,id)->{ContactPeople.Person p=shown.get(i);d.dismiss();chooseContactNumber(p);});
+        d.show();});});}
+    /** Which of their numbers, when there's more than one; then their email, if wanted. */
+    private void chooseContactNumber(ContactPeople.Person p){if(p.numbers.size()==1){shareContact(p,p.numbers.get(0).shown);return;}
+        String[] choices=new String[p.numbers.size()];for(int i=0;i<choices.length;i++){ContactPeople.Number n=p.numbers.get(i);choices[i]=n.label.isEmpty()?n.shown:n.label+" · "+n.shown;}
+        new AlertDialog.Builder(this).setTitle(p.name).setItems(choices,(x,which)->shareContact(p,p.numbers.get(which).shown)).setNegativeButton("Cancel",null).show();}
+    private void shareContact(ContactPeople.Person p,String number){String chat=chatId,shown=readableNumber(number),who=p.name;decoder.execute(()->{List<String> emails=contactEmails(p.contact);ui.post(()->{
+        if(!screen.equals("chat")||!chatId.equals(chat)||composer==null)return;
+        if(emails.isEmpty()){insertContact(who,shown,"");return;}
+        String[] choices=new String[emails.size()+1];choices[0]="Just the number";for(int i=0;i<emails.size();i++)choices[i+1]="Add "+emails.get(i);
+        new AlertDialog.Builder(this).setTitle(who).setItems(choices,(x,which)->insertContact(who,shown,which==0?"":emails.get(which-1))).setNegativeButton("Cancel",null).show();});});}
+    /** A contact's email addresses, each once (needs the contacts permission). Off the main thread. */
+    private List<String> contactEmails(long contact){List<String> emails=new ArrayList<>();
+        if(contact<0||checkSelfPermission(android.Manifest.permission.READ_CONTACTS)!=PackageManager.PERMISSION_GRANTED)return emails;
+        try(android.database.Cursor c=getContentResolver().query(android.provider.ContactsContract.CommonDataKinds.Email.CONTENT_URI,new String[]{android.provider.ContactsContract.CommonDataKinds.Email.ADDRESS},
+                android.provider.ContactsContract.CommonDataKinds.Email.CONTACT_ID+"=?",new String[]{String.valueOf(contact)},null)){
+            while(c!=null&&c.moveToNext()){String a=c.isNull(0)?"":c.getString(0).trim();boolean dup=false;for(String e:emails)if(e.equalsIgnoreCase(a))dup=true;if(!a.isEmpty()&&!dup)emails.add(a);}}
+        catch(Exception ignored){}
+        return emails;}
     private void sharePickedContact(Uri picked){String chat=chatId;decoder.execute(()->{String name="",number="";long contact=-1;List<String> emails=new ArrayList<>();
         String[] columns={android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER,android.provider.ContactsContract.CommonDataKinds.Phone.CONTACT_ID};
         try(android.database.Cursor c=getContentResolver().query(picked,columns,null,null,null)){if(c!=null&&c.moveToFirst()){name=c.isNull(0)?"":c.getString(0);number=c.isNull(1)?"":c.getString(1);contact=c.isNull(2)?-1:c.getLong(2);}}
         catch(Exception e){Diagnostics.note("Couldn't read the picked contact: "+e.getClass().getSimpleName());}
         // Their email too, offered only when the app may already read contacts (for names and photos).
-        if(contact>=0&&checkSelfPermission(android.Manifest.permission.READ_CONTACTS)==PackageManager.PERMISSION_GRANTED)
-            try(android.database.Cursor c=getContentResolver().query(android.provider.ContactsContract.CommonDataKinds.Email.CONTENT_URI,new String[]{android.provider.ContactsContract.CommonDataKinds.Email.ADDRESS},
-                    android.provider.ContactsContract.CommonDataKinds.Email.CONTACT_ID+"=?",new String[]{String.valueOf(contact)},null)){
-                while(c!=null&&c.moveToNext()){String a=c.isNull(0)?"":c.getString(0).trim();if(!a.isEmpty()&&!emails.contains(a))emails.add(a);}}
-            catch(Exception ignored){}
+        emails.addAll(contactEmails(contact));
         String shown=readableNumber(number),who=name;
         ui.post(()->{if(!screen.equals("chat")||!chatId.equals(chat)||composer==null)return;
             if(shown.isEmpty()){toast("That contact has no phone number.");return;}
@@ -2968,6 +3005,8 @@ public class PairedActivity extends Activity {
         if(request==CONTACTS_PERMISSION&&results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED){phoneChecked.clear();rowCache.clear();
             if(screen.equals("inbox"))renderInbox();else if(screen.equals("settings"))settings();else if(screen.equals("newchat"))loadPhoneContacts();}
         if(request==CONTACTS_PERMISSION&&screen.equals("newchat"))renderContacts();
+        if(request==SHARE_CONTACT_PERMISSION){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED){phoneChecked.clear();rowCache.clear();showContactPicker();}
+            else{toast("Without contacts access, Android's own picker is used.");systemContactPicker();}return;}
         if(request==78){JSONObject pending=pendingTranscription;pendingTranscription=null;if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED&&pending!=null)transcribe(pending);else if(pending!=null)toast("Transcription needs microphone access.");}}
     // ---- Voice messages: the card, and playing them ----
     /** The parts of a voice message card on screen, so playback can update them without redrawing the chat. */
