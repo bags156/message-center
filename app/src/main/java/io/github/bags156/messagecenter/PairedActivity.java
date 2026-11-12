@@ -1588,16 +1588,16 @@ public class PairedActivity extends Activity {
      * receipts), and each redraw used to show the still preview, decode the GIF again and start it
      * over, which flashed. Now a redraw puts the same playing GIF straight back.
      */
-    private final android.util.LruCache<String,android.graphics.drawable.Drawable> playing=new android.util.LruCache<>(16);
+    private final android.util.LruCache<String,android.graphics.drawable.Drawable> playingGifs=new android.util.LruCache<>(16);
     private static String playingKey(File f,int width,int height){return f.getPath()+"|"+f.length()+"|"+width+"x"+height;}
     /**
      * GIFs and animated stickers play right in the chat (once their file is here; small ones download
      * by themselves). True when one already playing was put back, so nothing else needs loading.
      */
     private boolean playAnimated(JSONObject media,ImageView img,int width,int height){File full=MediaCache.file(this,media,false);
-        if(full.isFile()){android.graphics.drawable.Drawable hit=playing.get(playingKey(full,width,height));if(hit!=null){showAnimated(img,media,hit);return true;}}
+        if(full.isFile()){android.graphics.drawable.Drawable hit=playingGifs.get(playingKey(full,width,height));if(hit!=null){showAnimated(img,media,hit);return true;}}
         Runnable go=()->decoder.execute(()->{android.graphics.drawable.Drawable d=MediaCache.animated(full,width,height);if(d==null)return;
-            playing.put(playingKey(full,width,height),d);img.post(()->{if(img.isAttachedToWindow())showAnimated(img,media,d);});});
+            playingGifs.put(playingKey(full,width,height),d);img.post(()->{if(img.isAttachedToWindow())showAnimated(img,media,d);});});
         if(full.isFile())go.run();
         else if(MediaCache.hasFull(media)&&PairedService.ready()&&media.optLong("size")<=(15L<<20))MediaCache.fetch(this,media,false,(f,e)->{if(f!=null)go.run();});
         return false;}
