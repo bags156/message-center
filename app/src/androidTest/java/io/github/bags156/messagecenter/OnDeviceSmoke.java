@@ -82,6 +82,17 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(got[6]==1,"The pin didn't survive reopening the chat");
         check(got[7]==1,"Unpinning didn't hide the pin bar");
         check(got[8]==0,"The Who's this card came back after it was dismissed");}
+    /** React with any emoji: the picker opens in the app's own theme and fills with emoji. */
+    private void checkEmojiPicker(PairedActivity a)throws Exception{java.lang.reflect.Method open=PairedActivity.class.getDeclaredMethod("emojiPicker",java.util.function.Consumer.class);open.setAccessible(true);
+        android.app.AlertDialog[] d=new android.app.AlertDialog[1];
+        runOnMainSync(()->{try{d[0]=(android.app.AlertDialog)open.invoke(a,(java.util.function.Consumer<String>)e->{});}catch(Exception x){throw new RuntimeException(x);}});
+        int shown=0;for(int wait=0;wait<40&&shown==0;wait++){Thread.sleep(100);int[] n=new int[1];runOnMainSync(()->{java.util.ArrayList<android.view.View> all=new java.util.ArrayList<>();
+            d[0].getWindow().getDecorView().findViewsWithText(all,"😀",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);n[0]=all.size();
+            if(n[0]==0){java.util.ArrayDeque<android.view.View> q=new java.util.ArrayDeque<>();q.add(d[0].getWindow().getDecorView());
+                while(!q.isEmpty()){android.view.View v=q.poll();if(v instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++)q.add(((android.view.ViewGroup)v).getChildAt(i));
+                    if(v.getClass().getName().contains("EmojiView"))n[0]++;}}});shown=n[0];}
+        boolean showing=d[0].isShowing();runOnMainSync(()->d[0].dismiss());
+        check(showing&&shown>0,"The emoji picker didn't open with emoji in it ("+showing+", "+shown+")");}
     /** The newest raw contact the shell just added: the highest "_id=12" it lists (arguments can't hold spaces, so no "DESC"). */
     private String newestRawContact()throws Exception{java.util.regex.Matcher m=java.util.regex.Pattern.compile("_id=(\\d+)").matcher(shell("content query --uri content://com.android.contacts/raw_contacts --projection _id"));
         long best=-1;while(m.find())best=Math.max(best,Long.parseLong(m.group(1)));return best<0?"":String.valueOf(best);}
@@ -985,8 +996,9 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkContactText((PairedActivity)activity);
         checkContactPickerDeduplicates();
         checkPinsAndWhoIsThis((PairedActivity)activity);
+        checkEmojiPicker((PairedActivity)activity);
         checkSentTextStays((PairedActivity)activity);
         checkBubbleStepsAside((PairedActivity)activity);
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, any-emoji reactions, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }

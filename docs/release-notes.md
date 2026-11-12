@@ -1,6 +1,5 @@
-Message Center 1.5.15.
+Message Center 1.5.16.
 
-- Fixed: "This is an RCS for Business chat." showed as a message from you at the top of business chats (like Topgolf). It's a notice from Google, and is now shown as a small centered line like "Group created".
-- Other notices from Google are never shown as anyone's message: newer ones show Google's own wording as a centered line (for example "Missed video call", or Google's possible-scam warning), and tips that Google Messages' own bridge hides stay hidden.
+- React with any emoji: long-press a message and tap + at the end of the reaction row. Android's emoji picker opens with every emoji, skin tones (long-press an emoji) and your recently used ones. iPhones on iOS 18 and later and Android phones show it as a reaction.
 
 Install over the existing app through Obtainium. Your pairing, conversations and settings are retained.

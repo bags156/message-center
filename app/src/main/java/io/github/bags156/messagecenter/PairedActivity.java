@@ -1270,10 +1270,14 @@ public class PairedActivity extends Activity {
         List<String[]> reactors=reactorsOf(m);String mine=myReaction(m,c);
         List<String> choices=new ArrayList<>(java.util.Arrays.asList(REACTIONS));if(!mine.isEmpty()&&!choices.contains(mine)){choices.add(0,mine);choices.remove(choices.size()-1);}
         LinearLayout emojis=row();String current=mine;
-        for(String e:choices){TextView t=text(e,26,ink,false);t.setGravity(Gravity.CENTER);boolean selected=e.equals(current);if(selected)t.setBackground(oval(fab));
+        for(String e:choices){TextView t=text(e,24,ink,false);t.setGravity(Gravity.CENTER);boolean selected=e.equals(current);if(selected)t.setBackground(oval(fab));
             t.setContentDescription(selected?"Your reaction: "+e:"React with "+e);
             // Picking the reaction you already gave changes nothing, so nothing is sent.
             t.setOnClickListener(v->{d[0].dismiss();if(!selected)react(m,e,current.isEmpty()?"add":"switch");});emojis.addView(t,new LinearLayout.LayoutParams(0,dp(50),1));}
+        // Any other emoji: Google's connection takes any emoji as a reaction.
+        TextView more=text("+",26,muted,false);more.setGravity(Gravity.CENTER);more.setBackground(oval(surface));more.setContentDescription("React with another emoji");
+        more.setOnClickListener(v->{d[0].dismiss();emojiPicker(e->{if(!ReactionParser.sameEmoji(e,current))react(m,e,current.isEmpty()?"add":"switch");});});
+        emojis.addView(more,new LinearLayout.LayoutParams(0,dp(50),1));
         content.addView(emojis);gap(content,10);
         if(!mine.isEmpty())sheetAction(content,"Remove your "+mine+" reaction",()->{d[0].dismiss();react(m,current,"remove");});
         sheetAction(content,"Reply",()->{d[0].dismiss();startReply(m);});
@@ -1317,6 +1321,11 @@ public class PairedActivity extends Activity {
         String mine="";for(String[] r:PairedProtocol.reactors(m))if(PairedProtocol.isMe(c,r[1]))mine=r[0];return mine;}
     private static boolean sameEmoji(String a,String b){return a.replace("\uFE0F","").equals(b.replace("\uFE0F",""));}
     /** Sends a reaction, unless it is the one you already gave (so the other person isn't sent a repeat). */
+    /** Android's emoji picker (every emoji, skin tones, your recent ones) in a sheet; picked gets the one you tap. */
+    private AlertDialog emojiPicker(java.util.function.Consumer<String> picked){androidx.emoji2.emojipicker.EmojiPickerView picker=new androidx.emoji2.emojipicker.EmojiPickerView(this);
+        AlertDialog[] d=new AlertDialog[1];picker.setOnEmojiPickedListener(item->{if(d[0]!=null)d[0].dismiss();picked.accept(item.getEmoji());});
+        FrameLayout box=new FrameLayout(this);box.setPadding(dp(8),dp(4),dp(8),0);box.addView(picker,new FrameLayout.LayoutParams(-1,dp(380)));
+        d[0]=new AlertDialog.Builder(this).setTitle("React with").setView(box).setNegativeButton("Cancel",null).create();d[0].show();return d[0];}
     private void react(JSONObject m,String emoji,String action){JSONObject chat=store.chat(chatId);if(chat==null){error("Refresh this conversation first.");return;}
         String id=m.optString("messageID"),mine=myReaction(m,chat);
         if(action.equals("remove")?mine.isEmpty():sameEmoji(emoji,mine))return;

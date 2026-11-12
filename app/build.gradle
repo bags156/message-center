@@ -35,6 +35,8 @@ dependencies {
     // Picture text search: Tesseract OCR (Apache-2.0; Leptonica, libpng and libjpeg are permissive too).
     // Open source and offline, so it fits the AGPL and sends nothing anywhere. Model: assets/tessdata.
     implementation 'cz.adaptech.tesseract4android:tesseract4android:4.9.0'
+    // React with any emoji: Android's own emoji picker (categories, skin tones, recents). Apache-2.0, offline.
+    implementation 'androidx.emoji2:emoji2-emojipicker:1.5.0'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20240303'
 }
