@@ -132,6 +132,12 @@ final class MediaOutbox {
             boolean textCopy=!caption.isEmpty()&&(identities.contains(caption)||!mid.isEmpty()&&mid.equals(j.optString("captionEcho")));
             if(textCopy){put(j,"captionEcho",mid);changed=true;if(PairedProtocol.failed(message)){put(j,"captionState",FAILED);put(j,"captionError","Google Messages reports that this text failed.");}}
         }if(changed)save(items);return changed;}}
+    /** The file Google was given for the attachment this message is the copy of (prepared, or else the original), or null. */
+    File sentFile(JSONObject message){String mid=message.optString("messageID");List<String> identities=ReplyReferences.identities(message);
+        for(JSONObject j:all()){String media=j.optString("mediaTmpID");if(media.isEmpty())media=j.optString("submitTmpID");
+            if(!mid.isEmpty()&&mid.equals(j.optString("mediaEcho"))||!media.isEmpty()&&identities.contains(media)){String path=j.optString("prepared");if(path.isEmpty())path=j.optString("file");
+                File f=new File(path);return path.isEmpty()||!f.isFile()?null:f;}}
+        return null;}
     void remove(String id){synchronized(LOCK){List<JSONObject> items=read();items.removeIf(j->id.equals(j.optString("id")));save(items);if(directory!=null)erase(new File(directory,id));}}
     void clear(){synchronized(LOCK){save(new ArrayList<>());if(directory!=null){File[] files=directory.listFiles();if(files!=null)for(File f:files)if(f.isDirectory())erase(f);}}}
     private static void erase(File file){File[] children=file.listFiles();if(children!=null)for(File f:children)erase(f);file.delete();}

@@ -1545,7 +1545,8 @@ public class PairedActivity extends Activity {
         if(!video&&MediaCache.maybeAnimated(media)&&playAnimated(media,img,width,height))return;
         boolean thumb=MediaCache.hasThumbnail(media);long size=media.optLong("size");File full=MediaCache.file(this,media,false);
         boolean stickerFile=!video&&full.isFile()&&MediaCache.isSticker(full);
-        boolean wantFull=stickerFile||(video?full.isFile()||MediaCache.hasFull(media)&&(!thumb||fullPhotos()&&size>0&&size<=(20L<<20)):MediaCache.hasFull(media)&&(!thumb||(fullPhotos()&&size<=(25L<<20))));
+        // A full copy already on the phone (a photo you sent, or one opened before) is shown as it is: it costs no download.
+        boolean wantFull=stickerFile||(video?full.isFile()||MediaCache.hasFull(media)&&(!thumb||fullPhotos()&&size>0&&size<=(20L<<20)):full.isFile()||MediaCache.hasFull(media)&&(!thumb||(fullPhotos()&&size<=(25L<<20))));
         // Google sometimes sends a photo with only a preview, or nothing at all, on linked devices (end-to-end
         // encrypted chats do this). The phone sends the full photo when asked, and the message updates by itself.
         boolean ask=!video&&MediaCache.needsPhone(media)&&(fullPhotos()||!thumb)&&!full.isFile();
@@ -1555,7 +1556,8 @@ public class PairedActivity extends Activity {
         else if(ask)tileState(img,media,!PairedService.ready()?"Waiting for the connection…":thumb?"Loading full photo…":"Getting photo from your phone…",null);
         if(ask&&!missing&&PairedService.ready())PairedService.requestFullMedia(media,false,(v,e)->{if(!e.isEmpty())tileState(img,media,thumb?"Only a preview • Tap for details":"Couldn't get this photo • Tap for details",e);else waitForPhone(img,media,thumb);});
         if(wantFull&&full.isFile()){Bitmap b=MediaCache.peekCover(full,width,height);if(b!=null){img.setTag("full");img.setImageBitmap(b);sharp(img);tileState(img,media,null,null);return;}}
-        if(thumb&&!stickerFile){File t=MediaCache.file(this,media,true);Bitmap b=t.isFile()?MediaCache.peekCover(t,width,height):null;
+        // No need to download Google's small preview when the full picture is already here.
+        if(thumb&&!stickerFile&&!(full.isFile()&&!MediaCache.file(this,media,true).isFile())){File t=MediaCache.file(this,media,true);Bitmap b=t.isFile()?MediaCache.peekCover(t,width,height):null;
             if(b!=null){img.setImageBitmap(b);if(MediaCache.tiny(t))soft(img);}
             else if(t.isFile()||PairedService.ready()||MediaCache.hasInline(media))MediaCache.fetch(this,media,true,(file,err)->{if(file==null)return;
                 decoder.execute(()->{Bitmap d=MediaCache.decodeToCover(file,width,height,false);boolean small=MediaCache.tiny(file);

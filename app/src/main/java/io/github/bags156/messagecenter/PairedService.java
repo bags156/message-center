@@ -222,7 +222,7 @@ public final class PairedService extends Service {
                 case "MESSAGE" -> {
                     JSONObject envelope=new JSONObject(payload),message=envelope.getJSONObject("message");
                     boolean existed=store.message(message,0,true);touch(message);fullArrived(message);
-                    if(attachmentOutbox.reconcile(message)){attachmentOutbox.retireCompleted();changed("MEDIA_OUTBOX");main.post(this::flushMediaOutbox);}
+                    if(attachmentOutbox.reconcile(message)){keepSentCopy(this,attachmentOutbox,message);attachmentOutbox.retireCompleted();changed("MEDIA_OUTBOX");main.post(this::flushMediaOutbox);}
                     if(outbox.arrived(message))changed("OUTBOX");
                     if(!PairedProtocol.outgoing(message) && typing.remove(message.optString("conversationID"))!=null)changed("TYPING");
                     // Answered on the phone: this chat's notification here is no longer needed.
@@ -337,7 +337,7 @@ public final class PairedService extends Service {
     }
     static void loadMessages(String id,String cursor,Result done) {
         execute(c->{PairedService s=current;long version=s.store.snapshot();JSONObject response=new JSONObject(c.messages(id,cursor));
-            JSONArray messages=response.optJSONArray("messages");if(messages!=null)for(int i=0;i<messages.length();i++){JSONObject m=messages.getJSONObject(i);s.store.message(m,version,false);JSONObject saved=s.store.message(m.optString("messageID"));if(saved!=null){s.attachmentOutbox.reconcile(saved);s.outbox.arrived(saved);}s.store.page("source-page:"+m.optString("messageID"),cursor,"known");}s.attachmentOutbox.retireCompleted();s.main.post(s::flushMediaOutbox);
+            JSONArray messages=response.optJSONArray("messages");if(messages!=null)for(int i=0;i<messages.length();i++){JSONObject m=messages.getJSONObject(i);s.store.message(m,version,false);JSONObject saved=s.store.message(m.optString("messageID"));if(saved!=null){if(s.attachmentOutbox.reconcile(saved))keepSentCopy(s,s.attachmentOutbox,saved);s.outbox.arrived(saved);}s.store.page("source-page:"+m.optString("messageID"),cursor,"known");}s.attachmentOutbox.retireCompleted();s.main.post(s::flushMediaOutbox);
             String next=PairedProtocol.cursor(response),note="";
             if(!next.isEmpty() && next.equals(cursor)){next="";note="Google repeated a history cursor; stopped to prevent a loop.";}
             if(next.isEmpty() && note.isEmpty())note=response.optString("someBytes","").isEmpty()?"End of the history pages Google supplied. This does not prove the full phone archive was shared.":"Google returned a history format this version cannot page. More messages may exist in Google Messages.";
@@ -473,6 +473,19 @@ public final class PairedService extends Service {
      * Puts back a chat's bubble that was taken down while the chat was open, when the app was
      * closed in between (so the original notification is gone). False if the connection isn't running yet.
      */
+    /**
+     * A photo or video you sent shows from the copy already on this phone: it's linked into the
+     * media folder under Google's copy before the queued one is cleared. It used to be downloaded
+     * back from Google, which made sent photos slow to appear.
+     */
+    static void keepSentCopy(Context context,MediaOutbox outbox,JSONObject message){List<JSONObject> media=PairedProtocol.media(message);if(media.isEmpty())return;
+        java.io.File from=outbox.sentFile(message);if(from==null)return;
+        for(JSONObject m:media){if(!MediaCache.hasFull(m))continue;java.io.File to=MediaCache.file(context,m,false);if(to.isFile())return;
+            java.io.File temp=new java.io.File(to.getPath()+".sent");temp.delete();
+            try{try{android.system.Os.link(from.getPath(),temp.getPath());}catch(Exception e){java.nio.file.Files.copy(from.toPath(),temp.toPath());}
+                if(!temp.renameTo(to))temp.delete();}
+            catch(Exception e){temp.delete();Diagnostics.note("Couldn't keep the sent attachment: "+e.getClass().getSimpleName());}
+            return;}}
     static boolean restoreBubble(String id) {
         PairedService s=current;if(s==null||s.store==null)return false;
         if(s.store.chat(id)!=null&&NotificationPrivacy.showName(s,id))s.postConversation(id,null,true,false,true);
@@ -807,7 +820,7 @@ public final class PairedService extends Service {
                 if(!replaced.isEmpty())try{source.deleteMessage(replaced);store.deleteMessage(replaced);}catch(Exception e){Diagnostics.note("The failed copy couldn't be removed: "+e.getClass().getSimpleName());}
             }
             // A fast echo can precede the submit response. Reconcile exact IDs against the cached messages again.
-            for(JSONObject m:store.messages(chat,100))attachmentOutbox.reconcile(m);
+            for(JSONObject m:store.messages(chat,100))if(attachmentOutbox.reconcile(m))keepSentCopy(this,attachmentOutbox,m);
             attachmentOutbox.retireCompleted();
         }catch(Exception e){attachmentOutbox.failed(id,attempt,e.getMessage()==null?(captionOnly?"The text couldn't be sent.":"This attachment couldn't be sent."):e.getMessage(),captionOnly);}
         finally{main.post(()->{flushingMedia=false;if(current==this){changed("MEDIA_OUTBOX");changed("MESSAGE");

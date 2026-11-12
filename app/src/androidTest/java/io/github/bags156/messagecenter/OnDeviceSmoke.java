@@ -107,6 +107,27 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(seen[0]!=null,"The GIF didn't play in the chat");
         check(seen[1]==seen[0]&&seen[2]==seen[0],"A redraw replaced the playing GIF (it would flash and restart)");
         check(((android.graphics.drawable.AnimatedImageDrawable)seen[0]).isRunning(),"The GIF stopped playing after a redraw");}
+    /**
+     * A photo you sent is shown from the copy already on the phone: when Google's copy of the
+     * message arrives, the sent file is kept under it before the queued one is cleared, so it
+     * isn't downloaded back from Google.
+     */
+    private void checkSentPhotoKept()throws Exception{android.content.Context ctx=getTargetContext();MediaOutbox box=new MediaOutbox(ctx);
+        android.graphics.Bitmap pic=android.graphics.Bitmap.createBitmap(64,48,android.graphics.Bitmap.Config.ARGB_8888);pic.eraseColor(0xff2266aa);
+        java.io.File source=new java.io.File(ctx.getCacheDir(),"sent-check.jpg");try(java.io.FileOutputStream out=new java.io.FileOutputStream(source)){pic.compress(android.graphics.Bitmap.CompressFormat.JPEG,90,out);}
+        long size=source.length();JSONObject job=box.enqueue("sent-check",source,"sent-check.jpg","image/jpeg","","","standard",false,false,null);String id=job.optString("id");
+        box.finish(id,job.optLong("attempt"),new JSONObject().put("mediaTmpID","tmp-sent-check"));
+        JSONObject media=new JSONObject().put("mediaID","sent-check-media").put("mimeType","image/jpeg").put("mediaName","sent-check.jpg").put("size",size).put("decryptionKey","AAAA").put("thumbnailMediaID","sent-check-thumb");
+        JSONObject copy=new JSONObject().put("messageID","sent-check-msg").put("tmpID","tmp-sent-check").put("conversationID","sent-check").put("participantID","me").put("timestamp",System.currentTimeMillis()*1000)
+            .put("messageStatus",new JSONObject().put("status","OUTGOING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("actionMessageID","sent-check-part").put("mediaContent",media)));
+        java.io.File cached=MediaCache.file(ctx,media,false);cached.delete();boolean matched,kept,same=false;
+        try{matched=box.reconcile(copy);if(matched)PairedService.keepSentCopy(ctx,box,copy);box.retireCompleted();
+            kept=cached.isFile()&&cached.length()==size;
+            if(kept){android.graphics.BitmapFactory.Options o=new android.graphics.BitmapFactory.Options();o.inJustDecodeBounds=true;android.graphics.BitmapFactory.decodeFile(cached.getPath(),o);same=o.outWidth==64&&o.outHeight==48;}}
+        finally{box.remove(id);cached.delete();source.delete();}
+        check(matched,"Google's copy of the sent photo wasn't matched to it");
+        check(kept&&same,"A sent photo wasn't kept on the phone; it would be downloaded back from Google");
+        check(box.get(id)==null,"The sent photo stayed queued after Google's copy arrived");}
     /** React with any emoji: the picker opens in the app's own theme and fills with emoji. */
     private void checkEmojiPicker(PairedActivity a)throws Exception{java.lang.reflect.Method open=PairedActivity.class.getDeclaredMethod("emojiPicker",java.util.function.Consumer.class);open.setAccessible(true);
         android.app.AlertDialog[] d=new android.app.AlertDialog[1];
@@ -1023,8 +1044,9 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkPinsAndWhoIsThis((PairedActivity)activity);
         checkEmojiPicker((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
+        checkSentPhotoKept();
         checkSentTextStays((PairedActivity)activity);
         checkBubbleStepsAside((PairedActivity)activity);
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, any-emoji reactions, gifs keep playing, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, any-emoji reactions, gifs keep playing, sent photos kept, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }
