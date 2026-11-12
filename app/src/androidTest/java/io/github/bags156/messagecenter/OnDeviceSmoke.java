@@ -82,6 +82,31 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(got[6]==1,"The pin didn't survive reopening the chat");
         check(got[7]==1,"Unpinning didn't hide the pin bar");
         check(got[8]==0,"The Who's this card came back after it was dismissed");}
+    /**
+     * A GIF keeps playing through chat redraws: the redrawn chat gets the very same playing GIF at
+     * once, instead of the still preview and a fresh decode (which flashed and restarted it).
+     */
+    private void checkGifSurvivesRedraw(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();long now=System.currentTimeMillis();
+        byte[] gif=android.util.Base64.decode("R0lGODlhEAAQAIEAANweHgAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQADAAAACwAAAAAEAAQAAAIHQABCBxIsKDBgwgTKlzIsKHDhxAjSpxIsaLFgQEBACH5BAEMAAEALAAAAAAQABAAgR4e3AAAAAAAAAAAAAgdAAEIHEiwoMGDCBMqXMiwocOHECNKnEixosWBAQEAIfkEAQwAAQAsAAAAABAAEACBHsg8AAAAAAAAAAAACB0AAQgcSLCgwYMIEypcyLChw4cQI0qcSLGixYEBAQA7",android.util.Base64.DEFAULT);
+        JSONObject media=new JSONObject().put("mediaID","gif-check-media").put("mimeType","image/gif").put("mediaName","check.gif").put("size",gif.length).put("decryptionKey","AAAA");
+        java.io.File file=MediaCache.file(ctx,media,false);file.getParentFile().mkdirs();try(java.io.FileOutputStream out=new java.io.FileOutputStream(file)){out.write(gif);}
+        try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'gif-check',name:'Gif Check',type:'RCS',participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'gf',number:'+15550104444'},fullName:'Gif Check'}]}"));
+            store.message(new JSONObject().put("messageID","gif-msg").put("conversationID","gif-check").put("participantID","gf").put("timestamp",now*1000).put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE"))
+                .put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("actionMessageID","gif-part").put("mediaContent",media))),0,true);}
+        java.lang.reflect.Method openChat=PairedActivity.class.getDeclaredMethod("thread",String.class),leaveChat=PairedActivity.class.getDeclaredMethod("inbox"),redraw=PairedActivity.class.getDeclaredMethod("renderMessages",boolean.class);
+        for(java.lang.reflect.Method m:new java.lang.reflect.Method[]{openChat,leaveChat,redraw})m.setAccessible(true);
+        java.util.function.Supplier<android.graphics.drawable.Drawable> playingNow=()->{java.util.ArrayDeque<android.view.View> q=new java.util.ArrayDeque<>();q.add(a.getWindow().getDecorView());
+            while(!q.isEmpty()){android.view.View v=q.poll();if(v instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++)q.add(((android.view.ViewGroup)v).getChildAt(i));
+                if(v instanceof android.widget.ImageView&&((android.widget.ImageView)v).getDrawable() instanceof android.graphics.drawable.AnimatedImageDrawable)return ((android.widget.ImageView)v).getDrawable();}return null;};
+        android.graphics.drawable.Drawable[] seen=new android.graphics.drawable.Drawable[3];
+        try{runOnMainSync(()->{try{openChat.invoke(a,"gif-check");}catch(Exception x){throw new RuntimeException(x);}});
+            for(int wait=0;wait<30&&seen[0]==null;wait++){Thread.sleep(100);runOnMainSync(()->seen[0]=playingNow.get());}
+            // Redrawn: the same playing GIF is there right away, before anything could load.
+            runOnMainSync(()->{try{redraw.invoke(a,false);seen[1]=playingNow.get();redraw.invoke(a,false);seen[2]=playingNow.get();}catch(Exception x){throw new RuntimeException(x);}});}
+        finally{runOnMainSync(()->{try{leaveChat.invoke(a);}catch(Exception x){throw new RuntimeException(x);}});file.delete();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("gif-check");}}
+        check(seen[0]!=null,"The GIF didn't play in the chat");
+        check(seen[1]==seen[0]&&seen[2]==seen[0],"A redraw replaced the playing GIF (it would flash and restart)");
+        check(((android.graphics.drawable.AnimatedImageDrawable)seen[0]).isRunning(),"The GIF stopped playing after a redraw");}
     /** React with any emoji: the picker opens in the app's own theme and fills with emoji. */
     private void checkEmojiPicker(PairedActivity a)throws Exception{java.lang.reflect.Method open=PairedActivity.class.getDeclaredMethod("emojiPicker",java.util.function.Consumer.class);open.setAccessible(true);
         android.app.AlertDialog[] d=new android.app.AlertDialog[1];
@@ -997,8 +1022,9 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkContactPickerDeduplicates();
         checkPinsAndWhoIsThis((PairedActivity)activity);
         checkEmojiPicker((PairedActivity)activity);
+        checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentTextStays((PairedActivity)activity);
         checkBubbleStepsAside((PairedActivity)activity);
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, any-emoji reactions, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, any-emoji reactions, gifs keep playing, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }

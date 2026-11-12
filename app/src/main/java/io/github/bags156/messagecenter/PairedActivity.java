@@ -1541,7 +1541,8 @@ public class PairedActivity extends Activity {
      * chat size (unless "previews only" is chosen in Settings). Videos keep their preview frame.
      */
     private void loadPreview(JSONObject media,ImageView img,boolean video,int width,int height){
-        if(!video&&MediaCache.maybeAnimated(media))playAnimated(media,img,width,height);
+        // A GIF already playing from before the chat redrew is put straight back: nothing else to load.
+        if(!video&&MediaCache.maybeAnimated(media)&&playAnimated(media,img,width,height))return;
         boolean thumb=MediaCache.hasThumbnail(media);long size=media.optLong("size");File full=MediaCache.file(this,media,false);
         boolean stickerFile=!video&&full.isFile()&&MediaCache.isSticker(full);
         boolean wantFull=stickerFile||(video?full.isFile()||MediaCache.hasFull(media)&&(!thumb||fullPhotos()&&size>0&&size<=(20L<<20)):MediaCache.hasFull(media)&&(!thumb||(fullPhotos()&&size<=(25L<<20))));
@@ -1582,12 +1583,26 @@ public class PairedActivity extends Activity {
             tileState(img,media,thumb?"Only a preview • Tap to ask again":"Not sent yet • Tap to ask again",
                 "Your phone was asked for this photo but hasn't sent it. It may be asleep or offline, or it may not have the photo any more. Check that it opens in Google Messages on your phone.");},
             Math.max(0,asked+PHONE_PATIENCE_MS-System.currentTimeMillis()));}
-    /** GIFs and animated stickers play right in the chat (once their file is here; small ones download by themselves). */
-    private void playAnimated(JSONObject media,ImageView img,int width,int height){File full=MediaCache.file(this,media,false);
+    /**
+     * GIFs playing in chats, by file and size. The chat redraws often (new messages, read
+     * receipts), and each redraw used to show the still preview, decode the GIF again and start it
+     * over, which flashed. Now a redraw puts the same playing GIF straight back.
+     */
+    private final android.util.LruCache<String,android.graphics.drawable.Drawable> playing=new android.util.LruCache<>(16);
+    private static String playingKey(File f,int width,int height){return f.getPath()+"|"+f.length()+"|"+width+"x"+height;}
+    /**
+     * GIFs and animated stickers play right in the chat (once their file is here; small ones download
+     * by themselves). True when one already playing was put back, so nothing else needs loading.
+     */
+    private boolean playAnimated(JSONObject media,ImageView img,int width,int height){File full=MediaCache.file(this,media,false);
+        if(full.isFile()){android.graphics.drawable.Drawable hit=playing.get(playingKey(full,width,height));if(hit!=null){showAnimated(img,media,hit);return true;}}
         Runnable go=()->decoder.execute(()->{android.graphics.drawable.Drawable d=MediaCache.animated(full,width,height);if(d==null)return;
-            img.post(()->{img.setTag("animated");img.setImageDrawable(d);sharp(img);tileState(img,media,null,null);((android.graphics.drawable.AnimatedImageDrawable)d).start();});});
+            playing.put(playingKey(full,width,height),d);img.post(()->{if(img.isAttachedToWindow())showAnimated(img,media,d);});});
         if(full.isFile())go.run();
-        else if(MediaCache.hasFull(media)&&PairedService.ready()&&media.optLong("size")<=(15L<<20))MediaCache.fetch(this,media,false,(f,e)->{if(f!=null)go.run();});}
+        else if(MediaCache.hasFull(media)&&PairedService.ready()&&media.optLong("size")<=(15L<<20))MediaCache.fetch(this,media,false,(f,e)->{if(f!=null)go.run();});
+        return false;}
+    private void showAnimated(ImageView img,JSONObject media,android.graphics.drawable.Drawable d){img.setTag("animated");img.setImageDrawable(d);sharp(img);tileState(img,media,null,null);
+        android.graphics.drawable.AnimatedImageDrawable a=(android.graphics.drawable.AnimatedImageDrawable)d;if(!a.isRunning())a.start();}
     /** A shared contact shown as a card (name, number) with Save, instead of a file. */
     private View contactCardView(JSONObject m,JSONObject media,boolean outgoing,ChatTheme theme){int fg=outgoing?theme.onBubble(dark):ink;
         LinearLayout card=vertical();card.setPadding(dp(14),dp(12),dp(14),dp(6));card.setBackground(shape(outgoing?theme.bubble(dark):surface,22));card.setMinimumWidth(dp(230));
