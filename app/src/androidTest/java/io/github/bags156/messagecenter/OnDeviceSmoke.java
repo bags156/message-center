@@ -139,34 +139,67 @@ public final class OnDeviceSmoke extends Instrumentation {
             s.snoozeUntilQuiet(id);s.setSnooze(id,System.currentTimeMillis()+3_600_000L);check(!s.untilQuiet(id),"Choosing a set time didn't replace until it's quiet");}
         finally{s.setSnooze(id,0);}}
     /** React with any emoji: the picker opens in the app's own theme and fills with emoji. */
-    private void checkEmojiPicker(PairedActivity a)throws Exception{java.lang.reflect.Method open=PairedActivity.class.getDeclaredMethod("emojiPicker",java.util.function.Consumer.class);open.setAccessible(true);
-        android.app.AlertDialog[] d=new android.app.AlertDialog[1];
-        runOnMainSync(()->{try{d[0]=(android.app.AlertDialog)open.invoke(a,(java.util.function.Consumer<String>)e->{});}catch(Exception x){throw new RuntimeException(x);}});
-        int shown=0;for(int wait=0;wait<40&&shown==0;wait++){Thread.sleep(100);int[] n=new int[1];runOnMainSync(()->{java.util.ArrayList<android.view.View> all=new java.util.ArrayList<>();
-            d[0].getWindow().getDecorView().findViewsWithText(all,"😀",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);n[0]=all.size();
-            if(n[0]==0){java.util.ArrayDeque<android.view.View> q=new java.util.ArrayDeque<>();q.add(d[0].getWindow().getDecorView());
-                while(!q.isEmpty()){android.view.View v=q.poll();if(v instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++)q.add(((android.view.ViewGroup)v).getChildAt(i));
-                    if(v.getClass().getName().contains("EmojiView"))n[0]++;}}});shown=n[0];}
-        boolean showing=d[0].isShowing();
-        // Each category tab shows its emoji (they came up empty on a phone). Screenshots go to the CI report.
+    private static <T extends android.view.View> java.util.List<T> viewsOf(android.view.View root,Class<T> type){java.util.List<T> out=new java.util.ArrayList<>();
+        java.util.ArrayDeque<android.view.View> q=new java.util.ArrayDeque<>();q.add(root);
+        while(!q.isEmpty()){android.view.View v=q.poll();if(type.isInstance(v))out.add(type.cast(v));
+            if(v instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++)q.add(((android.view.ViewGroup)v).getChildAt(i));}
+        return out;}
+    /** The emoji picker's tabs (clickable labels: Recent, then the categories), in order. */
+    private static java.util.List<android.widget.TextView> emojiTabs(android.app.Dialog d){java.util.List<android.widget.TextView> tabs=new java.util.ArrayList<>();
+        for(android.widget.TextView t:viewsOf(d.getWindow().getDecorView(),android.widget.TextView.class))if(t.isClickable()&&t.getContentDescription()!=null&&!(t instanceof android.widget.EditText))tabs.add(t);
+        return tabs;}
+    /** The first emoji shown in the picker's grid, up to n of them. */
+    private static String firstEmoji(android.widget.GridView grid,int n){StringBuilder b=new StringBuilder();
+        for(int i=0;i<Math.min(n,grid.getAdapter().getCount());i++)b.append(grid.getAdapter().getItem(i)).append(' ');return b.toString().trim();}
+    /**
+     * The emoji picker: every tab has emoji in it (they came up empty on a phone with Android's
+     * picker), search finds emoji by name and keyword and takes a typed emoji, press-and-hold shows
+     * skin tones, and a picked emoji is reported and comes first in Recent the next time.
+     */
+    private void checkEmojiPicker(PairedActivity a)throws Exception{a.getSharedPreferences("emoji",android.content.Context.MODE_PRIVATE).edit().clear().commit();
+        java.lang.reflect.Method open=PairedActivity.class.getDeclaredMethod("emojiPicker",java.util.function.Consumer.class);open.setAccessible(true);
+        android.app.Dialog[] d=new android.app.Dialog[1];String[] picked={null};
+        Runnable show=()->runOnMainSync(()->{try{d[0]=(android.app.Dialog)open.invoke(a,(java.util.function.Consumer<String>)e->picked[0]=e);}catch(Exception x){throw new RuntimeException(x);}});
+        show.run();Thread.sleep(500);
+        android.widget.GridView[] grid=new android.widget.GridView[1];android.widget.EditText[] search=new android.widget.EditText[1];java.util.List<android.widget.TextView> tabs=new java.util.ArrayList<>();
+        runOnMainSync(()->{android.view.View root=d[0].getWindow().getDecorView();java.util.List<android.widget.GridView> g=viewsOf(root,android.widget.GridView.class);java.util.List<android.widget.EditText> e=viewsOf(root,android.widget.EditText.class);
+            grid[0]=g.isEmpty()?null:g.get(0);search[0]=e.isEmpty()?null:e.get(0);tabs.addAll(emojiTabs(d[0]));});
+        check(d[0].isShowing()&&grid[0]!=null&&search[0]!=null&&tabs.size()==10,"The emoji picker is missing parts ("+d[0].isShowing()+", "+(grid[0]!=null)+", "+(search[0]!=null)+", "+tabs.size()+" tabs)");
         StringBuilder empty=new StringBuilder();
-        for(int tab:new int[]{1,2,4,6,8}){int[] found={-1};
-            runOnMainSync(()->{java.util.List<android.view.ViewGroup> lists=new java.util.ArrayList<>();java.util.ArrayDeque<android.view.View> q=new java.util.ArrayDeque<>();q.add(d[0].getWindow().getDecorView());
-                while(!q.isEmpty()){android.view.View v=q.poll();if(v.getClass().getName().endsWith("RecyclerView"))lists.add((android.view.ViewGroup)v);
-                    if(v instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++)q.add(((android.view.ViewGroup)v).getChildAt(i));}
-                if(lists.size()<2)return;android.view.ViewGroup header=lists.get(0);if(header.getChildCount()<=tab)return;header.getChildAt(tab).performClick();});
-            Thread.sleep(900);
-            runOnMainSync(()->{java.util.List<android.view.ViewGroup> lists=new java.util.ArrayList<>();java.util.ArrayDeque<android.view.View> q=new java.util.ArrayDeque<>();q.add(d[0].getWindow().getDecorView());
-                while(!q.isEmpty()){android.view.View v=q.poll();if(v.getClass().getName().endsWith("RecyclerView"))lists.add((android.view.ViewGroup)v);
-                    if(v instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++)q.add(((android.view.ViewGroup)v).getChildAt(i));}
-                if(lists.size()<2)return;android.view.ViewGroup body=lists.get(lists.size()-1);int n=0;android.graphics.Rect r=new android.graphics.Rect();
-                for(int i=0;i<body.getChildCount();i++){android.view.View c=body.getChildAt(i);if(c.getClass().getName().contains("EmojiView")&&c.getGlobalVisibleRect(r)&&c.getAlpha()>0)n++;}found[0]=n;});
-            android.graphics.Bitmap shot=getUiAutomation().takeScreenshot();
-            if(shot!=null)try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getCacheDir(),"emoji-tab-"+tab+".png"))){shot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
-            if(found[0]<=0)empty.append(tab).append('(').append(found[0]).append(") ");}
-        runOnMainSync(()->d[0].dismiss());
-        check(showing&&shown>0,"The emoji picker didn't open with emoji in it ("+showing+", "+shown+")");
-        check(empty.length()==0,"Emoji picker tabs showed no emoji: "+empty);}
+        for(int t=1;t<tabs.size();t++){int tab=t;int[] n=new int[2];runOnMainSync(()->tabs.get(tab).performClick());Thread.sleep(250);
+            runOnMainSync(()->{n[0]=grid[0].getAdapter().getCount();n[1]=grid[0].getChildCount();});
+            if(n[0]<40||n[1]==0)empty.append(tabs.get(tab).getContentDescription()).append(" (").append(n[0]).append('/').append(n[1]).append(") ");}
+        check(empty.length()==0,"Emoji picker tabs showed no emoji: "+empty);
+        String[] found=new String[1];
+        java.util.function.Consumer<String> type=text->{runOnMainSync(()->{search[0].setText(text);found[0]=firstEmoji(grid[0],6);});};
+        type.accept("fire");check(found[0].startsWith("🔥"),"Searching emoji for fire found "+found[0]);
+        type.accept("thumbs up");check(found[0].startsWith("👍"),"Searching emoji for thumbs up found "+found[0]);
+        type.accept("lol");check(found[0].contains("😂"),"Searching emoji for lol found "+found[0]);
+        type.accept("zzqxv");check(found[0].isEmpty(),"Searching emoji for nonsense found "+found[0]);
+        type.accept("🙂");check(found[0].equals("🙂"),"A typed emoji wasn't offered: "+found[0]);
+        type.accept("");check(found[0].split(" ").length>=6,"Clearing the emoji search left the grid empty: "+found[0]);
+        // Press and hold 👍: its skin tones pop up over the picker (Back closes just them).
+        type.accept("thumbs up");Thread.sleep(200);
+        runOnMainSync(()->{search[0].clearFocus();a.getSystemService(android.view.inputmethod.InputMethodManager.class).hideSoftInputFromWindow(search[0].getWindowToken(),0);
+            grid[0].getOnItemLongClickListener().onItemLongClick(grid[0],grid[0].getChildAt(0),0,0);});
+        Thread.sleep(500);sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);Thread.sleep(400);
+        check(d[0].isShowing(),"Pressing and holding 👍 didn't show its skin tones");
+        type.accept("fire");Thread.sleep(150);runOnMainSync(()->grid[0].performItemClick(grid[0].getChildAt(0),0,0));Thread.sleep(300);
+        check("🔥".equals(picked[0])&&!d[0].isShowing(),"Tapping 🔥 in the emoji picker didn't pick it ("+picked[0]+", "+d[0].isShowing()+")");
+        show.run();Thread.sleep(400);String[] recent=new String[1];
+        runOnMainSync(()->{java.util.List<android.widget.GridView> g=viewsOf(d[0].getWindow().getDecorView(),android.widget.GridView.class);recent[0]=g.isEmpty()?"":firstEmoji(g.get(0),3);d[0].dismiss();});
+        check(recent[0].startsWith("🔥"),"Recent emoji didn't start with the one just picked: "+recent[0]);
+        a.getSharedPreferences("emoji",android.content.Context.MODE_PRIVATE).edit().clear().commit();}
+    /**
+     * Bubble and shortcut pictures are circles with clear corners, so bubbles stay round on phones
+     * whose icon shape is a rounded square.
+     */
+    private void checkRoundBubbleIcon(){int size=216;android.graphics.Bitmap photo=android.graphics.Bitmap.createBitmap(64,64,android.graphics.Bitmap.Config.ARGB_8888);photo.eraseColor(0xff2266cc);
+        int inner=size/6+6,top=size/2-size/3+4;
+        for(android.graphics.Bitmap b:new android.graphics.Bitmap[]{Avatars.adaptive(photo,"A",0xff884422,size),Avatars.adaptive(null,"A",0xff884422,size)}){
+            int[] clear={b.getPixel(0,0),b.getPixel(inner,inner),b.getPixel(size-1-inner,size-1-inner)},solid={b.getPixel(size/2,top),b.getPixel(top,size/2),b.getPixel(size/2,size-1-top)};
+            for(int c:clear)check(android.graphics.Color.alpha(c)==0,"A bubble picture's corner isn't clear ("+Integer.toHexString(c)+")");
+            for(int c:solid)check(android.graphics.Color.alpha(c)==255,"A bubble picture's circle has a gap ("+Integer.toHexString(c)+")");}}
     /** The newest raw contact the shell just added: the highest "_id=12" it lists (arguments can't hold spaces, so no "DESC"). */
     private String newestRawContact()throws Exception{java.util.regex.Matcher m=java.util.regex.Pattern.compile("_id=(\\d+)").matcher(shell("content query --uri content://com.android.contacts/raw_contacts --projection _id"));
         long best=-1;while(m.find())best=Math.max(best,Long.parseLong(m.group(1)));return best<0?"":String.valueOf(best);}
@@ -1071,11 +1104,12 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkContactPickerDeduplicates();
         checkPinsAndWhoIsThis((PairedActivity)activity);
         checkEmojiPicker((PairedActivity)activity);
+        checkRoundBubbleIcon();
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();
         checkSentTextStays((PairedActivity)activity);
         checkBubbleStepsAside((PairedActivity)activity);
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, any-emoji reactions, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, emoji picker tabs and search, round bubbles, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }

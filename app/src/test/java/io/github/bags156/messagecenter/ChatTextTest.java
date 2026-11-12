@@ -189,4 +189,14 @@ public class ChatTextTest {
         assertEquals("Video", ChatText.withoutMediaEmoji("🎥 Video"));
         assertEquals("Thanks 📷", ChatText.withoutMediaEmoji("Thanks 📷"));
     }
+    @Test public void firstEmojiIsWhole() {
+        org.junit.Assert.assertEquals("🔥", ChatText.firstEmoji("🔥"));
+        org.junit.Assert.assertEquals("👍🏽", ChatText.firstEmoji("ok 👍🏽 then"));
+        org.junit.Assert.assertEquals("👨‍👩‍👧", ChatText.firstEmoji("👨‍👩‍👧😀"));
+        org.junit.Assert.assertEquals("🇺🇸", ChatText.firstEmoji("🇺🇸🇨🇦"));
+        org.junit.Assert.assertEquals("❤️", ChatText.firstEmoji("❤️"));
+        org.junit.Assert.assertEquals("3️⃣", ChatText.firstEmoji("3️⃣"));
+        org.junit.Assert.assertEquals("", ChatText.firstEmoji("fire"));
+        org.junit.Assert.assertEquals("", ChatText.firstEmoji(""));
+    }
 }

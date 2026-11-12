@@ -283,6 +283,29 @@ final class ChatText {
         return count >= 1 && count <= 3 ? count : 0;
     }
 
+    /** The first emoji in the text, whole (skin tone, ZWJ family, flag, keycap), or "" if there's none. */
+    static String firstEmoji(String text) {
+        if (text == null) return "";
+        int i = 0, start = -1;
+        while (i < text.length()) {
+            int cp = text.codePointAt(i);
+            boolean keycap = (cp == '#' || cp == '*' || (cp >= '0' && cp <= '9')) && text.indexOf(0x20E3, i) > i && text.indexOf(0x20E3, i) <= i + 2;
+            if (keycap || emojiBase(cp)) { start = i; break; }
+            i += Character.charCount(cp);
+        }
+        if (start < 0) return "";
+        int first = text.codePointAt(start), end = start + Character.charCount(first);
+        boolean regional = first >= 0x1F1E6 && first <= 0x1F1FF, paired = false;
+        while (end < text.length()) {
+            int cp = text.codePointAt(end), n = Character.charCount(cp);
+            if (cp == 0xFE0F || cp == 0xFE0E || cp == 0x20E3 || (cp >= 0x1F3FB && cp <= 0x1F3FF) || (cp >= 0xE0020 && cp <= 0xE007F)) { end += n; continue; }
+            if (cp == 0x200D && end + n < text.length()) { int next = text.codePointAt(end + n); end += n + Character.charCount(next); continue; }
+            if (regional && !paired && cp >= 0x1F1E6 && cp <= 0x1F1FF) { paired = true; end += n; continue; }
+            break;
+        }
+        return text.substring(start, end);
+    }
+
     private static boolean emojiBase(int cp) {
         return (cp >= 0x1F000 && cp <= 0x1FAFF) || (cp >= 0x2600 && cp <= 0x27BF) || (cp >= 0x2300 && cp <= 0x23FF) || (cp >= 0x2B00 && cp <= 0x2BFF)
             || (cp >= 0x2190 && cp <= 0x21FF) || cp == 0x3030 || cp == 0x303D || cp == 0x3297 || cp == 0x3299 || cp == 0x00A9 || cp == 0x00AE

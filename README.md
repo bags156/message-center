@@ -21,7 +21,7 @@ For Obtainium, use `https://github.com/bags156/message-center`. Regular releases
 - Direct on-device pairing and protocol connection through `mautrix-gmessages/pkg/libgm`.
 - Native conversation and text composer screens, including a new one-to-one conversation by full phone number.
 - Paged conversations/history, cached using Google's actual conversation/message IDs.
-- Reactions attached to their actual message IDs. Tap a badge to see participants reported by Google; long-press a message to reply or react.
+- Reactions attached to their actual message IDs. Tap a badge to see participants reported by Google; long-press a message to reply or react. The + after the quick reactions opens an emoji picker with your recent emoji, every category, and a search by name or keyword ("fire", "lol", "thumbs up"); press and hold an emoji for skin tones.
 - Pinned chats (Google's pins plus local pin/unpin), per-chat color themes, and per-chat read receipts.
 - Contact photos, unread state, time separators, and delivery ticks in a Material-style inbox and chat.
 - An independent foreground connection and incoming-message notifications, including a boot receiver for an enabled saved connection.
@@ -52,7 +52,7 @@ Picture text search uses Tesseract (open source) with its English model, packed 
 
 Opening a chat draws its newest 30 messages (and every unread one) first, so it appears at once; older saved messages are added as you scroll up toward them. Going back to the inbox reuses the rows that haven't changed, and contact photos are decoded once at the size they're shown.
 
-Bubbles step aside for the chat you're in: opening a chat in the full app (or its Details) puts that chat's bubble away, and it comes back, collapsed and without a dot, a moment after you leave. Other people's bubbles still pop up as usual. A chat that had no bubble doesn't get one when you leave it, and new messages in the chat you're looking at don't notify, since they're already on screen.
+Bubbles are round on every phone, even where the phone's icon shape is a rounded square. Bubbles step aside for the chat you're in: opening a chat in the full app (or its Details) puts that chat's bubble away, and it comes back, collapsed and without a dot, a moment after you leave. Other people's bubbles still pop up as usual. A chat that had no bubble doesn't get one when you leave it, and new messages in the chat you're looking at don't notify, since they're already on screen.
 
 Group chats use a stable collage of participant photos or initials, a group marker and an additional-member count. The group design appears in the inbox and in Android bubble/shortcut icons, with every face inside the adaptive icon’s visible area. Your own and hidden participants are excluded.
 

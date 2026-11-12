@@ -1275,6 +1275,7 @@ public class PairedActivity extends Activity {
             // Picking the reaction you already gave changes nothing, so nothing is sent.
             t.setOnClickListener(v->{d[0].dismiss();if(!selected)react(m,e,current.isEmpty()?"add":"switch");});emojis.addView(t,new LinearLayout.LayoutParams(0,dp(50),1));}
         // Any other emoji: Google's connection takes any emoji as a reaction.
+        if(emojiIndex==null)new Thread(this::emojiIndex,"emoji-index").start();
         TextView more=text("+",26,muted,false);more.setGravity(Gravity.CENTER);more.setBackground(oval(surface));more.setContentDescription("React with another emoji");
         more.setOnClickListener(v->{d[0].dismiss();emojiPicker(e->{if(!ReactionParser.sameEmoji(e,current))react(m,e,current.isEmpty()?"add":"switch");});});
         emojis.addView(more,new LinearLayout.LayoutParams(0,dp(50),1));
@@ -1320,12 +1321,85 @@ public class PairedActivity extends Activity {
         if(at!=null&&android.os.SystemClock.uptimeMillis()-at<20_000)return sentReactions.get(id);
         String mine="";for(String[] r:PairedProtocol.reactors(m))if(PairedProtocol.isMe(c,r[1]))mine=r[0];return mine;}
     private static boolean sameEmoji(String a,String b){return a.replace("\uFE0F","").equals(b.replace("\uFE0F",""));}
+    private static volatile EmojiIndex emojiIndex;
+    /** Every emoji with its name and keywords (assets/emoji.tsv), read once; the message sheet starts reading it early. */
+    private EmojiIndex emojiIndex(){EmojiIndex i=emojiIndex;if(i!=null)return i;
+        synchronized(PairedActivity.class){if(emojiIndex==null){try(java.io.Reader r=new java.io.InputStreamReader(getAssets().open("emoji.tsv"),java.nio.charset.StandardCharsets.UTF_8)){emojiIndex=EmojiIndex.read(r);}
+            catch(java.io.IOException e){android.util.Log.w("MessageCenter","emoji index",e);emojiIndex=EmojiIndex.empty();}}return emojiIndex;}}
+    private static final Map<String,Boolean> emojiFont=new java.util.concurrent.ConcurrentHashMap<>();
+    /** Whether this phone can draw the emoji: everything up to Emoji 14 comes with Android 13; newer ones are checked against its emoji font. */
+    private static boolean canDraw(String emoji,double version){if(version<=14)return true;Boolean b=emojiFont.get(emoji);if(b==null){b=new Paint().hasGlyph(emoji);emojiFont.put(emoji,b);}return b;}
+    private static final String EMOJI_PREFS="emoji",SEPARATOR="\u001f";
+    /** Emoji you picked, newest first, exactly as picked (skin tone and all). */
+    private List<String> recentEmoji(){List<String> out=new ArrayList<>();for(String e:getSharedPreferences(EMOJI_PREFS,MODE_PRIVATE).getString("recent","").split(SEPARATOR))if(!e.isEmpty())out.add(e);return out;}
+    private void usedEmoji(String emoji){List<String> recent=recentEmoji();recent.remove(emoji);recent.add(0,emoji);while(recent.size()>40)recent.remove(recent.size()-1);
+        getSharedPreferences(EMOJI_PREFS,MODE_PRIVATE).edit().putString("recent",String.join(SEPARATOR,recent)).apply();}
+    /** The skin tone you last chose for this emoji, or the emoji itself. */
+    private String skinOf(EmojiIndex.Emoji e){return e.hasSkins()?getSharedPreferences(EMOJI_PREFS,MODE_PRIVATE).getString("skin:"+e.emoji,e.emoji):e.emoji;}
+    /** One emoji in the picker; a small corner mark when it has skin tones (press and hold for them). */
+    private TextView emojiCell(){TextView t=new TextView(this){final Paint mark=new Paint(Paint.ANTI_ALIAS_FLAG);
+            @Override protected void onDraw(Canvas c){super.onDraw(c);if(!Boolean.TRUE.equals(getTag()))return;float w=getWidth(),h=getHeight(),m=dp(6),z=dp(5);
+                android.graphics.Path p=new android.graphics.Path();p.moveTo(w-m,h-m-z);p.lineTo(w-m,h-m);p.lineTo(w-m-z,h-m);p.close();mark.setColor(muted);c.drawPath(p,mark);}};
+        t.setTextSize(26);t.setTextColor(ink);t.setGravity(Gravity.CENTER);t.setIncludeFontPadding(false);return t;}
+    /**
+     * The emoji picker: your recent emoji and each category in tabs, a search box that looks through
+     * every emoji's name and keywords (or takes an emoji typed on the keyboard; Enter picks the first
+     * match), and press-and-hold for skin tones. picked gets the emoji chosen.
+     */
+    private Dialog emojiPicker(java.util.function.Consumer<String> picked){EmojiIndex index=emojiIndex();
+        LinearLayout content=vertical();Dialog[] d=new Dialog[1];boolean[] done={false};
+        java.util.function.Consumer<String> choose=e->{if(done[0])return;done[0]=true;usedEmoji(e);if(d[0]!=null)d[0].dismiss();picked.accept(e);};
+        EditText search=input("Search emoji");search.setSingleLine(true);search.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);search.setContentDescription("Search emoji");
+        content.addView(search,new LinearLayout.LayoutParams(-1,-2));gap(content,8);
+        TextView[] tabs=new TextView[EmojiIndex.CATEGORIES.length+1];LinearLayout tabRow=row();
+        for(int i=0;i<tabs.length;i++){TextView t=text(i==0?"🕘":EmojiIndex.CATEGORY_ICONS[i-1],19,ink,false);t.setGravity(Gravity.CENTER);t.setContentDescription(i==0?"Recent":EmojiIndex.CATEGORY_NAMES[i-1]);
+            tabs[i]=t;tabRow.addView(t,new LinearLayout.LayoutParams(0,dp(40),1));}
+        content.addView(tabRow,new LinearLayout.LayoutParams(-1,-2));gap(content,6);
+        List<String> faces=new ArrayList<>();List<EmojiIndex.Emoji> entries=new ArrayList<>();
+        android.widget.GridView grid=new android.widget.GridView(this);grid.setNumColumns(android.widget.GridView.AUTO_FIT);grid.setColumnWidth(dp(44));
+        grid.setStretchMode(android.widget.GridView.STRETCH_COLUMN_WIDTH);grid.setSelector(new ColorDrawable(Color.TRANSPARENT));grid.setContentDescription("Emoji");
+        android.widget.BaseAdapter adapter=new android.widget.BaseAdapter(){
+            public int getCount(){return faces.size();}public Object getItem(int i){return faces.get(i);}public long getItemId(int i){return i;}
+            public View getView(int i,View old,ViewGroup parent){TextView cell=old instanceof TextView?(TextView)old:emojiCell();EmojiIndex.Emoji e=entries.get(i);
+                cell.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1,dp(48)));cell.setText(faces.get(i));cell.setTag(e!=null&&e.hasSkins());
+                cell.setContentDescription(e!=null?e.name:faces.get(i));return cell;}};
+        grid.setAdapter(adapter);
+        TextView empty=text("",14,muted,false);empty.setGravity(Gravity.CENTER);empty.setPadding(dp(24),0,dp(24),0);
+        FrameLayout area=new FrameLayout(this);area.addView(grid,new FrameLayout.LayoutParams(-1,-1));area.addView(empty,new FrameLayout.LayoutParams(-1,-1));
+        content.addView(area,new LinearLayout.LayoutParams(-1,dp(300)));
+        int[] tab={-1};
+        Runnable shown=()->{adapter.notifyDataSetChanged();grid.setSelection(0);
+            for(int i=0;i<tabs.length;i++){tabs[i].setAlpha(i==tab[0]?1f:0.45f);tabs[i].setBackground(i==tab[0]?shape(surface,14):null);}};
+        java.util.function.IntConsumer showTab=t->{tab[0]=t;faces.clear();entries.clear();
+            if(t==0)for(String r:recentEmoji()){faces.add(r);entries.add(index.find(r));}
+            else for(EmojiIndex.Emoji e:index.category(EmojiIndex.CATEGORIES[t-1]))if(canDraw(e.emoji,e.version)){faces.add(skinOf(e));entries.add(e);}
+            empty.setText(!faces.isEmpty()?"":t==0?"Emoji you pick show up here.":"No emoji here.");shown.run();};
+        for(int i=0;i<tabs.length;i++){int t=i;tabs[i].setOnClickListener(v->{hideKeyboard(search);search.clearFocus();tab[0]=t;if(search.length()>0)search.setText("");else showTab.accept(t);});}
+        search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int b,int c){}public void onTextChanged(CharSequence s,int a,int b,int c){}
+            public void afterTextChanged(Editable s){String q=s.toString().trim();if(q.isEmpty()){showTab.accept(Math.max(tab[0],0));return;}
+                faces.clear();entries.clear();String typed=ChatText.firstEmoji(q);
+                if(!typed.isEmpty()){faces.add(typed);entries.add(index.find(typed));}
+                else for(EmojiIndex.Emoji e:index.search(q,240))if(canDraw(e.emoji,e.version)){faces.add(skinOf(e));entries.add(e);}
+                // While searching no tab is chosen; the one you were on comes back when the box is cleared.
+                int was=tab[0];tab[0]=-1;empty.setText(faces.isEmpty()?"No emoji match \u201c"+q+"\u201d":"");shown.run();tab[0]=was;}});
+        search.setOnEditorActionListener((v,action,event)->{if(search.getText().toString().trim().isEmpty()||faces.isEmpty()){hideKeyboard(search);return true;}choose.accept(faces.get(0));return true;});
+        grid.setOnItemClickListener((parent,v,i,id)->choose.accept(faces.get(i)));
+        grid.setOnItemLongClickListener((parent,v,i,id)->{EmojiIndex.Emoji e=entries.get(i);
+            if(e!=null&&e.hasSkins())skinTones(v,e,face->{getSharedPreferences(EMOJI_PREFS,MODE_PRIVATE).edit().putString("skin:"+e.emoji,face).apply();choose.accept(face);});
+            else toast(e!=null?e.name:faces.get(i));return true;});
+        showTab.accept(recentEmoji().isEmpty()?1:0);
+        d[0]=sheet(content);Window w=d[0].getWindow();if(w!=null)w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE|WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN);
+        return d[0];}
+    /** Press and hold an emoji that has skin tones: the tones this phone can draw, in a small pop-up above it. */
+    private void skinTones(View anchor,EmojiIndex.Emoji e,java.util.function.Consumer<String> picked){List<String> tones=new ArrayList<>();tones.add(e.emoji);
+        for(int i=0;i<e.skins.length;i++)if(canDraw(e.skins[i],e.skinVersions[i]))tones.add(e.skins[i]);
+        LinearLayout box=vertical();box.setPadding(dp(6),dp(6),dp(6),dp(6));box.setBackground(shape(card,16));box.setElevation(dp(8));
+        android.widget.PopupWindow pop=new android.widget.PopupWindow(box,-2,-2,true);LinearLayout line=null;
+        for(int i=0;i<tones.size();i++){if(i%6==0){line=row();box.addView(line);}String face=tones.get(i);TextView t=emojiCell();t.setText(face);t.setContentDescription(face);
+            t.setOnClickListener(v->{pop.dismiss();picked.accept(face);});line.addView(t,new LinearLayout.LayoutParams(dp(44),dp(48)));}
+        box.measure(View.MeasureSpec.UNSPECIFIED,View.MeasureSpec.UNSPECIFIED);pop.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));pop.setOutsideTouchable(true);pop.setElevation(dp(8));
+        pop.showAsDropDown(anchor,(anchor.getWidth()-box.getMeasuredWidth())/2,-(anchor.getHeight()+box.getMeasuredHeight()));}
     /** Sends a reaction, unless it is the one you already gave (so the other person isn't sent a repeat). */
-    /** Android's emoji picker (every emoji, skin tones, your recent ones) in a sheet; picked gets the one you tap. */
-    private AlertDialog emojiPicker(java.util.function.Consumer<String> picked){androidx.emoji2.emojipicker.EmojiPickerView picker=new androidx.emoji2.emojipicker.EmojiPickerView(this);
-        AlertDialog[] d=new AlertDialog[1];picker.setOnEmojiPickedListener(item->{if(d[0]!=null)d[0].dismiss();picked.accept(item.getEmoji());});
-        FrameLayout box=new FrameLayout(this);box.setPadding(dp(8),dp(4),dp(8),0);box.addView(picker,new FrameLayout.LayoutParams(-1,dp(380)));
-        d[0]=new AlertDialog.Builder(this).setTitle("React with").setView(box).setNegativeButton("Cancel",null).create();d[0].show();return d[0];}
     private void react(JSONObject m,String emoji,String action){JSONObject chat=store.chat(chatId);if(chat==null){error("Refresh this conversation first.");return;}
         String id=m.optString("messageID"),mine=myReaction(m,chat);
         if(action.equals("remove")?mine.isEmpty():sameEmoji(emoji,mine))return;

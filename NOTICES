@@ -30,3 +30,8 @@ https://github.com/adaptech-cz/Tesseract4Android), which includes Tesseract OCR 
 Leptonica 1.85.0 (BSD-2-Clause), libpng 1.6.48 (libpng license) and libjpeg 9f (IJG license).
 The English model (eng.traineddata) is from tesseract-ocr/tessdata_fast, Apache-2.0:
 https://github.com/tesseract-ocr/tessdata_fast. Recognition runs on the device.
+
+The emoji picker's names and keywords (app/src/main/assets/emoji.tsv) come from emojibase-data 18.0.0
+by Miles Johnson, MIT license (https://github.com/milesj/emojibase), which draws on Unicode CLDR
+annotations, Unicode License v3 (https://www.unicode.org/license.txt). Emoji are drawn with the
+phone's own emoji font.

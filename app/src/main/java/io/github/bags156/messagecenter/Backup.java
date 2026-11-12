@@ -17,7 +17,7 @@ final class Backup {
     private Backup() {}
     static final int VERSION = 1;
     /** Stores copied whole. */
-    private static final String[] STORES = {"starred", "nicknames", "reminders", "scheduled", "chat-settings", "pins"};
+    private static final String[] STORES = {"starred", "nicknames", "reminders", "scheduled", "chat-settings", "pins", "emoji"};
     /** App settings worth carrying over (not connection state or one-time prompts). */
     private static final Set<String> SETTINGS = new HashSet<>(java.util.Arrays.asList(
         "mention_name", "send_typing", "voice_speed", "undo_send", "undo_send_seconds", "link_previews", "full_photos", "auto_copy_codes", "theme", "text_scale", "nudge_minutes", "maps_app", "calendar_app", "auto_delete_codes", "promotions_separate", "quick_replies", "quick_replies_on", "alert_keywords", "autoreply_text", "notification_content","photo_quality","photo_text"));
