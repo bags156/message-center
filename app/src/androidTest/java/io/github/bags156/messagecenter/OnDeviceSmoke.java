@@ -178,12 +178,16 @@ public final class OnDeviceSmoke extends Instrumentation {
         type.accept("zzqxv");check(found[0].isEmpty(),"Searching emoji for nonsense found "+found[0]);
         type.accept("🙂");check(found[0].equals("🙂"),"A typed emoji wasn't offered: "+found[0]);
         type.accept("");check(found[0].split(" ").length>=6,"Clearing the emoji search left the grid empty: "+found[0]);
-        // Press and hold 👍: its skin tones pop up over the picker (Back closes just them).
+        // Press and hold 👍: its skin tones pop up over it, and tapping one picks it.
         type.accept("thumbs up");Thread.sleep(200);
-        runOnMainSync(()->{search[0].clearFocus();a.getSystemService(android.view.inputmethod.InputMethodManager.class).hideSoftInputFromWindow(search[0].getWindowToken(),0);
-            grid[0].getOnItemLongClickListener().onItemLongClick(grid[0],grid[0].getChildAt(0),0,0);});
-        Thread.sleep(500);sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);Thread.sleep(400);
-        check(d[0].isShowing(),"Pressing and holding 👍 didn't show its skin tones");
+        java.lang.reflect.Method tones=PairedActivity.class.getDeclaredMethod("skinTones",android.view.View.class,EmojiIndex.Emoji.class,java.util.function.Consumer.class);tones.setAccessible(true);
+        java.lang.reflect.Method index=PairedActivity.class.getDeclaredMethod("emojiIndex");index.setAccessible(true);
+        android.widget.PopupWindow[] pop=new android.widget.PopupWindow[1];String[] tone={null};int[] offered={0};
+        runOnMainSync(()->{try{pop[0]=(android.widget.PopupWindow)tones.invoke(a,grid[0].getChildAt(0),((EmojiIndex)index.invoke(a)).find("👍"),(java.util.function.Consumer<String>)e->tone[0]=e);}catch(Exception x){throw new RuntimeException(x);}});
+        Thread.sleep(300);
+        runOnMainSync(()->{java.util.List<android.widget.TextView> cells=new java.util.ArrayList<>();for(android.widget.TextView t:viewsOf(pop[0].getContentView(),android.widget.TextView.class))if(t.isClickable())cells.add(t);
+            offered[0]=cells.size();if(pop[0].isShowing()&&cells.size()>2)cells.get(2).performClick();});
+        check(offered[0]==6&&"👍🏼".equals(tone[0])&&!pop[0].isShowing(),"Pressing and holding 👍 didn't offer its skin tones ("+offered[0]+", "+tone[0]+")");
         type.accept("fire");Thread.sleep(150);runOnMainSync(()->grid[0].performItemClick(grid[0].getChildAt(0),0,0));Thread.sleep(300);
         check("🔥".equals(picked[0])&&!d[0].isShowing(),"Tapping 🔥 in the emoji picker didn't pick it ("+picked[0]+", "+d[0].isShowing()+")");
         show.run();Thread.sleep(400);String[] recent=new String[1];

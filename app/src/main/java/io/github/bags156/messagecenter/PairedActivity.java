@@ -1391,14 +1391,14 @@ public class PairedActivity extends Activity {
         d[0]=sheet(content);Window w=d[0].getWindow();if(w!=null)w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE|WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN);
         return d[0];}
     /** Press and hold an emoji that has skin tones: the tones this phone can draw, in a small pop-up above it. */
-    private void skinTones(View anchor,EmojiIndex.Emoji e,java.util.function.Consumer<String> picked){List<String> tones=new ArrayList<>();tones.add(e.emoji);
+    private android.widget.PopupWindow skinTones(View anchor,EmojiIndex.Emoji e,java.util.function.Consumer<String> picked){List<String> tones=new ArrayList<>();tones.add(e.emoji);
         for(int i=0;i<e.skins.length;i++)if(canDraw(e.skins[i],e.skinVersions[i]))tones.add(e.skins[i]);
         LinearLayout box=vertical();box.setPadding(dp(6),dp(6),dp(6),dp(6));box.setBackground(shape(card,16));box.setElevation(dp(8));
         android.widget.PopupWindow pop=new android.widget.PopupWindow(box,-2,-2,true);LinearLayout line=null;
         for(int i=0;i<tones.size();i++){if(i%6==0){line=row();box.addView(line);}String face=tones.get(i);TextView t=emojiCell();t.setText(face);t.setContentDescription(face);
             t.setOnClickListener(v->{pop.dismiss();picked.accept(face);});line.addView(t,new LinearLayout.LayoutParams(dp(44),dp(48)));}
         box.measure(View.MeasureSpec.UNSPECIFIED,View.MeasureSpec.UNSPECIFIED);pop.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));pop.setOutsideTouchable(true);pop.setElevation(dp(8));
-        pop.showAsDropDown(anchor,(anchor.getWidth()-box.getMeasuredWidth())/2,-(anchor.getHeight()+box.getMeasuredHeight()));}
+        pop.showAsDropDown(anchor,(anchor.getWidth()-box.getMeasuredWidth())/2,-(anchor.getHeight()+box.getMeasuredHeight()));return pop;}
     /** Sends a reaction, unless it is the one you already gave (so the other person isn't sent a repeat). */
     private void react(JSONObject m,String emoji,String action){JSONObject chat=store.chat(chatId);if(chat==null){error("Refresh this conversation first.");return;}
         String id=m.optString("messageID"),mine=myReaction(m,chat);
