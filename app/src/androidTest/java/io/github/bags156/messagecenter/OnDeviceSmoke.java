@@ -147,8 +147,26 @@ public final class OnDeviceSmoke extends Instrumentation {
             if(n[0]==0){java.util.ArrayDeque<android.view.View> q=new java.util.ArrayDeque<>();q.add(d[0].getWindow().getDecorView());
                 while(!q.isEmpty()){android.view.View v=q.poll();if(v instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++)q.add(((android.view.ViewGroup)v).getChildAt(i));
                     if(v.getClass().getName().contains("EmojiView"))n[0]++;}}});shown=n[0];}
-        boolean showing=d[0].isShowing();runOnMainSync(()->d[0].dismiss());
-        check(showing&&shown>0,"The emoji picker didn't open with emoji in it ("+showing+", "+shown+")");}
+        boolean showing=d[0].isShowing();
+        // Each category tab shows its emoji (they came up empty on a phone). Screenshots go to the CI report.
+        StringBuilder empty=new StringBuilder();
+        for(int tab:new int[]{1,2,4,6,8}){int[] found={-1};
+            runOnMainSync(()->{java.util.List<android.view.ViewGroup> lists=new java.util.ArrayList<>();java.util.ArrayDeque<android.view.View> q=new java.util.ArrayDeque<>();q.add(d[0].getWindow().getDecorView());
+                while(!q.isEmpty()){android.view.View v=q.poll();if(v.getClass().getName().endsWith("RecyclerView"))lists.add((android.view.ViewGroup)v);
+                    if(v instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++)q.add(((android.view.ViewGroup)v).getChildAt(i));}
+                if(lists.size()<2)return;android.view.ViewGroup header=lists.get(0);if(header.getChildCount()<=tab)return;header.getChildAt(tab).performClick();});
+            Thread.sleep(900);
+            runOnMainSync(()->{java.util.List<android.view.ViewGroup> lists=new java.util.ArrayList<>();java.util.ArrayDeque<android.view.View> q=new java.util.ArrayDeque<>();q.add(d[0].getWindow().getDecorView());
+                while(!q.isEmpty()){android.view.View v=q.poll();if(v.getClass().getName().endsWith("RecyclerView"))lists.add((android.view.ViewGroup)v);
+                    if(v instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++)q.add(((android.view.ViewGroup)v).getChildAt(i));}
+                if(lists.size()<2)return;android.view.ViewGroup body=lists.get(lists.size()-1);int n=0;android.graphics.Rect r=new android.graphics.Rect();
+                for(int i=0;i<body.getChildCount();i++){android.view.View c=body.getChildAt(i);if(c.getClass().getName().contains("EmojiView")&&c.getGlobalVisibleRect(r)&&c.getAlpha()>0)n++;}found[0]=n;});
+            android.graphics.Bitmap shot=getUiAutomation().takeScreenshot();
+            if(shot!=null)try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getCacheDir(),"emoji-tab-"+tab+".png"))){shot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
+            if(found[0]<=0)empty.append(tab).append('(').append(found[0]).append(") ");}
+        runOnMainSync(()->d[0].dismiss());
+        check(showing&&shown>0,"The emoji picker didn't open with emoji in it ("+showing+", "+shown+")");
+        check(empty.length()==0,"Emoji picker tabs showed no emoji: "+empty);}
     /** The newest raw contact the shell just added: the highest "_id=12" it lists (arguments can't hold spaces, so no "DESC"). */
     private String newestRawContact()throws Exception{java.util.regex.Matcher m=java.util.regex.Pattern.compile("_id=(\\d+)").matcher(shell("content query --uri content://com.android.contacts/raw_contacts --projection _id"));
         long best=-1;while(m.find())best=Math.max(best,Long.parseLong(m.group(1)));return best<0?"":String.valueOf(best);}

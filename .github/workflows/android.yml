@@ -113,6 +113,7 @@ jobs:
           adb install apks/debug/app-debug.apk
           adb install apks/androidTest/debug/app-debug-androidTest.apk
           adb shell am instrument -w io.github.bags156.messagecenter.test/io.github.bags156.messagecenter.OnDeviceSmoke | tee device-test.txt
+          for f in emoji-tab-1 emoji-tab-2 emoji-tab-4 emoji-tab-6 emoji-tab-8; do adb exec-out run-as io.github.bags156.messagecenter cat cache/$f.png > $f.png || true; done
           grep -q MESSAGE_CENTER_SMOKE_PASS device-test.txt
           adb shell am start -n io.github.bags156.messagecenter/.PairedActivity
           adb shell screencap -p /sdcard/message-center.png
@@ -142,6 +143,7 @@ jobs:
             message-center.png
             group-bubble-preview.png
             settings-*.png
+            emoji-tab-*.png
             android-runtime.txt
             emulator.log
           retention-days: 14
