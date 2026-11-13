@@ -472,14 +472,16 @@ public final class OnDeviceSmoke extends Instrumentation {
         onMainCall(()->method("thread",String.class).invoke(a,"swipe-check"));waitForIdleSync();Thread.sleep(600);
         android.widget.LinearLayout list=(android.widget.LinearLayout)field("items").get(a);float density=a.getResources().getDisplayMetrics().density,full=PairedActivity.TIME_REVEAL_DP*density;
         int[] size=new int[2];runOnMainSync(()->{android.view.View d=a.getWindow().getDecorView();size[0]=d.getWidth();size[1]=d.getHeight();});
-        Float resting=timeOnScreen(a,list);check(resting!=null&&resting>=size[0],"A message time shows before dragging (at "+resting+" of "+size[0]+")");
+        // The chat's right edge (the screen keeps a small margin): times wait past it, out of sight.
+        int edge=placed(chatScroll(a)).right;
+        Float resting=timeOnScreen(a,list);check(resting!=null&&resting>=edge,"A message time shows before dragging (at "+resting+", the chat ends at "+edge+")");
         float y=size[1]*0.45f,x0=size[0]*0.8f,x1=size[0]*0.35f;long t=android.os.SystemClock.uptimeMillis();
         sendPointerSync(android.view.MotionEvent.obtain(t,t,android.view.MotionEvent.ACTION_DOWN,x0,y,0));
         for(int i=1;i<=12;i++){Thread.sleep(16);float x=x0+(x1-x0)*i/12f;sendPointerSync(android.view.MotionEvent.obtain(t,android.os.SystemClock.uptimeMillis(),android.view.MotionEvent.ACTION_MOVE,x,y,0));
             if(i==3||i==12){waitForIdleSync();shoot("swipe-"+i);}}
         float held=list.getTranslationX();Float shown=timeOnScreen(a,list);
         check(held<=-full*0.99f,"The chat didn't slide over far enough to show the times ("+held+" of "+(-full)+")");
-        check(shown!=null&&shown<size[0]-full*0.8f,"The times didn't come into view (at "+shown+")");
+        check(shown!=null&&shown<edge-full*0.8f,"The times didn't come into view (at "+shown+")");
         // An update arriving while you hold the chat over redraws the messages: nothing may move.
         onMainCall(()->method("renderMessages",boolean.class).invoke(a,false));waitForIdleSync();shoot("swipe-redraw");
         check(list.getTranslationX()==held,"A redraw mid-drag moved the chat ("+held+" → "+list.getTranslationX()+"): it flashes");
@@ -487,7 +489,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         sendPointerSync(android.view.MotionEvent.obtain(t,android.os.SystemClock.uptimeMillis(),android.view.MotionEvent.ACTION_UP,x1,y,0));
         Thread.sleep(500);waitForIdleSync();shoot("swipe-after");
         check(list.getTranslationX()==0,"The chat didn't slide back after letting go ("+list.getTranslationX()+")");
-        Float gone=timeOnScreen(a,list);check(gone!=null&&gone>=size[0],"A time stayed on screen after letting go");
+        Float gone=timeOnScreen(a,list);check(gone!=null&&gone>=edge,"A time stayed on screen after letting go");
         onMainCall(()->method("inbox").invoke(a));waitForIdleSync();
         // The inbox list isn't moved by a chat's slide (it settles after you've left).
         check(((android.view.View)field("items").get(a)).getTranslationX()==0,"Leaving a chat left the inbox slid over");}
