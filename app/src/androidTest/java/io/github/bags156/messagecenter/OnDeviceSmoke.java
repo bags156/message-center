@@ -573,12 +573,14 @@ public final class OnDeviceSmoke extends Instrumentation {
         try{
             onMainCall(()->method("thread",String.class).invoke(a,"swipe-check"));waitForIdleSync();Thread.sleep(500);
             // Picking: two photos come back from Android's photo picker.
+            note("photos: picking");
             made[0]=photo(MediaCache.dir(ctx),"pick-wide.jpg",2000,1500,0xff3366aa);made[1]=photo(MediaCache.dir(ctx),"pick-tall.jpg",1200,1800,0xffaa6633);
             android.content.ClipData clip=android.content.ClipData.newRawUri("photos",MediaProvider.uri(made[0],"Wide.jpg"));clip.addItem(new android.content.ClipData.Item(MediaProvider.uri(made[1],"Tall.jpg")));
             Intent result=new Intent();result.setClipData(clip);
             onMainCall(()->{java.lang.reflect.Method m=PairedActivity.class.getDeclaredMethod("onActivityResult",int.class,int.class,Intent.class);m.setAccessible(true);return m.invoke(a,41,Activity.RESULT_OK,result);});
             check(waitUntil(()->picked(a).size()==2,5000),"Two picked photos didn't both join the message ("+picked(a).size()+")");waitForIdleSync();Thread.sleep(400);shoot("shot-photo-strip");
             // The editor: every button clear of the system bars.
+            note("photos: editor");
             MarkupEditor e=openEditor(a,"Wide.jpg");shoot("shot-photo-editor");
             editorButton(e,"Crop");check("Crop".equals(field(MarkupEditor.class,"mode").get(e)),"Tapping Crop didn't switch to cropping");
             android.graphics.RectF whole=cropOf(e);float[] r=cropOnScreen(e);int width=editorWindow(e).getWidth();
@@ -589,6 +591,7 @@ public final class OnDeviceSmoke extends Instrumentation {
             android.graphics.Rect fb=placed(frame);boolean cornerKept=false;for(android.graphics.Rect k:keptSpots)if(k.contains((int)(r[0]-fb.left),(int)(r[1]-fb.top))&&k.contains((int)(6*dp-fb.left),(int)(r[1]-fb.top)))cornerKept=true;
             check(keptSpots.size()>=6&&cornerKept,"The crop corners aren't kept from the Back swipe ("+keptSpots+")");
             // Every corner, with a finger starting on it; the top-left one from right at the screen's edge.
+            note("photos: corners");
             slide(6*dp,r[1]+6*dp,r[0]+50*dp,r[1]+36*dp);android.graphics.RectF c=cropOf(e);
             check(MarkupEditor.shown==e,"Pulling the top-left corner from the screen's edge closed the editor (taken as Back)");
             check(c.left>whole.left+1&&c.top>whole.top+1,"The top-left corner didn't move ("+c+")");
@@ -596,6 +599,7 @@ public final class OnDeviceSmoke extends Instrumentation {
             r=cropOnScreen(e);slide(r[2]-2*dp,r[3],width-4*dp,r[3]-30*dp);android.graphics.RectF g=cropOf(e);check(MarkupEditor.shown==e&&g.right>d.right+1&&g.bottom<d.bottom-1,"The bottom-right corner didn't move out toward the screen's edge ("+g+")");
             r=cropOnScreen(e);slide(r[0],r[3],r[0]+40*dp,r[3]-20*dp);android.graphics.RectF h=cropOf(e);check(MarkupEditor.shown==e&&h.left>g.left+1&&h.bottom<g.bottom-1,"The bottom-left corner didn't move ("+h+")");
             // A side moves only that side; the middle moves the whole frame.
+            note("photos: side and middle");
             r=cropOnScreen(e);slide(r[2],(r[1]+r[3])/2,r[2]-30*dp,(r[1]+r[3])/2);android.graphics.RectF k=cropOf(e);
             check(k.right<h.right-1&&Math.abs(k.top-h.top)<1&&Math.abs(k.bottom-h.bottom)<1&&Math.abs(k.left-h.left)<1,"Dragging the right side didn't move just that side ("+h+" → "+k+")");
             r=cropOnScreen(e);slide((r[0]+r[2])/2,(r[1]+r[3])/2,(r[0]+r[2])/2+24*dp,(r[1]+r[3])/2);android.graphics.RectF m=cropOf(e);
@@ -603,18 +607,21 @@ public final class OnDeviceSmoke extends Instrumentation {
             shoot("shot-photo-crop");
             editorButton(e,"Undo");check(cropOf(e).equals(k),"Undo didn't take back the last move ("+cropOf(e)+", expected "+k+")");
             // Cancel asks before throwing away edits: Keep editing stays, Discard closes and keeps the photo as picked.
+            note("photos: cancel");
             java.io.File before=pickedFile(picked(a).get(0));
             editorButton(e,"Cancel");check(waitForText("Discard your changes?",3000,true),"Cancel didn't do anything (no question about discarding)");shoot("shot-photo-discard");
             pressText("Keep editing");check(waitForText("Discard your changes?",3000,false)&&MarkupEditor.shown==e,"Keep editing didn't go back to the editor");
             editorButton(e,"Cancel");pressText("Discard");check(waitUntil(()->MarkupEditor.shown==null,3000),"Discard didn't close the editor");
             check(picked(a).size()==2&&pickedFile(picked(a).get(0)).equals(before)&&before.isFile(),"Discarding changed the picked photo");
             // Done keeps the crop: the photo in the strip is replaced by the cropped copy.
+            note("photos: done");
             e=openEditor(a,"Wide.jpg");editorButton(e,"Crop");r=cropOnScreen(e);slide(r[0],r[1],r[0]+60*dp,r[1]+40*dp);android.graphics.RectF kept=cropOf(e);
             editorButton(e,"Done");check(waitUntil(()->MarkupEditor.shown==null,5000),"Done didn't close the editor");
             check(waitUntil(()->!pickedFile(picked(a).get(0)).equals(before),3000),"Done didn't replace the picked photo with the cropped one");
             android.graphics.BitmapFactory.Options o=new android.graphics.BitmapFactory.Options();o.inJustDecodeBounds=true;android.graphics.BitmapFactory.decodeFile(pickedFile(picked(a).get(0)).getPath(),o);
             check(Math.abs(o.outWidth-Math.round(kept.width()))<=1&&Math.abs(o.outHeight-Math.round(kept.height()))<=1,"The saved photo isn't the cropped size ("+o.outWidth+"×"+o.outHeight+" for "+kept+")");
             // Drawing, then words: Text asks for them; Back asks before throwing both away.
+            note("photos: draw and text");
             e=openEditor(a,"Wide.jpg");android.view.View board=(android.view.View)field(MarkupEditor.class,"board").get(e);android.graphics.Rect bb=placed(board);
             slide(bb.exactCenterX()-60*dp,bb.exactCenterY(),bb.exactCenterX()+60*dp,bb.exactCenterY()+20*dp);
             check(((java.util.List<?>)field(MarkupEditor.class,"undo").get(e)).size()==1,"Drawing a line wasn't recorded");
@@ -623,21 +630,25 @@ public final class OnDeviceSmoke extends Instrumentation {
             Bundle words=new Bundle();words.putCharSequence(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,"Hello");box.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT,words);
             pressText("Add");int labels=0;for(Object mark:(java.util.List<?>)field(MarkupEditor.class,"marks").get(e))if(mark.getClass().getSimpleName().equals("Label"))labels++;check(labels==1,"The words weren't put on the photo");
             shoot("shot-photo-text");
-            waitForText("Add text",3000,false);sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);
+            waitForText("Add text",3000,false);getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);
             // The first Back may only put the keyboard away.
-            if(!waitForText("Discard your changes?",1500,true))sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);
+            if(!waitForText("Discard your changes?",1500,true))getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);
             check(waitForText("Discard your changes?",3000,true),"Back didn't ask before throwing away the drawing");pressText("Discard");check(waitUntil(()->MarkupEditor.shown==null,3000),"Discard after Back didn't close the editor");
             // No edits: Cancel just closes.
+            note("photos: cancel without edits");
             e=openEditor(a,"Tall.jpg");editorButton(e,"Cancel");check(waitUntil(()->MarkupEditor.shown==null,2000)&&waitForText("Discard your changes?",500,false),"Cancel with no edits didn't simply close");
             // Removing one: its ✕, with a finger.
+            note("photos: remove");
             android.view.View remove=described(a,"Remove Tall.jpg");check(remove!=null,"The tall photo has no remove button");android.graphics.Rect rr=placed(remove);
             check(rr.width()>=30*dp,"The remove button is too small for a finger ("+rr.width()/dp+"dp)");press(rr.exactCenterX(),rr.exactCenterY());
             check(waitUntil(()->picked(a).size()==1,2000),"Tapping ✕ didn't remove the photo");
             // Photo quality: tapping it offers the choices.
+            note("photos: quality");
             android.view.View quality=described(a,"Photo quality");check(quality!=null,"No photo quality setting by the picked photo");android.graphics.Rect qr=placed(quality);press(qr.exactCenterX(),qr.exactCenterY());
             check(waitForText("Standard • sharp, practical size",3000,true),"Tapping photo quality didn't offer the choices");getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);
             check(waitForText("Standard • sharp, practical size",3000,false),"Back didn't close the photo quality choices");
             // Sending: the photo leaves the strip and is queued for this chat.
+            note("photos: send");
             android.view.View send=(android.view.View)field("sendButton").get(a);check(send!=null&&send.isShown()&&"Send".contentEquals(send.getContentDescription()),"No Send button with a photo picked");android.graphics.Rect sr=placed(send);press(sr.exactCenterX(),sr.exactCenterY());
             MediaOutbox queue=new MediaOutbox(ctx);check(waitUntil(()->picked(a).isEmpty()&&!queue.forChat("swipe-check").isEmpty(),8000),"Sending didn't take the photo from the strip into the chat ("+picked(a).size()+" left, "+queue.forChat("swipe-check").size()+" queued)");
             Thread.sleep(500);shoot("shot-photo-sent");
@@ -654,7 +665,7 @@ public final class OnDeviceSmoke extends Instrumentation {
                 java.io.File full=MediaCache.file(ctx,media,false);full.getParentFile().mkdirs();java.io.File made=photo(full.getParentFile(),full.getName(),1600,1200,i==0?0xff229955:0xff992255);files.add(made);media.put("size",made.length());
                 store.message(new JSONObject().put("messageID","viewer-msg-"+i).put("conversationID","photo-check").put("participantID","pp").put("timestamp",(now-60_000+i*1000)*1000).put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE"))
                     .put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("actionMessageID","viewer-part-"+i).put("mediaContent",media))),0,true);}}
-        try{onMainCall(()->method("thread",String.class).invoke(a,"photo-check"));waitForIdleSync();Thread.sleep(800);
+        try{note("photos: viewer");onMainCall(()->method("thread",String.class).invoke(a,"photo-check"));waitForIdleSync();Thread.sleep(800);
             java.util.ArrayList<android.view.View> photos=new java.util.ArrayList<>();runOnMainSync(()->a.getWindow().getDecorView().findViewsWithText(photos,"Photo. Tap to view.",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION));
             check(photos.size()==2,"The chat doesn't show both photos ("+photos.size()+")");android.graphics.Rect pr=placed(photos.get(1));press(pr.exactCenterX(),pr.exactCenterY());
             check(waitUntil(()->field("shownViewer").get(a)!=null,3000),"Tapping a photo didn't open it full screen");Object v=field("shownViewer").get(a);
@@ -1605,5 +1616,6 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkSentTextStays((PairedActivity)activity);
         checkBubbleStepsAside((PairedActivity)activity);
         result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, emoji picker tabs and search, notes, chat menu sheet, inbox menu sheet, dialog look, settings pages, send while loading, lock screen previews, hold a link, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
-    }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
+    }catch(Throwable e){StringBuilder where=new StringBuilder();for(StackTraceElement f:e.getStackTrace())if(f.getClassName().contains("OnDeviceSmoke")&&where.length()<200)where.append(" at ").append(f.getMethodName()).append(':').append(f.getLineNumber());
+        result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+where+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }
