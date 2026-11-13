@@ -371,6 +371,9 @@ public final class PairedService extends Service {
     /** Pushes most often stall when the phone wakes or changes networks, so check right then. */
     private void watchWakeAndNetwork() {
         screenReceiver=new android.content.BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){
+            // A stricter lock screen choice: chat notifications are redrawn as the screen goes off, and in full once you unlock.
+            boolean lockScreen=!NotificationPrivacy.SAME.equals(NotificationPrivacy.lockMode(c));
+            if(lockScreen&&(Intent.ACTION_SCREEN_OFF.equals(i.getAction())||Intent.ACTION_USER_PRESENT.equals(i.getAction())))refreshChatNotifications(c);
             if(Intent.ACTION_SCREEN_OFF.equals(i.getAction()))scheduleSync();else if(ready)requestSync(true);else reconnectSoon("screen on");}};
         android.content.IntentFilter filter=new android.content.IntentFilter(Intent.ACTION_SCREEN_ON);filter.addAction(Intent.ACTION_USER_PRESENT);filter.addAction(Intent.ACTION_SCREEN_OFF);
         registerReceiver(screenReceiver,filter,Context.RECEIVER_NOT_EXPORTED);

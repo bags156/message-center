@@ -3740,7 +3740,7 @@ public class PairedActivity extends Activity {
         case "Undo send":return "unsend delay take back cancel";case "Typing indicators":return "typing privacy";case "Read receipts":return "seen read privacy";case "Bubbles":return "floating chat heads";
         case "Busy auto-reply":return "away driving automatic reply";case "Notifications":return "sound vibration alerts";case "Background activity":return "battery optimization";
         case "Back up app data":return "backup export save";case "Restore from a backup":return "import backup";case "Photo quality":return "pictures compress size";
-        case "Video quality":return "compress size";case "What notifications show":return "privacy preview lock screen";default:return "";}}
+        case "Video quality":return "compress size";case "What notifications show":return "privacy preview";case "On the lock screen":return "lock screen locked preview privacy hide unlock";default:return "";}}
     /** Opens settings at the main page, from anywhere. */
     private void openSettings(){settingsPage="";settingsQuery="";settings();}
     private void openSettingsPage(String page){settingsPage=page;settingsQuery="";settings();}
@@ -3827,6 +3827,11 @@ public class PairedActivity extends Activity {
                 List<String> labels=java.util.Arrays.asList("Name and message","Name only","Nothing (just “New message”)");String[] values={NotificationPrivacy.ALL,NotificationPrivacy.NAME,NotificationPrivacy.NONE};List<Runnable> actions=new ArrayList<>();
                 for(String v:values)actions.add(()->{NotificationPrivacy.set(this,v);PairedService.refreshChatNotifications(this);if(screen.equals("settings"))settings();});
                 menuSheet("What notifications show",labels,actions);});
+            String lock=NotificationPrivacy.lockMode(this);
+            settingRow(alerts,R.drawable.ic_lock,0xff0ea5e9,"On the lock screen",lock.equals(NotificationPrivacy.NAME)?"Who it's from, not what they said, until you unlock.":lock.equals(NotificationPrivacy.NONE)?"Just “New message” until you unlock.":"Shows the same as when your phone is unlocked.",NotificationPrivacy.lockLabel(lock),()->{
+                List<String> labels=java.util.Arrays.asList("Same as when unlocked","Name only","Nothing (just “New message”)");String[] values={NotificationPrivacy.SAME,NotificationPrivacy.NAME,NotificationPrivacy.NONE};List<Runnable> actions=new ArrayList<>();
+                for(String v:values)actions.add(()->{NotificationPrivacy.setLockMode(this,v);PairedService.refreshChatNotifications(this);if(screen.equals("settings"))settings();});
+                menuSheet("While your phone is locked, notifications show",labels,actions);});
             settingRow(alerts,R.drawable.ic_chat,0xff14b8a6,"Bubbles","Chats that float over other apps",null,()->startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName())));
             settingRow(alerts,R.drawable.ic_notification,0xff64748b,"Hide \"Message Center is running\"","Android requires it while connected. Turn it off and messages still arrive; you're told if the connection drops.",null,()->{try{startActivity(PairedService.channelSettings(this,PairedService.RUNNING));}catch(Exception e){openAppSettings();}});
             LinearLayout words=settingsGroup(content,"Alerts that get through");

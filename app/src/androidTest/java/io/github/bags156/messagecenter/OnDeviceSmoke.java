@@ -412,6 +412,22 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(sent!=null,"Tapping Send did nothing while a load was underway");
         boolean[] stale={true};onMainCall(()->{busy.setBoolean(a,true);since.setLong(a,System.currentTimeMillis()-61_000);stale[0]=(Boolean)isBusy.invoke(a);busy.setBoolean(a,false);return null;});
         check(!stale[0],"A load stuck for over a minute still counted as underway");}
+    /**
+     * The lock screen setting: while locked, notifications show no more than it allows (name
+     * only, or nothing); unlocked, they show what's chosen for the chat. It's on the
+     * Notifications settings page.
+     */
+    private void checkLockScreenPreviews(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();
+        String before=NotificationPrivacy.mode(ctx);NotificationPrivacy.set(ctx,NotificationPrivacy.ALL);
+        try{NotificationPrivacy.setLockMode(ctx,NotificationPrivacy.NONE);NotificationPrivacy.lockedForChecks=true;
+            check(!NotificationPrivacy.showName(ctx,"lock-check")&&!NotificationPrivacy.showText(ctx,"lock-check"),"A locked phone's notifications still showed who and what with the lock screen set to Nothing");
+            NotificationPrivacy.setLockMode(ctx,NotificationPrivacy.NAME);
+            check(NotificationPrivacy.showName(ctx,"lock-check")&&!NotificationPrivacy.showText(ctx,"lock-check"),"A locked phone's notifications didn't show just the name with the lock screen set to Name only");
+            NotificationPrivacy.lockedForChecks=false;
+            check(NotificationPrivacy.showName(ctx,"lock-check")&&NotificationPrivacy.showText(ctx,"lock-check"),"An unlocked phone's notifications were held back by the lock screen setting");
+            onMainCall(()->method("openSettingsPage",String.class).invoke(a,"notifications"));waitForIdleSync();
+            check(viewsWithDescription(a,"On the lock screen")>0,"The Notifications settings page has no lock screen setting");}
+        finally{NotificationPrivacy.lockedForChecks=null;NotificationPrivacy.setLockMode(ctx,NotificationPrivacy.SAME);NotificationPrivacy.set(ctx,before);onMainCall(()->method("inbox").invoke(a));waitForIdleSync();}}
     /** The newest raw contact the shell just added: the highest "_id=12" it lists (arguments can't hold spaces, so no "DESC"). */
     private String newestRawContact()throws Exception{java.util.regex.Matcher m=java.util.regex.Pattern.compile("_id=(\\d+)").matcher(shell("content query --uri content://com.android.contacts/raw_contacts --projection _id"));
         long best=-1;while(m.find())best=Math.max(best,Long.parseLong(m.group(1)));return best<0?"":String.valueOf(best);}
@@ -1322,11 +1338,12 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkDialogLook((PairedActivity)activity);
         checkSettingsPages((PairedActivity)activity);
         checkSendWhileLoading((PairedActivity)activity);
+        checkLockScreenPreviews((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();
         checkSentTextStays((PairedActivity)activity);
         checkBubbleStepsAside((PairedActivity)activity);
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, emoji picker tabs and search, notes, chat menu sheet, inbox menu sheet, dialog look, settings pages, send while loading, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, emoji picker tabs and search, notes, chat menu sheet, inbox menu sheet, dialog look, settings pages, send while loading, lock screen previews, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }
