@@ -456,6 +456,18 @@ public final class OnDeviceSmoke extends Instrumentation {
         hold(word[0],word[1]);
         check(onTop("Copy text")&&onTop("Copy link"),"Holding the words around a link didn't offer the message with Copy link");
         sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);Thread.sleep(300);onMainCall(()->method("inbox").invoke(a));waitForIdleSync();}
+    /** Drags the chat left to show message times, taking pictures along the way (for the CI log). */
+    private void pictureTimeSwipe(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();
+        try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'swipe-check',name:'Sam Check',type:'RCS',participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'p1',number:'+15557770188'},fullName:'Sam Check'}]}"));
+            for(int i=0;i<16;i++)textMessage(store,"swipe-check",i);}
+        onMainCall(()->method("thread",String.class).invoke(a,"swipe-check"));waitForIdleSync();Thread.sleep(600);
+        int[] size=new int[2];runOnMainSync(()->{android.view.View d=a.getWindow().getDecorView();size[0]=d.getWidth();size[1]=d.getHeight();});
+        float y=size[1]*0.45f,x0=size[0]*0.8f,x1=size[0]*0.35f;long t=android.os.SystemClock.uptimeMillis();
+        sendPointerSync(android.view.MotionEvent.obtain(t,t,android.view.MotionEvent.ACTION_DOWN,x0,y,0));
+        for(int i=1;i<=12;i++){Thread.sleep(16);float x=x0+(x1-x0)*i/12f;sendPointerSync(android.view.MotionEvent.obtain(t,android.os.SystemClock.uptimeMillis(),android.view.MotionEvent.ACTION_MOVE,x,y,0));
+            if(i==3||i==8||i==12){waitForIdleSync();shoot("swipe-"+i);}}
+        sendPointerSync(android.view.MotionEvent.obtain(t,android.os.SystemClock.uptimeMillis(),android.view.MotionEvent.ACTION_UP,x1,y,0));
+        Thread.sleep(60);shoot("swipe-up");Thread.sleep(400);shoot("swipe-after");onMainCall(()->method("inbox").invoke(a));waitForIdleSync();}
     /** The newest raw contact the shell just added: the highest "_id=12" it lists (arguments can't hold spaces, so no "DESC"). */
     private String newestRawContact()throws Exception{java.util.regex.Matcher m=java.util.regex.Pattern.compile("_id=(\\d+)").matcher(shell("content query --uri content://com.android.contacts/raw_contacts --projection _id"));
         long best=-1;while(m.find())best=Math.max(best,Long.parseLong(m.group(1)));return best<0?"":String.valueOf(best);}
@@ -1368,6 +1380,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkSendWhileLoading((PairedActivity)activity);
         checkLockScreenPreviews((PairedActivity)activity);
         checkHoldLink((PairedActivity)activity);
+        pictureTimeSwipe((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();
