@@ -1517,6 +1517,13 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(!found.isEmpty()&&found.get(0).isShown(),"Attach button is missing from the message box");found.clear();
         bubble.getWindow().getDecorView().findViewsWithText(found,"Press and hold to record a voice message",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);
         check(!found.isEmpty(),"Mic button (tap to dictate, hold to record) is missing from the empty message box");found.clear();
+        // The bubble's header has a button that opens this conversation in the full app.
+        bubble.getWindow().getDecorView().findViewsWithText(found,"Open in Message Center",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);
+        check(!found.isEmpty()&&found.get(0).isShown(),"The bubble has no button to open the conversation in the app");
+        Intent[] opened=new Intent[1];ActivityMonitor watchOpen=new ActivityMonitor(){@Override public ActivityResult onStartActivity(Intent intent){
+            if(intent.getComponent()!=null&&intent.getComponent().getClassName().equals(PairedActivity.class.getName())){opened[0]=intent;return new ActivityResult(Activity.RESULT_CANCELED,null);}return null;}};
+        addMonitor(watchOpen);android.view.View openApp=found.get(0);runOnMainSync(openApp::performClick);waitForIdleSync();removeMonitor(watchOpen);found.clear();
+        check(opened[0]!=null&&"smoke".equals(opened[0].getStringExtra("chat"))&&(opened[0].getFlags()&Intent.FLAG_ACTIVITY_NEW_TASK)!=0,"The bubble's open button didn't open the app on this conversation ("+opened[0]+")");
         // Verification codes get a copy chip; starred and scheduled messages are marked.
         bubble.getWindow().getDecorView().findViewsWithText(found,"Copy code 482913",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);check(!found.isEmpty(),"Copy code chip is missing");found.clear();
         bubble.getWindow().getDecorView().findViewsWithText(found,"Starred",android.view.View.FIND_VIEWS_WITH_TEXT);check(!found.isEmpty(),"Starred marker is missing");found.clear();

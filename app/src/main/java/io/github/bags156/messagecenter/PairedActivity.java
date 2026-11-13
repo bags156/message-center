@@ -90,6 +90,8 @@ import java.util.TimeZone;
 /** Experimental, phone-hosted paired client. Does not read other apps' notifications. */
 public class PairedActivity extends Activity {
     static final String OPEN_CHAT="io.github.bags156.messagecenter.OPEN_CHAT";
+    /** From a bubble: the full app, on this conversation (the bubble steps aside while it's open there). */
+    private void openInApp(String id){startActivity(new Intent(this,PairedActivity.class).setAction(OPEN_CHAT).putExtra("chat",id).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP|Intent.FLAG_ACTIVITY_CLEAR_TOP));}
     private static final int BLUE=0xff2864f0;
     private static final long LOGIN_POLL_MS=1500;
     private static final String[] REACTIONS={"❤️","👍","👎","😂","😮","😢","❓","🎉"};
@@ -702,6 +704,8 @@ public class PairedActivity extends Activity {
         titles.addView(receiptsMark);updateReceiptsMark();
         who.addView(titles,new LinearLayout.LayoutParams(0,-2,1));who.setGravity(Gravity.CENTER_VERTICAL);who.setContentDescription("Conversation details");who.setOnClickListener(v->details());
         bar.addView(who,new LinearLayout.LayoutParams(0,-1,1));
+        // In a bubble: one tap opens this conversation in the full app.
+        if(bubble())bar.addView(icon(R.drawable.ic_open,ink,"Open in Message Center",()->openInApp(id)));
         // A notes button shows when you've written notes about them (or the group), as a reminder they're there.
         if(c!=null&&new Notes(this).has(notesKeyFor(c)))bar.addView(icon(R.drawable.ic_notes,ink,"Your notes",()->openNotes(store.chat(id),()->thread(id))));
         String number=PairedProtocol.number(PairedProtocol.other(c));
@@ -805,7 +809,7 @@ public class PairedActivity extends Activity {
         // Where it opens, and putting it away.
         boolean archived=c.optString("status").contains("ARCHIVED"),blocked=c.optString("status").equals("BLOCKED_FOLDER")||c.optString("status").equals("SPAM_FOLDER");
         LinearLayout places=menuGroup(content);
-        if(bubble())menuRow(places,R.drawable.ic_open,0xff14b8a6,"Open in Message Center",null,false,closing.apply(()->startActivity(new Intent(this,PairedActivity.class).setAction(OPEN_CHAT).putExtra("chat",id).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP|Intent.FLAG_ACTIVITY_CLEAR_TOP))));
+        if(bubble())menuRow(places,R.drawable.ic_open,0xff14b8a6,"Open in Message Center",null,false,closing.apply(()->openInApp(id)));
         else{menuRow(places,R.drawable.ic_chat,0xff14b8a6,"Open as bubble",null,false,closing.apply(()->openBubble(id)));
             menuRow(places,R.drawable.ic_archive,0xff64748b,archived?"Unarchive":"Archive",null,false,closing.apply(()->archive(store.chat(id),!archived)));}
         // Set apart, in red.
