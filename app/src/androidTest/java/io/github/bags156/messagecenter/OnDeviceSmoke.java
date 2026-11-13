@@ -367,6 +367,7 @@ public final class OnDeviceSmoke extends Instrumentation {
     private int viewsWithDescription(PairedActivity a,String label){int[] n={0};runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();
         a.getWindow().getDecorView().findViewsWithText(found,label,android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);n[0]=found.size();});return n[0];}
     private void shoot(String name)throws Exception{Thread.sleep(500);android.graphics.Bitmap shot=getUiAutomation().takeScreenshot();
+        try(java.io.FileWriter list=new java.io.FileWriter(new java.io.File(getTargetContext().getCacheDir(),"shots.txt"),true)){list.write(name+"\n");}catch(Exception ignored){}
         if(shot!=null)try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getCacheDir(),name+".png"))){shot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}}
     /**
      * Settings: a short main page of pages (Messages, Photos & media, Notifications, Automation,
@@ -456,25 +457,43 @@ public final class OnDeviceSmoke extends Instrumentation {
         hold(word[0],word[1]);
         check(onTop("Copy text")&&onTop("Copy link"),"Holding the words around a link didn't offer the message with Copy link");
         sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);Thread.sleep(300);onMainCall(()->method("inbox").invoke(a));waitForIdleSync();}
-    /** Drags the chat left to show message times, taking pictures along the way (for the CI log). */
-    private void pictureTimeSwipe(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();
+    /** A message time on screen in the chat list (its left edge on the screen), or null when none is in view. */
+    private Float timeOnScreen(PairedActivity a,android.widget.LinearLayout list){Float[] x={null};int id=a.getResources().getIdentifier("time_label","id",a.getPackageName());
+        runOnMainSync(()->{android.graphics.Rect seen=new android.graphics.Rect();for(int i=0;i<list.getChildCount();i++){android.view.View row=list.getChildAt(i);Object label=row.getTag(id);
+            if(label instanceof android.view.View&&row.getGlobalVisibleRect(seen)&&seen.height()>0){int[] at=new int[2];((android.view.View)label).getLocationOnScreen(at);x[0]=(float)at[0];return;}}});return x[0];}
+    /**
+     * Dragging the chat left to see times: the list slides as one and the times come in from the right;
+     * an update redrawing the chat mid-drag keeps everything where the finger has it (it used to snap
+     * back for a frame, a flash); letting go slides it all back with the times off the screen.
+     */
+    private void checkTimeSwipe(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();
         try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'swipe-check',name:'Sam Check',type:'RCS',participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'p1',number:'+15557770188'},fullName:'Sam Check'}]}"));
             for(int i=0;i<16;i++)textMessage(store,"swipe-check",i);}
         onMainCall(()->method("thread",String.class).invoke(a,"swipe-check"));waitForIdleSync();Thread.sleep(600);
+        android.widget.LinearLayout list=(android.widget.LinearLayout)field("items").get(a);float density=a.getResources().getDisplayMetrics().density,full=PairedActivity.TIME_REVEAL_DP*density;
         int[] size=new int[2];runOnMainSync(()->{android.view.View d=a.getWindow().getDecorView();size[0]=d.getWidth();size[1]=d.getHeight();});
+        Float resting=timeOnScreen(a,list);check(resting!=null&&resting>=size[0],"A message time shows before dragging (at "+resting+" of "+size[0]+")");
         float y=size[1]*0.45f,x0=size[0]*0.8f,x1=size[0]*0.35f;long t=android.os.SystemClock.uptimeMillis();
         sendPointerSync(android.view.MotionEvent.obtain(t,t,android.view.MotionEvent.ACTION_DOWN,x0,y,0));
         for(int i=1;i<=12;i++){Thread.sleep(16);float x=x0+(x1-x0)*i/12f;sendPointerSync(android.view.MotionEvent.obtain(t,android.os.SystemClock.uptimeMillis(),android.view.MotionEvent.ACTION_MOVE,x,y,0));
-            if(i==3||i==8||i==12){waitForIdleSync();shoot("swipe-"+i);}}
-        // An update arriving while you hold the chat over (it redraws the messages): the times must stay out.
+            if(i==3||i==12){waitForIdleSync();shoot("swipe-"+i);}}
+        float held=list.getTranslationX();Float shown=timeOnScreen(a,list);
+        check(held<=-full*0.99f,"The chat didn't slide over far enough to show the times ("+held+" of "+(-full)+")");
+        check(shown!=null&&shown<size[0]-full*0.8f,"The times didn't come into view (at "+shown+")");
+        // An update arriving while you hold the chat over redraws the messages: nothing may move.
         onMainCall(()->method("renderMessages",boolean.class).invoke(a,false));waitForIdleSync();shoot("swipe-redraw");
+        check(list.getTranslationX()==held,"A redraw mid-drag moved the chat ("+held+" → "+list.getTranslationX()+"): it flashes");
+        Float again=timeOnScreen(a,list);check(again!=null&&Math.abs(again-shown)<1,"A redraw mid-drag moved the times ("+shown+" → "+again+")");
         sendPointerSync(android.view.MotionEvent.obtain(t,android.os.SystemClock.uptimeMillis(),android.view.MotionEvent.ACTION_UP,x1,y,0));
-        Thread.sleep(60);shoot("swipe-up");Thread.sleep(400);shoot("swipe-after");onMainCall(()->method("inbox").invoke(a));waitForIdleSync();}
+        Thread.sleep(500);waitForIdleSync();shoot("swipe-after");
+        check(list.getTranslationX()==0,"The chat didn't slide back after letting go ("+list.getTranslationX()+")");
+        Float gone=timeOnScreen(a,list);check(gone!=null&&gone>=size[0],"A time stayed on screen after letting go");
+        onMainCall(()->method("inbox").invoke(a));waitForIdleSync();
+        // The inbox list isn't moved by a chat's slide (it settles after you've left).
+        check(((android.view.View)field("items").get(a)).getTranslationX()==0,"Leaving a chat left the inbox slid over");}
     // ---- Real touches, as a finger would make them (through the system, so status bar and back gestures apply) ----
     private final StringBuilder probe=new StringBuilder();
     private void note(String line){probe.append(line).append('\n');try{java.nio.file.Files.write(new java.io.File(getTargetContext().getCacheDir(),"probe.txt").toPath(),probe.toString().getBytes());}catch(Exception ignored){}}
-    private String shell(String command)throws Exception{android.os.ParcelFileDescriptor out=getUiAutomation().executeShellCommand(command);
-        try(java.io.InputStream in=new android.os.ParcelFileDescriptor.AutoCloseInputStream(out)){return new String(in.readAllBytes()).trim();}}
     private void inject(long down,int action,float x,float y){android.view.MotionEvent e=android.view.MotionEvent.obtain(down,android.os.SystemClock.uptimeMillis(),action,x,y,0);
         e.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);getUiAutomation().injectInputEvent(e,true);e.recycle();}
     /** A finger tap at a point on the screen. */
@@ -493,8 +512,6 @@ public final class OnDeviceSmoke extends Instrumentation {
     private boolean showing(String text){android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();
         for(android.view.accessibility.AccessibilityWindowInfo w:getUiAutomation().getWindows()){android.view.accessibility.AccessibilityNodeInfo r=w.getRoot();if(r!=null&&!r.findAccessibilityNodeInfosByText(text).isEmpty())return true;}
         return root!=null&&!root.findAccessibilityNodeInfosByText(text).isEmpty();}
-    private boolean gestureNavigation()throws Exception{shell("cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.gestural");Thread.sleep(3000);return "2".equals(shell("settings get secure navigation_mode"));}
-    private void buttonNavigation()throws Exception{shell("cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton");Thread.sleep(2000);}
     /** The crop frame's corners on the screen: left, top, right, bottom. */
     private float[] cropOnScreen(MarkupEditor editor)throws Exception{android.view.View board=(android.view.View)field(MarkupEditor.class,"board").get(editor);
         android.graphics.RectF crop=new android.graphics.RectF((android.graphics.RectF)field(MarkupEditor.class,"crop").get(editor));float[] out=new float[4];
@@ -502,29 +519,170 @@ public final class OnDeviceSmoke extends Instrumentation {
         runOnMainSync(()->{try{android.graphics.Matrix m=(android.graphics.Matrix)toScreen.get(board);float[] pts={crop.left,crop.top,crop.right,crop.bottom};m.mapPoints(pts);int[] at=new int[2];board.getLocationOnScreen(at);
             out[0]=pts[0]+at[0];out[1]=pts[1]+at[1];out[2]=pts[2]+at[0];out[3]=pts[3]+at[1];}catch(Exception e){throw new RuntimeException(e);}});return out;}
     private static java.lang.reflect.Field field(Class<?> c,String name)throws Exception{java.lang.reflect.Field f=c.getDeclaredField(name);f.setAccessible(true);return f;}
-    /** What a finger actually manages in the photo editor (before fixing it): Cancel, the crop corners, with gesture navigation on like most phones. */
-    private void probePhotoEditor(PairedActivity a){try{
-        note("gesture navigation: "+gestureNavigation());int[] size=new int[2];runOnMainSync(()->{android.view.View d=a.getWindow().getDecorView();size[0]=d.getWidth();size[1]=d.getHeight();});note("screen "+size[0]+"x"+size[1]);
-        java.io.File photo=new java.io.File(getTargetContext().getCacheDir(),"probe-photo.png");android.graphics.Bitmap pic=android.graphics.Bitmap.createBitmap(2000,1500,android.graphics.Bitmap.Config.ARGB_8888);pic.eraseColor(0xFF4477AA);
-        try(java.io.FileOutputStream f=new java.io.FileOutputStream(photo)){pic.compress(android.graphics.Bitmap.CompressFormat.PNG,100,f);}
-        java.io.File[] saved=new java.io.File[1];runOnMainSync(()->MarkupEditor.open(a,photo,f->saved[0]=f));for(int i=0;i<50&&MarkupEditor.shown==null;i++)Thread.sleep(100);
-        MarkupEditor editor=MarkupEditor.shown;note("editor open: "+(editor!=null));if(editor==null)return;waitForIdleSync();Thread.sleep(400);
-        android.view.View decor=((android.app.Dialog)field(MarkupEditor.class,"dialog").get(editor)).getWindow().getDecorView();
-        runOnMainSync(()->{android.view.WindowInsets in=decor.getRootWindowInsets();if(in!=null)note("insets status "+in.getInsets(android.view.WindowInsets.Type.statusBars())+" nav "+in.getInsets(android.view.WindowInsets.Type.navigationBars())+" cutout "+in.getInsets(android.view.WindowInsets.Type.displayCutout())+" gestures "+in.getInsets(android.view.WindowInsets.Type.systemGestures()));});
-        shoot("shot-editor-open");
-        android.widget.TextView cancel=labelled(decor,"Cancel"),crop=labelled(decor,"Crop");float[] cc=middle(cancel),kc=middle(crop);note("cancel at "+cc[0]+","+cc[1]+" crop button at "+kc[0]+","+kc[1]);
-        press(kc[0],kc[1]);note("mode after tapping Crop: "+field(MarkupEditor.class,"mode").get(editor));
-        float[] r=cropOnScreen(editor);note("crop frame on screen "+java.util.Arrays.toString(r));
-        slide(r[0]+4,r[1]+4,r[0]+160,r[1]+160);note("after dragging top-left: frame "+field(MarkupEditor.class,"crop").get(editor)+", editor still open: "+(MarkupEditor.shown==editor));
-        if(MarkupEditor.shown==editor){r=cropOnScreen(editor);slide(r[2]-4,r[3]-4,r[2]-160,r[3]-160);note("after dragging bottom-right: frame "+field(MarkupEditor.class,"crop").get(editor)+", editor still open: "+(MarkupEditor.shown==editor));}
-        shoot("shot-editor-crop");
-        if(MarkupEditor.shown==editor){press(cc[0],cc[1]);Thread.sleep(600);note("after tapping Cancel: editor open "+(MarkupEditor.shown==editor)+", asks to discard "+showing("Discard your changes?"));}
-        shoot("shot-editor-cancel");
-        if(showing("Discard your changes?")){android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();if(root!=null)for(android.view.accessibility.AccessibilityNodeInfo n:root.findAccessibilityNodeInfosByText("Discard"))if("Discard".contentEquals(n.getText()))n.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK);Thread.sleep(500);}
-        if(MarkupEditor.shown!=null){android.app.Dialog d=(android.app.Dialog)field(MarkupEditor.class,"dialog").get(MarkupEditor.shown);runOnMainSync(d::dismiss);}
-        photo.delete();}
-        catch(Throwable e){note("probe stopped: "+e);}
-        finally{try{buttonNavigation();}catch(Exception ignored){}}}
+    /** A plain photo file of one color. */
+    private java.io.File photo(java.io.File dir,String name,int w,int h,int color)throws Exception{dir.mkdirs();java.io.File f=new java.io.File(dir,name);android.graphics.Bitmap b=android.graphics.Bitmap.createBitmap(w,h,android.graphics.Bitmap.Config.ARGB_8888);b.eraseColor(color);
+        try(java.io.FileOutputStream out=new java.io.FileOutputStream(f)){b.compress(android.graphics.Bitmap.CompressFormat.JPEG,90,out);}return f;}
+    private boolean waitUntil(java.util.concurrent.Callable<Boolean> done,long ms)throws Exception{long until=android.os.SystemClock.uptimeMillis()+ms;
+        while(android.os.SystemClock.uptimeMillis()<until){boolean[] yes={false};runOnMainSync(()->{try{yes[0]=done.call();}catch(Exception e){throw new RuntimeException(e);}});if(yes[0])return true;Thread.sleep(100);}return false;}
+    /** The first view in the activity whose accessibility label contains this text. */
+    private android.view.View described(PairedActivity a,String label){android.view.View[] hit=new android.view.View[1];runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();
+        a.getWindow().getDecorView().findViewsWithText(found,label,android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);for(android.view.View v:found)if(v.isShown()){hit[0]=v;break;}});return hit[0];}
+    /** Something on screen in any window showing exactly this text (a dialog's button), or null. */
+    private android.view.accessibility.AccessibilityNodeInfo onScreen(String text){java.util.List<android.view.accessibility.AccessibilityNodeInfo> roots=new java.util.ArrayList<>();
+        android.view.accessibility.AccessibilityNodeInfo active=getUiAutomation().getRootInActiveWindow();if(active!=null)roots.add(active);
+        for(android.view.accessibility.AccessibilityWindowInfo w:getUiAutomation().getWindows()){android.view.accessibility.AccessibilityNodeInfo r=w.getRoot();if(r!=null)roots.add(r);}
+        for(android.view.accessibility.AccessibilityNodeInfo r:roots)for(android.view.accessibility.AccessibilityNodeInfo n:r.findAccessibilityNodeInfosByText(text))if(n.getText()!=null&&text.contentEquals(n.getText())&&n.isVisibleToUser())return n;return null;}
+    /** Waits (off the main thread, which answers these questions) for text to be on screen, or to be gone. */
+    private boolean waitForText(String text,long ms,boolean there)throws Exception{long until=android.os.SystemClock.uptimeMillis()+ms;
+        do{if((onScreen(text)!=null)==there)return true;Thread.sleep(150);}while(android.os.SystemClock.uptimeMillis()<until);return false;}
+    private static Object got(Object o,String name)throws Exception{java.lang.reflect.Field f=o.getClass().getDeclaredField(name);f.setAccessible(true);return f.get(o);}
+    /** Taps a dialog button (or any text on screen) with a finger. */
+    private void pressText(String text)throws Exception{android.view.accessibility.AccessibilityNodeInfo n=null;for(int i=0;i<20&&n==null;i++){n=onScreen(text);if(n==null)Thread.sleep(150);}
+        check(n!=null,"\""+text+"\" isn't on the screen to tap");android.graphics.Rect b=new android.graphics.Rect();n.getBoundsInScreen(b);press(b.exactCenterX(),b.exactCenterY());}
+    private void doubleTap(float x,float y)throws Exception{long t=android.os.SystemClock.uptimeMillis();inject(t,android.view.MotionEvent.ACTION_DOWN,x,y);Thread.sleep(40);inject(t,android.view.MotionEvent.ACTION_UP,x,y);Thread.sleep(90);
+        long u=android.os.SystemClock.uptimeMillis();inject(u,android.view.MotionEvent.ACTION_DOWN,x,y);Thread.sleep(40);inject(u,android.view.MotionEvent.ACTION_UP,x,y);waitForIdleSync();Thread.sleep(500);}
+    private android.view.View editorWindow(MarkupEditor e)throws Exception{return ((android.app.Dialog)field(MarkupEditor.class,"dialog").get(e)).getWindow().getDecorView();}
+    private android.graphics.RectF cropOf(MarkupEditor e)throws Exception{android.graphics.RectF[] r=new android.graphics.RectF[1];runOnMainSync(()->{try{r[0]=new android.graphics.RectF((android.graphics.RectF)field(MarkupEditor.class,"crop").get(e));}catch(Exception x){throw new RuntimeException(x);}});return r[0];}
+    /** A view's place on the screen. */
+    private android.graphics.Rect placed(android.view.View v){android.graphics.Rect r=new android.graphics.Rect();runOnMainSync(()->{int[] at=new int[2];v.getLocationOnScreen(at);r.set(at[0],at[1],at[0]+v.getWidth(),at[1]+v.getHeight());});return r;}
+    /** Opens the editor by tapping a picked photo in the strip, the way a finger does (left of middle, away from its ✕). */
+    private MarkupEditor openEditor(PairedActivity a,String name)throws Exception{android.view.View tile=described(a,"Mark up "+name);check(tile!=null,"The picked photo "+name+" isn't in the strip");
+        android.graphics.Rect t=placed(tile);press(t.left+t.width()*0.35f,t.top+t.height()*0.65f);
+        check(waitUntil(()->MarkupEditor.shown!=null,5000),"Tapping a picked photo didn't open the editor");waitForIdleSync();Thread.sleep(400);return MarkupEditor.shown;}
+    /** Taps a button in the editor with a finger, after checking it's clear of the status bar, camera cutout and navigation bar. */
+    private void editorButton(MarkupEditor e,String label)throws Exception{android.view.View w=editorWindow(e);android.widget.TextView b=labelled(w,label);check(b!=null,"The editor has no "+label+" button");
+        android.graphics.Rect r=placed(b);android.graphics.Insets[] in=new android.graphics.Insets[1];int[] h=new int[1];
+        runOnMainSync(()->{android.view.WindowInsets i=w.getRootWindowInsets();in[0]=i==null?android.graphics.Insets.NONE:i.getInsetsIgnoringVisibility(android.view.WindowInsets.Type.statusBars()|android.view.WindowInsets.Type.navigationBars()|android.view.WindowInsets.Type.displayCutout());h[0]=w.getHeight();});
+        check(r.top>=in[0].top&&r.bottom<=h[0]-in[0].bottom,"The editor's "+label+" button is under a system bar ("+r+", bars "+in[0]+")");
+        press(r.exactCenterX(),r.exactCenterY());}
+    @SuppressWarnings("unchecked")
+    private java.util.List<Object> picked(PairedActivity a)throws Exception{return (java.util.List<Object>)field("outgoing").get(a);}
+    private java.io.File pickedFile(Object o)throws Exception{java.lang.reflect.Field f=o.getClass().getDeclaredField("file");f.setAccessible(true);return (java.io.File)f.get(o);}
+    /**
+     * Photos, start to finish, with a finger: picking two,
+     * the editor's buttons clear of the system bars, cropping by every corner and side (starting right at
+     * the screen's edge too), Undo, Cancel asking before throwing edits away (Keep editing / Discard),
+     * Back doing the same, Done saving the crop, drawing and text, removing one, photo quality, sending,
+     * and the full-screen viewer (zoom, next photo, hiding the bar, Save, Share, Close).
+     */
+    private void checkPhotoMechanics(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();float dp=a.getResources().getDisplayMetrics().density;
+        android.accessibilityservice.AccessibilityServiceInfo info=getUiAutomation().getServiceInfo();info.flags|=android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;getUiAutomation().setServiceInfo(info);
+        java.io.File[] made=new java.io.File[2];
+        try{
+            onMainCall(()->method("thread",String.class).invoke(a,"swipe-check"));waitForIdleSync();Thread.sleep(500);
+            // Picking: two photos come back from Android's photo picker.
+            made[0]=photo(MediaCache.dir(ctx),"pick-wide.jpg",2000,1500,0xff3366aa);made[1]=photo(MediaCache.dir(ctx),"pick-tall.jpg",1200,1800,0xffaa6633);
+            android.content.ClipData clip=android.content.ClipData.newRawUri("photos",MediaProvider.uri(made[0],"Wide.jpg"));clip.addItem(new android.content.ClipData.Item(MediaProvider.uri(made[1],"Tall.jpg")));
+            Intent result=new Intent();result.setClipData(clip);
+            onMainCall(()->{java.lang.reflect.Method m=PairedActivity.class.getDeclaredMethod("onActivityResult",int.class,int.class,Intent.class);m.setAccessible(true);return m.invoke(a,41,Activity.RESULT_OK,result);});
+            check(waitUntil(()->picked(a).size()==2,5000),"Two picked photos didn't both join the message ("+picked(a).size()+")");waitForIdleSync();Thread.sleep(400);shoot("shot-photo-strip");
+            // The editor: every button clear of the system bars.
+            MarkupEditor e=openEditor(a,"Wide.jpg");shoot("shot-photo-editor");
+            editorButton(e,"Crop");check("Crop".equals(field(MarkupEditor.class,"mode").get(e)),"Tapping Crop didn't switch to cropping");
+            android.graphics.RectF whole=cropOf(e);float[] r=cropOnScreen(e);int width=editorWindow(e).getWidth();
+            check(r[0]>=20*dp&&r[2]<=width-20*dp,"The crop corners sit at the screen's edge, where a drag is taken as Back ("+java.util.Arrays.toString(r)+" of "+width+")");
+            // With gesture navigation, a drag starting near the screen's side is Back unless the app keeps that spot:
+            // the corners and side bars are kept (the emulator's injected touches skip that check, so it's checked here).
+            android.view.View frame=(android.view.View)field(MarkupEditor.class,"board").get(e);java.util.List<android.graphics.Rect> keptSpots=new java.util.ArrayList<>();runOnMainSync(()->keptSpots.addAll(frame.getSystemGestureExclusionRects()));
+            android.graphics.Rect fb=placed(frame);boolean cornerKept=false;for(android.graphics.Rect k:keptSpots)if(k.contains((int)(r[0]-fb.left),(int)(r[1]-fb.top))&&k.contains((int)(6*dp-fb.left),(int)(r[1]-fb.top)))cornerKept=true;
+            check(keptSpots.size()>=6&&cornerKept,"The crop corners aren't kept from the Back swipe ("+keptSpots+")");
+            // Every corner, with a finger starting on it; the top-left one from right at the screen's edge.
+            slide(6*dp,r[1]+6*dp,r[0]+50*dp,r[1]+36*dp);android.graphics.RectF c=cropOf(e);
+            check(MarkupEditor.shown==e,"Pulling the top-left corner from the screen's edge closed the editor (taken as Back)");
+            check(c.left>whole.left+1&&c.top>whole.top+1,"The top-left corner didn't move ("+c+")");
+            r=cropOnScreen(e);slide(r[2],r[1],r[2]-50*dp,r[1]+30*dp);android.graphics.RectF d=cropOf(e);check(MarkupEditor.shown==e&&d.right<c.right-1&&d.top>c.top+1,"The top-right corner didn't move ("+d+")");
+            r=cropOnScreen(e);slide(r[2]-2*dp,r[3],width-4*dp,r[3]-30*dp);android.graphics.RectF g=cropOf(e);check(MarkupEditor.shown==e&&g.right>d.right+1&&g.bottom<d.bottom-1,"The bottom-right corner didn't move out toward the screen's edge ("+g+")");
+            r=cropOnScreen(e);slide(r[0],r[3],r[0]+40*dp,r[3]-20*dp);android.graphics.RectF h=cropOf(e);check(MarkupEditor.shown==e&&h.left>g.left+1&&h.bottom<g.bottom-1,"The bottom-left corner didn't move ("+h+")");
+            // A side moves only that side; the middle moves the whole frame.
+            r=cropOnScreen(e);slide(r[2],(r[1]+r[3])/2,r[2]-30*dp,(r[1]+r[3])/2);android.graphics.RectF k=cropOf(e);
+            check(k.right<h.right-1&&Math.abs(k.top-h.top)<1&&Math.abs(k.bottom-h.bottom)<1&&Math.abs(k.left-h.left)<1,"Dragging the right side didn't move just that side ("+h+" → "+k+")");
+            r=cropOnScreen(e);slide((r[0]+r[2])/2,(r[1]+r[3])/2,(r[0]+r[2])/2+24*dp,(r[1]+r[3])/2);android.graphics.RectF m=cropOf(e);
+            check(m.left>k.left+1&&Math.abs(m.width()-k.width())<1&&Math.abs(m.height()-k.height())<1,"Dragging the middle didn't move the frame ("+k+" → "+m+")");
+            shoot("shot-photo-crop");
+            editorButton(e,"Undo");check(cropOf(e).equals(k),"Undo didn't take back the last move ("+cropOf(e)+", expected "+k+")");
+            // Cancel asks before throwing away edits: Keep editing stays, Discard closes and keeps the photo as picked.
+            java.io.File before=pickedFile(picked(a).get(0));
+            editorButton(e,"Cancel");check(waitForText("Discard your changes?",3000,true),"Cancel didn't do anything (no question about discarding)");shoot("shot-photo-discard");
+            pressText("Keep editing");check(waitForText("Discard your changes?",3000,false)&&MarkupEditor.shown==e,"Keep editing didn't go back to the editor");
+            editorButton(e,"Cancel");pressText("Discard");check(waitUntil(()->MarkupEditor.shown==null,3000),"Discard didn't close the editor");
+            check(picked(a).size()==2&&pickedFile(picked(a).get(0)).equals(before)&&before.isFile(),"Discarding changed the picked photo");
+            // Done keeps the crop: the photo in the strip is replaced by the cropped copy.
+            e=openEditor(a,"Wide.jpg");editorButton(e,"Crop");r=cropOnScreen(e);slide(r[0],r[1],r[0]+60*dp,r[1]+40*dp);android.graphics.RectF kept=cropOf(e);
+            editorButton(e,"Done");check(waitUntil(()->MarkupEditor.shown==null,5000),"Done didn't close the editor");
+            check(waitUntil(()->!pickedFile(picked(a).get(0)).equals(before),3000),"Done didn't replace the picked photo with the cropped one");
+            android.graphics.BitmapFactory.Options o=new android.graphics.BitmapFactory.Options();o.inJustDecodeBounds=true;android.graphics.BitmapFactory.decodeFile(pickedFile(picked(a).get(0)).getPath(),o);
+            check(Math.abs(o.outWidth-Math.round(kept.width()))<=1&&Math.abs(o.outHeight-Math.round(kept.height()))<=1,"The saved photo isn't the cropped size ("+o.outWidth+"×"+o.outHeight+" for "+kept+")");
+            // Drawing, then words: Text asks for them; Back asks before throwing both away.
+            e=openEditor(a,"Wide.jpg");android.view.View board=(android.view.View)field(MarkupEditor.class,"board").get(e);android.graphics.Rect bb=placed(board);
+            slide(bb.exactCenterX()-60*dp,bb.exactCenterY(),bb.exactCenterX()+60*dp,bb.exactCenterY()+20*dp);
+            check(((java.util.List<?>)field(MarkupEditor.class,"undo").get(e)).size()==1,"Drawing a line wasn't recorded");
+            editorButton(e,"Text");check(waitForText("Add text",3000,true),"Text didn't ask for words");
+            android.view.accessibility.AccessibilityNodeInfo box=getUiAutomation().getRootInActiveWindow().findFocus(android.view.accessibility.AccessibilityNodeInfo.FOCUS_INPUT);check(box!=null,"The words box isn't ready to type in");
+            Bundle words=new Bundle();words.putCharSequence(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,"Hello");box.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT,words);
+            pressText("Add");int labels=0;for(Object mark:(java.util.List<?>)field(MarkupEditor.class,"marks").get(e))if(mark.getClass().getSimpleName().equals("Label"))labels++;check(labels==1,"The words weren't put on the photo");
+            shoot("shot-photo-text");
+            waitForText("Add text",3000,false);sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);
+            // The first Back may only put the keyboard away.
+            if(!waitForText("Discard your changes?",1500,true))sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);
+            check(waitForText("Discard your changes?",3000,true),"Back didn't ask before throwing away the drawing");pressText("Discard");check(waitUntil(()->MarkupEditor.shown==null,3000),"Discard after Back didn't close the editor");
+            // No edits: Cancel just closes.
+            e=openEditor(a,"Tall.jpg");editorButton(e,"Cancel");check(waitUntil(()->MarkupEditor.shown==null,2000)&&waitForText("Discard your changes?",500,false),"Cancel with no edits didn't simply close");
+            // Removing one: its ✕, with a finger.
+            android.view.View remove=described(a,"Remove Tall.jpg");check(remove!=null,"The tall photo has no remove button");android.graphics.Rect rr=placed(remove);
+            check(rr.width()>=30*dp,"The remove button is too small for a finger ("+rr.width()/dp+"dp)");press(rr.exactCenterX(),rr.exactCenterY());
+            check(waitUntil(()->picked(a).size()==1,2000),"Tapping ✕ didn't remove the photo");
+            // Photo quality: tapping it offers the choices.
+            android.view.View quality=described(a,"Photo quality");check(quality!=null,"No photo quality setting by the picked photo");android.graphics.Rect qr=placed(quality);press(qr.exactCenterX(),qr.exactCenterY());
+            check(waitForText("Standard • sharp, practical size",3000,true),"Tapping photo quality didn't offer the choices");getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);
+            check(waitForText("Standard • sharp, practical size",3000,false),"Back didn't close the photo quality choices");
+            // Sending: the photo leaves the strip and is queued for this chat.
+            android.view.View send=(android.view.View)field("sendButton").get(a);check(send!=null&&send.isShown()&&"Send".contentEquals(send.getContentDescription()),"No Send button with a photo picked");android.graphics.Rect sr=placed(send);press(sr.exactCenterX(),sr.exactCenterY());
+            MediaOutbox queue=new MediaOutbox(ctx);check(waitUntil(()->picked(a).isEmpty()&&!queue.forChat("swipe-check").isEmpty(),8000),"Sending didn't take the photo from the strip into the chat ("+picked(a).size()+" left, "+queue.forChat("swipe-check").size()+" queued)");
+            Thread.sleep(500);shoot("shot-photo-sent");
+            for(JSONObject job:queue.forChat("swipe-check"))queue.remove(job.optString("id"));
+            checkPhotoViewer(a,dp);
+        }finally{
+            if(MarkupEditor.shown!=null){android.app.Dialog dl=(android.app.Dialog)field(MarkupEditor.class,"dialog").get(MarkupEditor.shown);runOnMainSync(dl::dismiss);}
+            for(java.io.File f:made)if(f!=null)f.delete();
+            onMainCall(()->method("inbox").invoke(a));waitForIdleSync();}}
+    /** The full-screen viewer, opened from a photo in a chat with a finger: bar clear of the status bar, zoom, next photo, Save, Share, Close. */
+    private void checkPhotoViewer(PairedActivity a,float dp)throws Exception{android.content.Context ctx=getTargetContext();long now=System.currentTimeMillis();java.util.List<java.io.File> files=new java.util.ArrayList<>();
+        try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'photo-check',name:'Pat Photo',type:'RCS',participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'pp',number:'+15550106666'},fullName:'Pat Photo'}]}"));
+            for(int i=0;i<2;i++){JSONObject media=new JSONObject().put("mediaID","viewer-media-"+i).put("mimeType","image/jpeg").put("mediaName","viewer-"+i+".jpg").put("decryptionKey","AAAA").put("dimensions",new JSONObject().put("width",1600).put("height",1200));
+                java.io.File full=MediaCache.file(ctx,media,false);full.getParentFile().mkdirs();java.io.File made=photo(full.getParentFile(),full.getName(),1600,1200,i==0?0xff229955:0xff992255);files.add(made);media.put("size",made.length());
+                store.message(new JSONObject().put("messageID","viewer-msg-"+i).put("conversationID","photo-check").put("participantID","pp").put("timestamp",(now-60_000+i*1000)*1000).put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE"))
+                    .put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("actionMessageID","viewer-part-"+i).put("mediaContent",media))),0,true);}}
+        try{onMainCall(()->method("thread",String.class).invoke(a,"photo-check"));waitForIdleSync();Thread.sleep(800);
+            java.util.ArrayList<android.view.View> photos=new java.util.ArrayList<>();runOnMainSync(()->a.getWindow().getDecorView().findViewsWithText(photos,"Photo. Tap to view.",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION));
+            check(photos.size()==2,"The chat doesn't show both photos ("+photos.size()+")");android.graphics.Rect pr=placed(photos.get(1));press(pr.exactCenterX(),pr.exactCenterY());
+            check(waitUntil(()->field("shownViewer").get(a)!=null,3000),"Tapping a photo didn't open it full screen");Object v=field("shownViewer").get(a);
+            android.app.Dialog dialog=(android.app.Dialog)got(v,"d");android.view.View window=dialog.getWindow().getDecorView();android.view.View image=(android.view.View)got(v,"image");
+            android.widget.TextView counter=(android.widget.TextView)got(v,"counter");
+            check(waitUntil(()->((android.widget.ImageView)image).getDrawable()!=null,4000),"The full-screen photo didn't show");Thread.sleep(300);shoot("shot-photo-viewer");
+            android.widget.TextView save=labelled(window,"Save"),share=labelled(window,"Share");check(save!=null&&share!=null,"The viewer has no Save or Share");
+            int[] bar=new int[1];runOnMainSync(()->{android.view.WindowInsets in=window.getRootWindowInsets();bar[0]=in==null?0:in.getInsetsIgnoringVisibility(android.view.WindowInsets.Type.statusBars()|android.view.WindowInsets.Type.displayCutout()).top;});
+            check(placed(save).top>=bar[0],"The viewer's buttons are under the status bar ("+placed(save)+", bar "+bar[0]+")");
+            check("2 of 2".contentEquals(counter.getText()),"The viewer didn't open on the tapped photo ("+counter.getText()+")");
+            android.graphics.Rect ir=placed(image);
+            doubleTap(ir.exactCenterX(),ir.exactCenterY());check((float)got(image,"scale")>1.5f,"Double-tap didn't zoom in ("+got(image,"scale")+")");
+            doubleTap(ir.exactCenterX(),ir.exactCenterY());check((float)got(image,"scale")<1.05f,"Double-tap again didn't zoom back out ("+got(image,"scale")+")");
+            slide(ir.left+ir.width()*0.2f,ir.exactCenterY(),ir.left+ir.width()*0.85f,ir.exactCenterY());
+            if(!"1 of 2".contentEquals(counter.getText()))slide(ir.left+ir.width()*0.85f,ir.exactCenterY(),ir.left+ir.width()*0.2f,ir.exactCenterY());
+            check("1 of 2".contentEquals(counter.getText()),"Swiping sideways didn't go to the other photo ("+counter.getText()+")");
+            press(ir.exactCenterX(),ir.exactCenterY());Thread.sleep(500);check(!save.isShown(),"A tap didn't hide the viewer's bar");
+            press(ir.exactCenterX(),ir.exactCenterY());Thread.sleep(500);check(save.isShown(),"A second tap didn't bring the bar back");
+            check(waitUntil(()->((android.widget.ImageView)image).getDrawable()!=null,4000),"The other photo didn't show");
+            android.graphics.Rect sv=placed(save);press(sv.exactCenterX(),sv.exactCenterY());
+            android.net.Uri images=android.provider.MediaStore.Images.Media.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY);long savedId=-1;
+            for(int i=0;i<30&&savedId<0;i++){Thread.sleep(200);try(android.database.Cursor q=ctx.getContentResolver().query(images,new String[]{android.provider.MediaStore.MediaColumns._ID},android.provider.MediaStore.MediaColumns.DISPLAY_NAME+" LIKE ?",new String[]{"viewer-0%"},null)){if(q!=null&&q.moveToFirst())savedId=q.getLong(0);}}
+            check(savedId>=0,"Save didn't put the photo in Pictures");note("viewer save: ok");ctx.getContentResolver().delete(android.content.ContentUris.withAppendedId(images,savedId),null,null);
+            android.graphics.Rect sh=placed(share);press(sh.exactCenterX(),sh.exactCenterY());check(waitUntil(()->!window.hasWindowFocus(),4000),"Share didn't open the share sheet");
+            getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);check(waitUntil(window::hasWindowFocus,4000),"Closing the share sheet didn't return to the photo");
+            android.view.View close=null;for(android.view.View x:viewsOf(window,android.view.View.class))if(x.getContentDescription()!=null&&"Close".contentEquals(x.getContentDescription())){close=x;break;}
+            check(close!=null,"The viewer has no Close button");android.graphics.Rect cr=placed(close);press(cr.exactCenterX(),cr.exactCenterY());
+            check(waitUntil(()->!dialog.isShowing(),3000),"Close didn't close the photo");}
+        finally{Object v=field("shownViewer").get(a);if(v!=null){android.app.Dialog dl=(android.app.Dialog)got(v,"d");runOnMainSync(dl::dismiss);}
+            for(java.io.File f:files)f.delete();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("photo-check");}}}
     /** The newest raw contact the shell just added: the highest "_id=12" it lists (arguments can't hold spaces, so no "DESC"). */
     private String newestRawContact()throws Exception{java.util.regex.Matcher m=java.util.regex.Pattern.compile("_id=(\\d+)").matcher(shell("content query --uri content://com.android.contacts/raw_contacts --projection _id"));
         long best=-1;while(m.find())best=Math.max(best,Long.parseLong(m.group(1)));return best<0?"":String.valueOf(best);}
@@ -1437,8 +1595,8 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkSendWhileLoading((PairedActivity)activity);
         checkLockScreenPreviews((PairedActivity)activity);
         checkHoldLink((PairedActivity)activity);
-        pictureTimeSwipe((PairedActivity)activity);
-        probePhotoEditor((PairedActivity)activity);
+        checkTimeSwipe((PairedActivity)activity);
+        checkPhotoMechanics((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();

@@ -18,6 +18,7 @@ import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.WindowInsets;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -87,12 +88,20 @@ final class MarkupEditor {
         this.a = a; this.base = base; this.done = done;
         crop = new RectF(0, 0, base.getWidth(), base.getHeight());
         dialog = new Dialog(a, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        // Top bar, photo, then colors and modes, kept clear of the status bar, camera cutout and
+        // navigation bar (the window reaches under them), so every button is where a finger can tap it.
         FrameLayout root = new FrameLayout(a);
         root.setBackgroundColor(Color.BLACK);
+        LinearLayout column = new LinearLayout(a);
+        column.setOrientation(LinearLayout.VERTICAL);
+        root.addView(column, new FrameLayout.LayoutParams(-1, -1));
+        root.setOnApplyWindowInsetsListener((v, insets) -> {
+            // Where the bars are even while hidden (a swipe brings them back over the top), and the camera cutout.
+            android.graphics.Insets bars = android.graphics.Insets.max(insets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars()), insets.getInsets(WindowInsets.Type.displayCutout()));
+            column.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            return WindowInsets.CONSUMED;
+        });
         board = new Board(a);
-        FrameLayout.LayoutParams bl = new FrameLayout.LayoutParams(-1, -1);
-        bl.topMargin = dp(64); bl.bottomMargin = dp(150);
-        root.addView(board, bl);
 
         LinearLayout top = new LinearLayout(a);
         top.setGravity(Gravity.CENTER_VERTICAL);
@@ -104,11 +113,12 @@ final class MarkupEditor {
         LinearLayout.LayoutParams dl = new LinearLayout.LayoutParams(-2, -2);
         dl.setMarginStart(dp(8));
         top.addView(button("Done", true, this::save), dl);
-        root.addView(top, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
+        column.addView(top, new LinearLayout.LayoutParams(-1, -2));
+        column.addView(board, new LinearLayout.LayoutParams(-1, 0, 1));
 
         LinearLayout bottom = new LinearLayout(a);
         bottom.setOrientation(LinearLayout.VERTICAL);
-        bottom.setPadding(dp(12), dp(8), dp(12), dp(28));
+        bottom.setPadding(dp(12), dp(8), dp(12), dp(16));
         LinearLayout colors = new LinearLayout(a);
         colors.setGravity(Gravity.CENTER);
         for (int c : COLORS) {
@@ -134,7 +144,7 @@ final class MarkupEditor {
             modeButtons.add(t);
         }
         bottom.addView(modes);
-        root.addView(bottom, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM));
+        column.addView(bottom, new LinearLayout.LayoutParams(-1, -2));
 
         dialog.setContentView(root);
         dialog.setOnKeyListener((d, key, e) -> {
@@ -142,6 +152,7 @@ final class MarkupEditor {
             return key == KeyEvent.KEYCODE_BACK;
         });
         refreshControls();
+        root.requestApplyInsets();
     }
 
     /** The editor on screen, for the on-device test. */
@@ -313,27 +324,79 @@ final class MarkupEditor {
         return new RectF(l.x - half, l.y - l.size * 1.05f, l.x + half, l.y + l.size * 0.35f);
     }
 
-    /** The photo, fitted to the screen, with the marks and (in Crop, or once cropped) the crop frame. */
+    /** Crop frame parts a finger can hold: corners (top-left, then clockwise), the middle, and the four sides. */
+    static final int TOP_LEFT = 0, TOP_RIGHT = 1, BOTTOM_RIGHT = 2, BOTTOM_LEFT = 3, MIDDLE = 4, TOP = 5, RIGHT = 6, BOTTOM = 7, LEFT = 8;
+
+    /**
+     * The crop frame part under a point (photo pixels), or -1: the nearest corner within reach, else a
+     * side within reach (between its corners), else the middle. Pure, for the unit test.
+     */
+    static int cropPart(RectF crop, float x, float y, float reach) {
+        float[][] corners = {{crop.left, crop.top}, {crop.right, crop.top}, {crop.right, crop.bottom}, {crop.left, crop.bottom}};
+        int part = -1;
+        float best = reach;
+        for (int i = 0; i < 4; i++) {
+            float d = (float) Math.hypot(x - corners[i][0], y - corners[i][1]);
+            if (d <= best) { best = d; part = i; }
+        }
+        if (part >= 0) return part;
+        boolean across = x > crop.left && x < crop.right, along = y > crop.top && y < crop.bottom;
+        float top = Math.abs(y - crop.top), bottom = Math.abs(y - crop.bottom), left = Math.abs(x - crop.left), right = Math.abs(x - crop.right);
+        float side = reach;
+        if (across && top <= side) { side = top; part = TOP; }
+        if (across && bottom <= side) { side = bottom; part = BOTTOM; }
+        if (along && left <= side) { side = left; part = LEFT; }
+        if (along && right <= side) { part = RIGHT; }
+        if (part >= 0) return part;
+        return crop.contains(x, y) ? MIDDLE : -1;
+    }
+
+    /** Moves the held part of the crop frame by (dx, dy) photo pixels, keeping it inside the photo and at least min across. */
+    static void dragCrop(RectF crop, int part, float dx, float dy, float w, float h, float min) {
+        if (part == MIDDLE) {
+            crop.offset(Math.max(-crop.left, Math.min(w - crop.right, dx)), Math.max(-crop.top, Math.min(h - crop.bottom, dy)));
+            return;
+        }
+        boolean left = part == TOP_LEFT || part == BOTTOM_LEFT || part == LEFT, right = part == TOP_RIGHT || part == BOTTOM_RIGHT || part == RIGHT;
+        boolean top = part == TOP_LEFT || part == TOP_RIGHT || part == TOP, bottom = part == BOTTOM_LEFT || part == BOTTOM_RIGHT || part == BOTTOM;
+        if (left) crop.left = Math.max(0, Math.min(crop.right - min, crop.left + dx));
+        if (right) crop.right = Math.min(w, Math.max(crop.left + min, crop.right + dx));
+        if (top) crop.top = Math.max(0, Math.min(crop.bottom - min, crop.top + dy));
+        if (bottom) crop.bottom = Math.min(h, Math.max(crop.top + min, crop.bottom + dy));
+    }
+
+    /**
+     * The photo, fitted to the screen with a margin all round (so the crop frame's corners are never at
+     * the screen's edge, where Android takes a drag as Back), with the marks and the crop frame.
+     */
     private final class Board extends View {
         private final Matrix toScreen = new Matrix(), toPhoto = new Matrix();
-        private final Paint dim = new Paint(), frame = new Paint(Paint.ANTI_ALIAS_FLAG), handle = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint dim = new Paint(), frame = new Paint(Paint.ANTI_ALIAS_FLAG), handle = new Paint(Paint.ANTI_ALIAS_FLAG), grid = new Paint(Paint.ANTI_ALIAS_FLAG);
         private Stroke drawing;
         private Label dragging;
         private float lastX, lastY, downX, downY;
         private boolean moved;
-        private int cropHandle = -1; // 0-3 corners (TL, TR, BR, BL), 4 the whole frame
+        private int cropHandle = -1;
         private RectF cropBefore;
         private float labelX, labelY;
+        private final List<android.graphics.Rect> kept = new ArrayList<>();
 
         Board(Activity context) {
             super(context);
             dim.setColor(0xB3000000);
             frame.setStyle(Paint.Style.STROKE); frame.setColor(Color.WHITE);
-            handle.setColor(Color.WHITE);
+            handle.setStyle(Paint.Style.STROKE); handle.setColor(Color.WHITE); handle.setStrokeCap(Paint.Cap.ROUND);
+            grid.setStyle(Paint.Style.STROKE); grid.setColor(0x80FFFFFF);
             setContentDescription("Photo to mark up");
         }
 
-        private float scale() { return Math.min(getWidth() / (float) base.getWidth(), getHeight() / (float) base.getHeight()); }
+        /** Room left around the photo: enough that a corner is a comfortable reach from the screen's edge. */
+        private float sideRoom() { return dp(28); }
+        private float endRoom() { return dp(20); }
+        private float scale() {
+            float w = getWidth() - 2 * sideRoom(), h = getHeight() - 2 * endRoom();
+            return Math.min(w / base.getWidth(), h / base.getHeight());
+        }
 
         @Override protected void onDraw(Canvas c) {
             float s = scale();
@@ -354,17 +417,52 @@ final class MarkupEditor {
                 c.drawRect(crop.right, crop.top, w, crop.bottom, dim);
             }
             if (cropping) {
-                frame.setStrokeWidth(dp(2) / s);
+                // Thirds while you're moving it, to line things up.
+                if (cropHandle >= 0) {
+                    grid.setStrokeWidth(dp(1) / s);
+                    for (int i = 1; i < 3; i++) {
+                        float gx = crop.left + crop.width() * i / 3f, gy = crop.top + crop.height() * i / 3f;
+                        c.drawLine(gx, crop.top, gx, crop.bottom, grid);
+                        c.drawLine(crop.left, gy, crop.right, gy, grid);
+                    }
+                }
+                frame.setStrokeWidth(dp(1.5f) / s);
                 c.drawRect(crop, frame);
-                float r = dp(7) / s;
-                c.drawCircle(crop.left, crop.top, r, handle); c.drawCircle(crop.right, crop.top, r, handle);
-                c.drawCircle(crop.right, crop.bottom, r, handle); c.drawCircle(crop.left, crop.bottom, r, handle);
+                // Thick corner brackets and side bars show what can be held.
+                handle.setStrokeWidth(dp(4) / s);
+                float arm = Math.min(dp(22) / s, Math.min(crop.width(), crop.height()) / 3f), bar = Math.min(dp(14) / s, Math.min(crop.width(), crop.height()) / 6f);
+                c.drawLine(crop.left, crop.top, crop.left + arm, crop.top, handle); c.drawLine(crop.left, crop.top, crop.left, crop.top + arm, handle);
+                c.drawLine(crop.right, crop.top, crop.right - arm, crop.top, handle); c.drawLine(crop.right, crop.top, crop.right, crop.top + arm, handle);
+                c.drawLine(crop.right, crop.bottom, crop.right - arm, crop.bottom, handle); c.drawLine(crop.right, crop.bottom, crop.right, crop.bottom - arm, handle);
+                c.drawLine(crop.left, crop.bottom, crop.left + arm, crop.bottom, handle); c.drawLine(crop.left, crop.bottom, crop.left, crop.bottom - arm, handle);
+                c.drawLine(crop.centerX() - bar, crop.top, crop.centerX() + bar, crop.top, handle);
+                c.drawLine(crop.centerX() - bar, crop.bottom, crop.centerX() + bar, crop.bottom, handle);
+                c.drawLine(crop.left, crop.centerY() - bar, crop.left, crop.centerY() + bar, handle);
+                c.drawLine(crop.right, crop.centerY() - bar, crop.right, crop.centerY() + bar, handle);
             }
             if (mode.equals(TEXT) && selected != null && marks.contains(selected)) {
                 frame.setStrokeWidth(dp(1.5f) / s);
                 c.drawRoundRect(labelBounds(selected), dp(6) / s, dp(6) / s, frame);
             }
             c.restore();
+            keepFromBackGesture(cropping);
+        }
+
+        /**
+         * While cropping, the corners and side bars nearest the screen's left and right edges are kept
+         * from Android's Back swipe, so pulling them works even with a finger right at the edge.
+         */
+        private void keepFromBackGesture(boolean cropping) {
+            List<android.graphics.Rect> now = new ArrayList<>();
+            if (cropping) {
+                float[] pts = {crop.left, crop.top, crop.right, crop.top, crop.right, crop.bottom, crop.left, crop.bottom, crop.left, crop.centerY(), crop.right, crop.centerY()};
+                toScreen.mapPoints(pts);
+                int half = dp(32);
+                for (int i = 0; i < pts.length; i += 2) now.add(new android.graphics.Rect((int) pts[i] - half, (int) pts[i + 1] - half, (int) pts[i] + half, (int) pts[i + 1] + half));
+            }
+            if (now.equals(kept)) return;
+            kept.clear(); kept.addAll(now);
+            setSystemGestureExclusionRects(now);
         }
 
         @Override public boolean onTouchEvent(MotionEvent e) {
@@ -435,33 +533,20 @@ final class MarkupEditor {
         }
 
         private void crop(MotionEvent e, float x, float y) {
-            float w = base.getWidth(), h = base.getHeight(), min = Math.min(w, h) * 0.1f, reach = dp(32) / scale();
+            float w = base.getWidth(), h = base.getHeight(), min = Math.min(w, h) * 0.1f;
             switch (e.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN -> {
-                    float[][] corners = {{crop.left, crop.top}, {crop.right, crop.top}, {crop.right, crop.bottom}, {crop.left, crop.bottom}};
-                    cropHandle = -1;
-                    float best = reach;
-                    for (int i = 0; i < 4; i++) {
-                        float d = (float) Math.hypot(x - corners[i][0], y - corners[i][1]);
-                        if (d <= best) { best = d; cropHandle = i; }
-                    }
-                    if (cropHandle < 0 && crop.contains(x, y)) cropHandle = 4;
+                    // A generous reach: a fingertip is wide, and the corners are small on screen.
+                    cropHandle = cropPart(crop, x, y, dp(40) / scale());
                     cropBefore = cropHandle >= 0 ? new RectF(crop) : null;
                     lastX = x; lastY = y;
+                    if (cropHandle >= 0 && getParent() != null) getParent().requestDisallowInterceptTouchEvent(true);
                 }
                 case MotionEvent.ACTION_MOVE -> {
                     if (cropHandle < 0) return;
                     float dx = x - lastX, dy = y - lastY;
                     lastX = x; lastY = y;
-                    if (cropHandle == 4) {
-                        float mx = Math.max(-crop.left, Math.min(w - crop.right, dx)), my = Math.max(-crop.top, Math.min(h - crop.bottom, dy));
-                        crop.offset(mx, my);
-                    } else {
-                        if (cropHandle == 0 || cropHandle == 3) crop.left = Math.max(0, Math.min(crop.right - min, crop.left + dx));
-                        if (cropHandle == 1 || cropHandle == 2) crop.right = Math.min(w, Math.max(crop.left + min, crop.right + dx));
-                        if (cropHandle == 0 || cropHandle == 1) crop.top = Math.max(0, Math.min(crop.bottom - min, crop.top + dy));
-                        if (cropHandle == 2 || cropHandle == 3) crop.bottom = Math.min(h, Math.max(crop.top + min, crop.bottom + dy));
-                    }
+                    dragCrop(crop, cropHandle, dx, dy, w, h, min);
                 }
                 case MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     if (cropBefore != null && !cropBefore.equals(crop)) { RectF before = cropBefore; undo.add(() -> crop.set(before)); }

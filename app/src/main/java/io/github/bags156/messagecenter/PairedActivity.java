@@ -716,7 +716,10 @@ public class PairedActivity extends Activity {
         // A short chat sits at the bottom, just above the message box, like any messaging app.
         scroll.setFillViewport(true);items.setGravity(Gravity.BOTTOM);scroll.addView(items);
         chatFrame=new FrameLayout(this);addChatBackground(chatFrame,id);
-        TimeRevealLayout reveal=new TimeRevealLayout(this,dp(TIME_REVEAL_DP),this::revealTimes);reveal.addView(scroll,new FrameLayout.LayoutParams(-1,-1));chatFrame.addView(reveal,new FrameLayout.LayoutParams(-1,-1));root.addView(chatFrame,new LinearLayout.LayoutParams(-1,0,1));
+        // Dragging left slides the whole list over (one move, so a redraw mid-drag keeps it there) and the
+        // times, waiting just past the right edge, come into view. Nothing clips the slide short of the screen's edges.
+        items.setClipToPadding(false);items.setClipChildren(false);scroll.setClipChildren(false);LinearLayout listed=items;
+        TimeRevealLayout reveal=new TimeRevealLayout(this,dp(TIME_REVEAL_DP),amount->revealTimes(listed,amount));reveal.addView(scroll,new FrameLayout.LayoutParams(-1,-1));chatFrame.addView(reveal,new FrameLayout.LayoutParams(-1,-1));root.addView(chatFrame,new LinearLayout.LayoutParams(-1,0,1));
         jumpButton=text("↓",15,ink,true);jumpButton.setPadding(dp(18),dp(10),dp(18),dp(10));jumpButton.setBackground(shape(card,22));jumpButton.setElevation(dp(4));jumpButton.setVisibility(View.GONE);
         jumpButton.setOnClickListener(v->jumpToLatest());FrameLayout.LayoutParams jl=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.END);jl.setMargins(0,0,dp(16),dp(12));chatFrame.addView(jumpButton,jl);
         newWhileAway=0;newestSeenTime=0;
@@ -2248,6 +2251,8 @@ public class PairedActivity extends Activity {
             String r=result;ui.post(()->toast(r));});}
     /** Full screen, pinch or double-tap to zoom. Shows the preview at once and the full photo when it arrives. */
     /** The open full-screen viewer: its views, which picture of the chat it shows, and that picture's file. */
+    /** The viewer on screen, for the on-device test. */
+    private Viewer shownViewer;
     private static final class Viewer { Dialog d; FrameLayout box; ZoomImageView image; ProgressBar spinner; TextView note,counter; ImageView play; List<JSONObject> gallery; int index,gen; File full; }
     /** Full-screen photos (and video posters) for this chat: pinch to zoom, swipe sideways for the next or previous one. */
     private void viewer(JSONObject start){Viewer v=new Viewer();
@@ -2273,12 +2278,16 @@ public class PairedActivity extends Activity {
             t.setOnClickListener(x->{JSONObject media=v.gallery.get(v.index);File have=v.full!=null?v.full:MediaCache.file(this,media,false);
                 if(!have.isFile()){if(PairedProtocol.mediaKind(media).equals("video"))withFile(media,"Downloading the video…",file->{if(a.equals("Save"))saveToPhone(file,media);else share(file,media);});else toast("Still downloading…");return;}
                 if(a.equals("Save"))saveToPhone(have,media);else share(have,media);});bar.addView(t);}
-        v.box.addView(bar,new FrameLayout.LayoutParams(-1,-2,Gravity.TOP));v.image.setOnTap(()->bar.setVisibility(bar.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE));
+        v.box.addView(bar,new FrameLayout.LayoutParams(-1,-2,Gravity.TOP));
+        // The window reaches under the status bar, camera cutout and navigation bar: Close, Save and Share stay below them.
+        v.box.setOnApplyWindowInsetsListener((x,insets)->{android.graphics.Insets b=android.graphics.Insets.max(insets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars()),insets.getInsets(WindowInsets.Type.displayCutout()));
+            bar.setPadding(dp(8)+b.left,Math.max(dp(36),dp(12)+b.top),dp(8)+b.right,dp(20));nl.bottomMargin=dp(48)+b.bottom;v.note.setLayoutParams(nl);return insets;});
+        v.image.setOnTap(()->bar.setVisibility(bar.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE));
         v.image.setSwipe(new ZoomImageView.Swipe(){
             @Override public boolean can(int dir){int next=v.index+dir;return next>=0&&next<v.gallery.size();}
             @Override public void go(int dir){v.index+=dir;viewerShow(v);}});
-        v.d.setOnDismissListener(x->v.gen++);
-        v.d.setContentView(v.box);v.d.show();viewerShow(v);}
+        v.d.setOnDismissListener(x->{v.gen++;if(shownViewer==v)shownViewer=null;});shownViewer=v;
+        v.d.setContentView(v.box);v.d.show();v.box.requestApplyInsets();viewerShow(v);}
     /** Shows the gallery's current picture: its preview at once, then the full photo (or a play button for a video). */
     private void viewerShow(Viewer v){int g=++v.gen;JSONObject media=v.gallery.get(v.index);boolean video=PairedProtocol.mediaKind(media).equals("video");v.full=null;
         v.counter.setText(v.gallery.size()>1?(v.index+1)+" of "+v.gallery.size():"");v.note.setVisibility(View.GONE);
@@ -2461,7 +2470,10 @@ public class PairedActivity extends Activity {
                 t.setEllipsize(TextUtils.TruncateAt.END);t.setPadding(dp(4),dp(4),dp(4),0);box.addView(t);tile.addView(box,new FrameLayout.LayoutParams(-1,-1));}
             if(o.sending){TextView s=text("Sending…",11,Color.WHITE,true);s.setGravity(Gravity.CENTER);s.setBackgroundColor(0x99000000);tile.addView(s,new FrameLayout.LayoutParams(-1,-1));}
             else {ImageView x=new ImageView(this);x.setImageResource(R.drawable.ic_close);x.setImageTintList(ColorStateList.valueOf(Color.WHITE));x.setBackground(oval(0x99000000));x.setPadding(dp(3),dp(3),dp(3),dp(3));
-                x.setContentDescription("Remove "+o.name);x.setOnClickListener(v->{outgoing.remove(o);discardPicked(o);renderAttachments();});tile.addView(x,new FrameLayout.LayoutParams(dp(22),dp(22),Gravity.TOP|Gravity.END));
+                // A fingertip-sized target around the small ✕ (the ✕ alone was easy to miss).
+                FrameLayout remove=new FrameLayout(this);remove.setContentDescription("Remove "+o.name);remove.setOnClickListener(v->{outgoing.remove(o);discardPicked(o);renderAttachments();});
+                FrameLayout.LayoutParams xl=new FrameLayout.LayoutParams(dp(22),dp(22),Gravity.TOP|Gravity.END);xl.setMargins(0,dp(4),dp(4),0);remove.addView(x,xl);
+                x.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);tile.addView(remove,new FrameLayout.LayoutParams(dp(32),dp(32),Gravity.TOP|Gravity.END));
                 // Photos can be marked up before sending (not GIFs, which would stop moving).
                 if(o.mime.startsWith("image/")&&!o.mime.equals("image/gif")){TextView pen=text("✎",12,Color.WHITE,true);pen.setGravity(Gravity.CENTER);pen.setBackground(oval(0x99000000));
                     tile.addView(pen,new FrameLayout.LayoutParams(dp(22),dp(22),Gravity.BOTTOM|Gravity.START));tile.setContentDescription("Mark up "+o.name);tile.setOnClickListener(v->markUp(o));}}
@@ -2583,20 +2595,22 @@ public class PairedActivity extends Activity {
     private Starred starred;private TextView jumpButton;private int newWhileAway;private long newestSeenTime;
     private String searchedFor="";private List<JSONObject> searchHits=new ArrayList<>();private int searchGeneration;
 
-    private static final int TIME_REVEAL_DP=72;
-    /** A message row with its time waiting at the right edge (hidden until you drag the chat left). */
+    /** How far the chat slides left to show the times: the time's own width plus the list's edge margin. */
+    static final int TIME_REVEAL_DP=84,TIME_LABEL_DP=72,LIST_EDGE_DP=12;
+    /**
+     * A message row with its time waiting just past the right edge of the screen, out of sight until you
+     * drag the chat left (the list's 12dp margin plus the label's own width puts all of it off the screen).
+     */
     private View timed(View row,long at,boolean out){FrameLayout f=new FrameLayout(this);f.addView(row,new FrameLayout.LayoutParams(-1,-2));
         TextView t=text(timeOfDay(at),12,muted,false);t.setGravity(Gravity.END|Gravity.CENTER_VERTICAL);t.setPadding(0,0,dp(2),0);t.setSingleLine(true);
-        t.setAlpha(0f);t.setTranslationX(dp(TIME_REVEAL_DP));t.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        f.addView(t,new FrameLayout.LayoutParams(dp(TIME_REVEAL_DP),-1,Gravity.END));f.setTag(R.id.time_label,t);return f;}
+        t.setTranslationX(dp(LIST_EDGE_DP+TIME_LABEL_DP));t.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        f.addView(t,new FrameLayout.LayoutParams(dp(TIME_LABEL_DP),-1,Gravity.END));f.setTag(R.id.time_label,t);return f;}
     /**
-     * Dragging the chat left: everything in the conversation slides over together and each
-     * message's time slides in on the right, inside its own row so it's never cut off.
+     * Dragging the chat left: the whole conversation slides over as one, carrying each message's time
+     * in from past the right edge. One move for the list (not one per row), so it's smooth in a long chat,
+     * and rows redrawn mid-drag (a new message, a receipt) are already in the slid-over list.
      */
-    private void revealTimes(float amount){if(selecting&&amount>0)return;if(items==null)return;float full=dp(TIME_REVEAL_DP),shown=Math.min(amount,full);
-        for(int i=0;i<items.getChildCount();i++){View child=items.getChildAt(i);Object label=child.getTag(R.id.time_label);
-            if(label instanceof View&&child instanceof ViewGroup&&((ViewGroup)child).getChildCount()>0){((ViewGroup)child).getChildAt(0).setTranslationX(-amount);((View)label).setAlpha(shown/full);((View)label).setTranslationX(full-shown);}
-            else child.setTranslationX(-amount);}}
+    private void revealTimes(LinearLayout list,float amount){list.setTranslationX(selecting?0:-amount);}
     /** A hint shown behind a swiped row: colored strip with an icon or label, at the start or end. */
     private View swipeHint(String label,int color,boolean atStart){FrameLayout f=new FrameLayout(this);f.setBackground(shape(color,22));
         TextView t=text(label,14,Color.WHITE,true);t.setPadding(dp(22),0,dp(22),0);f.addView(t,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER_VERTICAL|(atStart?Gravity.START:Gravity.END)));return f;}
