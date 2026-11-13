@@ -239,6 +239,14 @@ public final class OnDeviceSmoke extends Instrumentation {
         java.util.List<String> order=noteCards(a);
         check(order.equals(java.util.Arrays.asList(first.id,"t2newer","t1older")),"Notes aren't pinned first, then newest: "+order);
         shoot("notes-list");
+        // The same screens in the black theme, pictured for the CI log.
+        java.lang.reflect.Method editor=method("noteEditor",String.class,String.class,Notes.Note.class,Runnable.class);
+        PairedActivity.blackForPictures=true;
+        try{onMainCall(()->list.invoke(a,key,"Nora Check",back));waitForIdleSync();shoot("notes-list-black");
+            onMainCall(()->editor.invoke(a,key,"Nora Check",notes.list(key).get(0),back));waitForIdleSync();
+            onMainCall(()->{android.view.View f=(android.view.View)noteField.get(a);if(f!=null)a.getSystemService(android.view.inputmethod.InputMethodManager.class).hideSoftInputFromWindow(f.getWindowToken(),0);return null;});shoot("note-editor-black");}
+        finally{PairedActivity.blackForPictures=false;}
+        onMainCall(()->list.invoke(a,key,"Nora Check",back));waitForIdleSync();
         android.widget.EditText[] search={null};
         runOnMainSync(()->{for(android.widget.EditText e:viewsOf(a.getWindow().getDecorView(),android.widget.EditText.class))if("Search notes".contentEquals(e.getContentDescription()==null?"":e.getContentDescription()))search[0]=e;});
         check(search[0]!=null,"The notes list has no search box");
@@ -373,6 +381,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(missing.length()==0,"The settings main page is missing: "+missing);
         check(viewsWithDescription(a,"Unread reminders")==0,"The settings main page still lists every setting");
         shoot("settings-home");
+        PairedActivity.blackForPictures=true;try{onMainCall(()->page.invoke(a,"notifications"));waitForIdleSync();shoot("settings-black");}finally{PairedActivity.blackForPictures=false;}
         onMainCall(()->page.invoke(a,"notifications"));waitForIdleSync();
         check(viewsWithDescription(a,"Unread reminders")>0&&viewsWithDescription(a,"Keyword alerts")>0&&viewsWithDescription(a,"Typing indicators")==0,"The Notifications page doesn't hold the notification settings");
         shoot("settings-notifications");

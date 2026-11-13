@@ -210,8 +210,10 @@ public class PairedActivity extends Activity {
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);if(!name.equals("login"))setRecentsScreenshotEnabled(true);
         if(recorder!=null)cancelRecording();if(dictation!=null)stopDictation();recordBar=null;composeRow=null;sendButton=null;recordClock=null;recordWave=null;recordDot=null;screen=name;long perfBubbles=Perf.start();reportChatOnScreen();Perf.end("screen: bubbles",perfBubbles);batteryCard=null;jumpButton=null;statusView=null;statusRow=null;reconnectButton=null;receiptsMark=null;composer=null;items=null;scroll=null;searchRow=null;attachStrip=null;attachScroll=null;replyPanel=null;typingRow=null;messageViews.clear();bubbleViews.clear();playing=null;voiceCards.clear();voiceOrder.clear();ui.removeCallbacks(typingTick);if(typingPulse!=null){typingPulse.cancel();typingPulse=null;}
         dark=(getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;
+        boolean black=dark&&"black".equals(getSharedPreferences("paired",MODE_PRIVATE).getString("theme","system"));
+        if(blackForPictures){dark=true;black=true;}
         textScale=getSharedPreferences("paired",MODE_PRIVATE).getFloat("text_scale",1f);quickRow=null;quickScroll=null;searchChips=null;selecting=false;chosen.clear();selectionBar=null;chatFrame=null;
-        int[] colors=palette(dark,dark&&"black".equals(getSharedPreferences("paired",MODE_PRIVATE).getString("theme","system")));
+        int[] colors=palette(dark,black);
         bg=colors[0];card=colors[1];surface=colors[2];ink=colors[3];muted=colors[4];
         fab=dark?0xff3b4766:0xffd3e3fd;onFab=dark?0xffd8e2ff:0xff0b1f3a;danger=dark?0xfff2b8b5:0xffb3261e;
         getWindow().setStatusBarColor(bg);getWindow().setNavigationBarColor(bg);
@@ -807,6 +809,13 @@ public class PairedActivity extends Activity {
         content.setPadding(dp(3),0,dp(3),dp(8));ScrollView sc=new ScrollView(this);sc.setVerticalScrollBarEnabled(false);sc.addView(content);
         d[0]=sheet(sc,WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING|WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);return d[0];}
     /** Cards in the chat menu: a step lighter than the sheet in dark themes (where shadows don't show), the usual card tint in light. */
+    /** Device checks only: draw screens in the black theme to picture them, whatever the phone's set to. */
+    static boolean blackForPictures;
+    /**
+     * Cards that sit on a screen (not on a sheet): in the black theme, the app's near-black card so
+     * the screen stays jet black like the inbox and chats; otherwise a step up, like the sheets.
+     */
+    private int pageCard(){return dark&&bg==0xff000000?card:raised();}
     private int raised(){if(!dark)return surface;int r=Color.red(surface),g=Color.green(surface),b=Color.blue(surface);
         return Color.rgb(r+Math.round((Color.red(ink)-r)*0.07f),g+Math.round((Color.green(ink)-g)*0.07f),b+Math.round((Color.blue(ink)-b)*0.07f));}
     /** A tile at the top of the chat menu: a round icon over its name, on a raised card. */
@@ -1698,7 +1707,7 @@ public class PairedActivity extends Activity {
             empty.setGravity(Gravity.CENTER);empty.setPadding(dp(24),dp(40),dp(24),dp(24));list.addView(empty);return;}
         for(Notes.Note n:shown){View card=noteCard(n,key,who,()->notesList(key,who,notesBack));LinearLayout.LayoutParams cl=new LinearLayout.LayoutParams(-1,-2);cl.setMargins(dp(4),0,dp(4),dp(10));list.addView(card,cl);}}
     /** A note in the list: pin, date, the start of its words, its tags, and a picture or file count. */
-    private View noteCard(Notes.Note n,String key,String who,Runnable reopen){LinearLayout view=row();view.setGravity(Gravity.TOP);view.setPadding(dp(16),dp(12),dp(12),dp(12));view.setBackground(shape(surface,18));pressDim(view);view.setTag("note:"+n.id);
+    private View noteCard(Notes.Note n,String key,String who,Runnable reopen){LinearLayout view=row();view.setGravity(Gravity.TOP);view.setPadding(dp(16),dp(12),dp(12),dp(12));view.setBackground(shape(pageCard(),18));pressDim(view);view.setTag("note:"+n.id);
         LinearLayout texts=vertical();LinearLayout top=row();
         if(n.pinned){ImageView pin=new ImageView(this);pin.setImageResource(R.drawable.ic_pin);pin.setImageTintList(ColorStateList.valueOf(muted));LinearLayout.LayoutParams pl=new LinearLayout.LayoutParams(dp(14),dp(14));pl.setMarginEnd(dp(6));top.addView(pin,pl);}
         top.addView(text(noteDate(n.created)+(n.attachments.isEmpty()?"":"  ·  "+n.attachments.size()+(n.attachments.size()==1?" attachment":" attachments")),12,muted,false));texts.addView(top);
@@ -1741,7 +1750,7 @@ public class PairedActivity extends Activity {
             if(e!=null)deleteNote(key,e.id,()->{editing=null;Runnable b=noteBack;if(b!=null)b.run();else inbox();});})));bar.addView(more);
         root.addView(bar,new LinearLayout.LayoutParams(-1,dp(60)));
         // The page: tags, words, where it came from, photos and files.
-        LinearLayout page=vertical();page.setPadding(dp(18),dp(14),dp(18),dp(16));page.setBackground(shape(raised(),24));page.setElevation(dp(2));
+        LinearLayout page=vertical();page.setPadding(dp(18),dp(14),dp(18),dp(16));page.setBackground(shape(pageCard(),24));page.setElevation(dp(2));
         noteTags=row();HorizontalScrollView ts=new HorizontalScrollView(this);ts.setHorizontalScrollBarEnabled(false);ts.addView(noteTags);ts.setPadding(0,0,0,dp(6));page.addView(ts);
         EditText field=new EditText(this);field.setBackground(null);field.setPadding(0,dp(4),0,dp(4));field.setHint("Start writing…");field.setHintTextColor(muted);field.setTextColor(ink);
         field.setTextSize(18);field.setLineSpacing(0,1.2f);field.setGravity(Gravity.TOP|Gravity.START);field.setMinHeight(dp(220));field.setContentDescription("Note");
@@ -1756,7 +1765,7 @@ public class PairedActivity extends Activity {
         TextView privacy=text("Only on this phone, never sent.",12,muted,false);privacy.setGravity(Gravity.CENTER);privacy.setPadding(0,dp(12),0,dp(4));holder.addView(privacy);
         ScrollView sc=new ScrollView(this);sc.setVerticalScrollBarEnabled(false);sc.addView(holder);root.addView(sc,new LinearLayout.LayoutParams(-1,0,1));
         // The toolbar: tag, photo, file, and whether it's saved.
-        LinearLayout tools=row();tools.setGravity(Gravity.CENTER_VERTICAL);tools.setPadding(dp(6),0,dp(16),0);tools.setBackground(shape(raised(),28));tools.setElevation(dp(3));
+        LinearLayout tools=row();tools.setGravity(Gravity.CENTER_VERTICAL);tools.setPadding(dp(6),0,dp(16),0);tools.setBackground(shape(pageCard(),28));tools.setElevation(dp(3));
         tools.addView(noteTool(R.drawable.ic_tag,"Tag",this::askNoteTags));tools.addView(noteTool(R.drawable.ic_gallery,"Photo",this::pickNotePhotos));tools.addView(noteTool(R.drawable.ic_file,"File",this::pickNoteFiles));
         noteStatus=text(n==null?"New":note.updated-note.created>60_000?"Edited "+android.text.format.DateUtils.getRelativeTimeSpanString(note.updated,now,android.text.format.DateUtils.MINUTE_IN_MILLIS):"Saved",12,muted,false);
         noteStatus.setGravity(Gravity.END);noteStatus.setSingleLine(true);tools.addView(noteStatus,new LinearLayout.LayoutParams(0,-2,1));
@@ -1867,7 +1876,7 @@ public class PairedActivity extends Activity {
     /** Details' notes card: how many, and the top note (pinned, or newest). Tap to see them all. */
     private void notesCard(LinearLayout content,String key,String who,Runnable back){if(key.isEmpty())return;List<Notes.Note> all=new Notes(this).list(key);
         content.addView(text("Notes",14,muted,true));gap(content,6);
-        LinearLayout box=vertical();box.setPadding(dp(16),dp(12),dp(16),dp(12));box.setBackground(shape(surface,18));pressDim(box);
+        LinearLayout box=vertical();box.setPadding(dp(16),dp(12),dp(16),dp(12));box.setBackground(shape(pageCard(),18));pressDim(box);
         if(all.isEmpty()){box.addView(text("Add gift ideas, birthdays, things to follow up on. Only on this phone, never sent.",15,muted,false));box.setContentDescription("Notes about "+who);}
         else{Notes.Note top=all.get(0);box.addView(text(all.size()+(all.size()==1?" note":" notes")+"  ·  "+(top.pinned?"pinned":"newest")+" from "+noteDate(top.created),12,muted,false));
             String words=top.text.trim();if(!words.isEmpty()){TextView body=text(words,15,ink,false);body.setMaxLines(4);body.setEllipsize(TextUtils.TruncateAt.END);body.setPadding(0,dp(4),0,0);box.addView(body);}
@@ -3753,7 +3762,7 @@ public class PairedActivity extends Activity {
             return;}
         android.content.SharedPreferences prefs=getSharedPreferences("paired",MODE_PRIVATE);
         // Who this is connected as.
-        LinearLayout hero=row();hero.setPadding(dp(16),dp(16),dp(16),dp(16));hero.setBackground(shape(raised(),24));hero.setElevation(dp(2));pressDim(hero);
+        LinearLayout hero=row();hero.setPadding(dp(16),dp(16),dp(16),dp(16));hero.setBackground(shape(pageCard(),24));hero.setElevation(dp(2));pressDim(hero);
         ImageView logo=menuChip(R.drawable.ic_chat,BLUE);logo.setPadding(dp(11),dp(11),dp(11),dp(11));logo.setBackground(shape(BLUE,16));hero.addView(logo,new LinearLayout.LayoutParams(dp(52),dp(52)));
         LinearLayout who=vertical();who.setPadding(dp(14),0,dp(4),0);who.addView(text("Message Center",18,ink,true));
         TextView state=text(PairedService.status(this),13,muted,false);state.setPadding(0,dp(2),0,0);who.addView(state);TextView version=text("Version "+BuildConfig.VERSION_NAME,12,muted,false);version.setPadding(0,dp(2),0,0);who.addView(version);
@@ -3884,7 +3893,7 @@ public class PairedActivity extends Activity {
     /** A group of settings on one raised, rounded card, under a small label (none when title is null). While searching, labelled with the page it's on. */
     private LinearLayout settingsGroup(LinearLayout content,String title){String label=settingsFilter!=null?settingsFilterPage+(title==null?"":" · "+title):title;
         TextView h=null;if(label!=null){h=text(label,13,muted,true);h.setPadding(dp(16),dp(18),dp(16),dp(8));content.addView(h);}
-        LinearLayout g=vertical();g.setBackground(shape(raised(),22));g.setClipToOutline(true);g.setElevation(dp(2));
+        LinearLayout g=vertical();g.setBackground(shape(pageCard(),22));g.setClipToOutline(true);g.setElevation(dp(2));
         LinearLayout.LayoutParams gl=new LinearLayout.LayoutParams(-1,-2);gl.setMargins(dp(1),label==null?dp(8):0,dp(1),dp(2));content.addView(g,gl);
         if(settingsFilter!=null)settingsGroups.add(new View[]{h==null?new View(this):h,g});return g;}
     private void addSettingRow(LinearLayout group,View row){if(group.getChildCount()>0){View line=new View(this);line.setBackgroundColor((ink&0x00ffffff)|0x14000000);LinearLayout.LayoutParams ll=new LinearLayout.LayoutParams(-1,Math.max(1,dp(1)/2));ll.setMarginStart(dp(60));group.addView(line,ll);}

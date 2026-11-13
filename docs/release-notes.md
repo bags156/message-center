@@ -1,8 +1,5 @@
-Message Center 1.5.27.
+Message Center 1.5.28.
 
-- A note now looks like a page. The person's name and when the note was written are at the top. The note's tags, its words, where it came from and its photos or files sit together on one raised card.
-- A toolbar along the bottom stays above the keyboard while you type. It has Tag, Photo and File buttons, and shows whether the note is saved.
-- The empty Attach box and the lone "+ Tag" chip are gone. Tags and attachments only show once a note has them.
-- Tapping anywhere on the page puts the cursor at the end of the note.
+- In the black theme, the note editor, the notes list, the notes card in Details and the settings pages now match the rest of the app. The screen stays jet black, and cards use the same near-black as before, not a lighter gray.
 
 Install over the existing app through Obtainium. Your pairing, conversations and settings are retained.
