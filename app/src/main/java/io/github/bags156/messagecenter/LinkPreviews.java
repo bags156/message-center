@@ -42,6 +42,17 @@ final class LinkPreviews {
     /** A preview already in memory, or null. Has "title", "description", "site", "image" (file path), "url". */
     static synchronized JSONObject peek(String url) { return memory.get(url); }
 
+    /**
+     * A preview in memory, or one saved on the phone from before (read now: it's a small file), or null.
+     * A chat opened after the app restarts draws its link cards in the first frame, not a moment later.
+     */
+    static JSONObject peekSaved(Context context, String url) {
+        synchronized (LinkPreviews.class) { JSONObject hit = memory.get(url); if (hit != null) return hit; }
+        JSONObject saved = cached(new File(context.getCacheDir(), "links-v2"), url);
+        if (saved != null) synchronized (LinkPreviews.class) { memory.put(url, saved); }
+        return saved;
+    }
+
     /** Loads a preview in the background; the callback runs on the main thread only if a title was found. */
     static void load(Context context, String url, Done done) {
         synchronized (LinkPreviews.class) {

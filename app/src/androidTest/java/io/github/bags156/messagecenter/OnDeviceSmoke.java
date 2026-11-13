@@ -698,6 +698,39 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(waitUntil(()->!dialog.isShowing(),3000),"Close didn't close the photo");}
         finally{Object v=field("shownViewer").get(a);if(v!=null){android.app.Dialog dl=(android.app.Dialog)got(v,"d");runOnMainSync(dl::dismiss);}
             for(java.io.File f:files)f.delete();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("photo-check");}}}
+    private android.view.View linkCardIn(PairedActivity a){java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();
+        a.getWindow().getDecorView().findViewsWithText(found,"Link preview",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);for(android.view.View v:found)if(v.isShown())return v;return null;}
+    /**
+     * A link's preview never makes the chat jump (it flickered when opening a chat): opened as after a
+     * restart, with nothing in memory, the card is in the very first frame at its final height, room
+     * kept for its picture; a redraw (a new message, a receipt) puts the picture straight back.
+     */
+    private void checkLinkPreviewSteady(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();String url="https://example.com/steady-preview";
+        java.io.File pic=photo(new java.io.File(ctx.getCacheDir(),"link-test"),"steady.jpg",1280,720,0xff4466cc);java.io.File dir=new java.io.File(ctx.getCacheDir(),"links-v2");dir.mkdirs();
+        java.io.File saved=new java.io.File(dir,MediaCache.hash(url)+".json");
+        java.nio.file.Files.write(saved.toPath(),new JSONObject().put("url",url).put("title","A steady preview").put("description","Nothing should move").put("site","Example").put("image",pic.getPath()).put("imageW",1280).put("imageH",720).toString().getBytes("UTF-8"));
+        try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'link-steady',name:'Lee Steady',type:'RCS',participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'ls',number:'+15557770199'},fullName:'Lee Steady'}]}"));
+            for(int i=0;i<10;i++)textMessage(store,"link-steady",i);
+            store.message(new JSONObject().put("messageID","steady-link").put("conversationID","link-steady").put("participantID","me").put("timestamp",System.currentTimeMillis()*1000)
+                .put("messageStatus",new JSONObject().put("status","OUTGOING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","Look at this "+url)))),0,true);}
+        // As after a restart: neither the link's details nor its picture are in memory.
+        runOnMainSync(()->{try{((java.util.Map<?,?>)field(LinkPreviews.class,"memory").get(null)).clear();((android.util.LruCache<?,?>)field(MediaCache.class,"memory").get(null)).evictAll();}catch(Exception e){throw new RuntimeException(e);}});
+        java.util.List<Integer> frames=java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        android.view.ViewTreeObserver.OnPreDrawListener watch=()->{android.view.View card=linkCardIn(a);frames.add(card==null?-1:card.getHeight());return true;};
+        try{runOnMainSync(()->{a.getWindow().getDecorView().getViewTreeObserver().addOnPreDrawListener(watch);try{method("thread",String.class).invoke(a,"link-steady");}catch(Exception e){throw new RuntimeException(e);}});
+            Thread.sleep(1500);waitForIdleSync();runOnMainSync(()->a.getWindow().getDecorView().getViewTreeObserver().removeOnPreDrawListener(watch));shoot("shot-link-preview");
+            java.util.List<Integer> seen;synchronized(frames){seen=new java.util.ArrayList<>(frames);}
+            check(!seen.isEmpty()&&seen.get(0)>0,"The link preview wasn't in the chat's first frame (frames "+seen+")");
+            boolean same=true;for(int h:seen)same&=h==seen.get(0);check(same,"The link preview changed size while the chat opened, so the chat jumped (frames "+seen+")");
+            android.widget.ImageView[] hero=new android.widget.ImageView[1];
+            runOnMainSync(()->{android.view.View card=linkCardIn(a);if(card!=null)for(android.widget.ImageView i:viewsOf(card,android.widget.ImageView.class)){hero[0]=i;break;}});
+            check(hero[0]!=null&&hero[0].getDrawable()!=null,"The link preview's picture didn't load");
+            // A redraw: the new card has its picture in the same moment, nothing to blink.
+            boolean[] kept={false};runOnMainSync(()->{try{method("renderMessages",boolean.class).invoke(a,false);}catch(Exception e){throw new RuntimeException(e);}
+                android.view.View card=linkCardIn(a);if(card!=null)for(android.widget.ImageView i:viewsOf(card,android.widget.ImageView.class)){kept[0]=i!=hero[0]&&i.getDrawable()!=null;break;}});
+            check(kept[0],"A redraw drew the link preview without its picture for a moment (it blinks)");}
+        finally{runOnMainSync(()->a.getWindow().getDecorView().getViewTreeObserver().removeOnPreDrawListener(watch));onMainCall(()->method("inbox").invoke(a));waitForIdleSync();
+            saved.delete();pic.delete();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("link-steady");}}}
     /** The newest raw contact the shell just added: the highest "_id=12" it lists (arguments can't hold spaces, so no "DESC"). */
     private String newestRawContact()throws Exception{java.util.regex.Matcher m=java.util.regex.Pattern.compile("_id=(\\d+)").matcher(shell("content query --uri content://com.android.contacts/raw_contacts --projection _id"));
         long best=-1;while(m.find())best=Math.max(best,Long.parseLong(m.group(1)));return best<0?"":String.valueOf(best);}
@@ -1612,6 +1645,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkHoldLink((PairedActivity)activity);
         checkTimeSwipe((PairedActivity)activity);
         checkPhotoMechanics((PairedActivity)activity);
+        checkLinkPreviewSteady((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();

@@ -2762,8 +2762,9 @@ public class PairedActivity extends Activity {
         TextView where=text(url.replaceFirst("(?i)^https?://(www\\.)?",""),13,muted,false);where.setSingleLine(true);where.setEllipsize(TextUtils.TruncateAt.MIDDLE);texts.addView(where);
         texts.addView(text(sharedBy(it,c),12,muted,false));r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));
         LinkPreviews.Done fill=p->{String t=p.optString("title");if(!t.isEmpty())title.setText(t);String image=p.optString("image");
-            if(!image.isEmpty())decoder.execute(()->{Bitmap b=MediaCache.decodeToCover(new File(image),dp(52),dp(52),false);if(b!=null)pic.post(()->{pic.setImageBitmap(b);pic.setVisibility(View.VISIBLE);});});};
-        JSONObject ready=LinkPreviews.peek(url);if(ready!=null){if(!ready.optString("title").isEmpty())fill.done(ready);}else if(fetch)LinkPreviews.load(this,url,fill);
+            if(image.isEmpty())return;File file=new File(image);Bitmap now=MediaCache.peekCover(file,dp(52),dp(52));if(now!=null){pic.setImageBitmap(now);pic.setVisibility(View.VISIBLE);return;}
+            decoder.execute(()->{Bitmap b=MediaCache.decodeToCover(file,dp(52),dp(52),false);if(b!=null)pic.post(()->{pic.setImageBitmap(b);pic.setVisibility(View.VISIBLE);});});};
+        JSONObject ready=LinkPreviews.peekSaved(this,url);if(ready!=null){if(!ready.optString("title").isEmpty())fill.done(ready);}else if(fetch)LinkPreviews.load(this,url,fill);
         r.setContentDescription(host+". "+sharedBy(it,c)+". Hold for more.");r.setOnClickListener(v->openLink(url));r.setOnLongClickListener(v->{sharedMenu(it);return true;});return r;}
     private View fileRow(SharedItem it,JSONObject c){JSONObject media=it.media;String name=PairedProtocol.string(media,"mediaName"),kind=PairedProtocol.mediaKind(media);
         LinearLayout r=row();r.setGravity(Gravity.CENTER_VERTICAL);r.setPadding(dp(8),dp(10),dp(8),dp(10));pressable(r);r.addView(roundIcon(kind.equals("audio")?R.drawable.ic_mic:R.drawable.ic_file,surface,ink,40));
@@ -3760,19 +3761,24 @@ public class PairedActivity extends Activity {
         LinkPreviews.Done fill=p->{card.removeAllViews();String image=p.optString("image");int iw=p.optInt("imageW"),ih=p.optInt("imageH");
             // Big pictures go on top; small ones (logos, square product shots under 300px) sit beside the title instead of being stretched.
             boolean hero=!image.isEmpty()&&iw>=300&&ih>=150,thumb=!image.isEmpty()&&!hero;int heroH=hero?Math.max(dp(110),Math.min(dp(190),Math.round(width*(float)ih/iw))):0;
-            if(hero){ImageView img=new ImageView(this);img.setScaleType(ImageView.ScaleType.CENTER_CROP);img.setVisibility(View.GONE);card.addView(img,new LinearLayout.LayoutParams(-1,heroH));
-                decoder.execute(()->{Bitmap b=MediaCache.decodeToCover(new File(image),width,heroH,false);if(b!=null)img.post(()->{img.setImageBitmap(b);img.setVisibility(View.VISIBLE);});});}
+            // The picture's space is there from the start (so nothing in the chat moves when it arrives), and a
+            // picture already decoded is put straight in, so a redraw (a new message, a receipt) doesn't blink it.
+            if(hero){ImageView img=new ImageView(this);img.setScaleType(ImageView.ScaleType.CENTER_CROP);img.setBackgroundColor(bg);card.addView(img,new LinearLayout.LayoutParams(-1,heroH));
+                File pic=new File(image);Bitmap now=MediaCache.peekCover(pic,width,heroH);
+                if(now!=null)img.setImageBitmap(now);
+                else decoder.execute(()->{Bitmap b=MediaCache.decodeToCover(pic,width,heroH,false);img.post(()->{if(b!=null)img.setImageBitmap(b);else img.setVisibility(View.GONE);});});}
             LinearLayout body=row();body.setGravity(Gravity.CENTER_VERTICAL);body.setPadding(dp(14),dp(10),dp(14),dp(12));
             if(thumb){ImageView img=new ImageView(this);img.setScaleType(ImageView.ScaleType.CENTER_CROP);img.setBackground(shape(bg,10));
                 img.setOutlineProvider(new ViewOutlineProvider(){@Override public void getOutline(View v,Outline o){o.setRoundRect(0,0,v.getWidth(),v.getHeight(),dp(10));}});img.setClipToOutline(true);
                 LinearLayout.LayoutParams tl=new LinearLayout.LayoutParams(dp(56),dp(56));tl.setMarginEnd(dp(12));body.addView(img,tl);
-                decoder.execute(()->{Bitmap b=MediaCache.decodeToCover(new File(image),dp(56),dp(56),false);if(b!=null)img.post(()->img.setImageBitmap(b));});}
+                File pic=new File(image);Bitmap now=MediaCache.peekCover(pic,dp(56),dp(56));
+                if(now!=null)img.setImageBitmap(now);else decoder.execute(()->{Bitmap b=MediaCache.decodeToCover(pic,dp(56),dp(56),false);if(b!=null)img.post(()->img.setImageBitmap(b));});}
             LinearLayout texts=vertical();TextView title=text(p.optString("title"),15,ink,true);title.setMaxLines(2);title.setEllipsize(TextUtils.TruncateAt.END);texts.addView(title);
             String desc=p.optString("description");if(!desc.isEmpty()&&!desc.equals(p.optString("title"))){TextView d=text(desc,13,ink,false);d.setAlpha(0.8f);d.setMaxLines(2);d.setEllipsize(TextUtils.TruncateAt.END);d.setPadding(0,dp(2),0,0);texts.addView(d);}
             String site=p.optString("site");TextView sv=text(site.isEmpty()?ChatText.domain(url):site,13,muted,false);sv.setPadding(0,dp(2),0,0);texts.addView(sv);
-            body.addView(texts,new LinearLayout.LayoutParams(0,-2,1));card.addView(body);line.setVisibility(View.VISIBLE);};
+            body.addView(texts,new LinearLayout.LayoutParams(0,-2,1));card.addView(body);card.setContentDescription("Link preview: "+p.optString("title"));line.setVisibility(View.VISIBLE);};
         card.setOnClickListener(v->{try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));}catch(Exception e){toast("No browser is available.");}});
-        JSONObject ready=LinkPreviews.peek(url);if(ready!=null){if(!ready.optString("title").isEmpty())fill.done(ready);}else LinkPreviews.load(this,url,fill);
+        JSONObject ready=LinkPreviews.peekSaved(this,url);if(ready!=null){if(!ready.optString("title").isEmpty())fill.done(ready);}else LinkPreviews.load(this,url,fill);
         return line;}
     private ScrollView settingsScroll;private int pendingSettingsY;
     /** Which settings page is showing: "" for the main page, else messages, media, notifications, automation, appearance, connection or data. */
