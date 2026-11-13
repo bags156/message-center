@@ -261,6 +261,35 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(found[0]>0,"Searching the inbox for a word in a note didn't find it");
         java.io.File folder=kept.getParentFile();for(Notes.Note n:notes.list(key))notes.delete(key,n.id);pic.delete();
         check(!folder.exists()&&!notes.has(key),"Deleting a note left its files behind");}
+    /**
+     * The chat's ⋮ menu is a sheet: tiles for Details, Notes, Search and Theme; switches for pin
+     * and read receipts; Block and Delete at the bottom; Refresh no longer in it. The pin switch
+     * pins the chat, and the Notes tile opens the notes.
+     */
+    private void checkChatMenu(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();
+        try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'menu-check',name:'Mia Check',type:'RCS',participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'mc',number:'+15557770199'},fullName:'Mia Check'}]}"));}
+        java.lang.reflect.Method thread=method("thread",String.class),menu=method("chatMenu",android.view.View.class);java.lang.reflect.Field settings=field("chatSettings"),screen=field("screen");
+        android.app.Dialog[] d={null};onMainCall(()->{thread.invoke(a,"menu-check");d[0]=(android.app.Dialog)menu.invoke(a,(android.view.View)null);return null;});waitForIdleSync();
+        check(d[0]!=null&&d[0].isShowing(),"The chat menu didn't open");
+        StringBuilder missing=new StringBuilder();
+        for(String label:new String[]{"Details","Notes","Search","Theme","Pin to top","Notifications: On","Read receipts","Open as bubble","Archive","Block\u2026","Delete conversation\u2026"}){int[] n={0};
+            runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();d[0].getWindow().getDecorView().findViewsWithText(found,label,android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);n[0]=found.size();});
+            if(n[0]==0)missing.append(label).append(", ");}
+        check(missing.length()==0,"The chat menu is missing: "+missing);
+        int[] switches={0},refresh={0};runOnMainSync(()->{switches[0]=viewsOf(d[0].getWindow().getDecorView(),android.widget.Switch.class).size();
+            java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();d[0].getWindow().getDecorView().findViewsWithText(found,"Refresh",android.view.View.FIND_VIEWS_WITH_TEXT|android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);refresh[0]=found.size();});
+        check(switches[0]==2&&refresh[0]==0,"The chat menu has "+switches[0]+" switches and "+refresh[0]+" Refresh");
+        // The pin switch pins it (and again unpins it).
+        boolean[] pinned={false,true};
+        onMainCall(()->{android.widget.Switch pin=null;for(android.widget.Switch sw:viewsOf(d[0].getWindow().getDecorView(),android.widget.Switch.class))if("Pin to top".contentEquals(sw.getContentDescription()))pin=sw;
+            pin.toggle();JSONObject c=new PairedStore(ctx).chat("menu-check");pinned[0]=((ChatSettings)settings.get(a)).pinned(c);pin.toggle();pinned[1]=((ChatSettings)settings.get(a)).pinned(c);return null;});
+        check(pinned[0]&&!pinned[1],"The pin switch didn't pin and unpin the chat ("+pinned[0]+", "+pinned[1]+")");
+        // The Notes tile opens the notes.
+        onMainCall(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();d[0].getWindow().getDecorView().findViewsWithText(found,"Notes",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);
+            for(android.view.View v:found)if(v.isClickable()){v.performClick();break;}return null;});waitForIdleSync();
+        String[] now={""};onMainCall(()->{now[0]=(String)screen.get(a);return null;});
+        check("notes".equals(now[0])&&!d[0].isShowing(),"The Notes tile didn't open the notes ("+now[0]+")");
+        runOnMainSync(a::onBackPressed);waitForIdleSync();}
     /** The newest raw contact the shell just added: the highest "_id=12" it lists (arguments can't hold spaces, so no "DESC"). */
     private String newestRawContact()throws Exception{java.util.regex.Matcher m=java.util.regex.Pattern.compile("_id=(\\d+)").matcher(shell("content query --uri content://com.android.contacts/raw_contacts --projection _id"));
         long best=-1;while(m.find())best=Math.max(best,Long.parseLong(m.group(1)));return best<0?"":String.valueOf(best);}
@@ -1166,11 +1195,12 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkPinsAndWhoIsThis((PairedActivity)activity);
         checkEmojiPicker((PairedActivity)activity);
         checkNotes((PairedActivity)activity);
+        checkChatMenu((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();
         checkSentTextStays((PairedActivity)activity);
         checkBubbleStepsAside((PairedActivity)activity);
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, emoji picker tabs and search, notes, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, emoji picker tabs and search, notes, chat menu sheet, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }

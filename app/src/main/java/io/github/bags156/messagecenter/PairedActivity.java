@@ -735,17 +735,72 @@ public class PairedActivity extends Activity {
         if(back!=null){restoreSpot=back;renderMessages(false);}else renderMessages(true);perf=Perf.start();if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();
         if(c!=null)requestPhotos(java.util.Collections.singletonList(c));Perf.end("open: after",perf);Perf.end("open: total",perfAll);
     }
-    private void chatMenu(View anchor){JSONObject c=store.chat(chatId);if(c==null)return;PopupMenu menu=new PopupMenu(this,anchor);Menu m=menu.getMenu();
-        m.add(0,1,0,chatSettings.pinned(c)?"Unpin":"Pin to top");m.add(0,2,1,"Theme & background");
-        m.add(0,3,2,"Read receipts for this chat").setCheckable(true).setChecked(chatSettings.receipts(chatId));
-        m.add(0,6,0,PairedProtocol.other(c)==null?"Group details":"Details");m.add(0,15,0,"Notes");m.add(0,9,0,"Search in chat");m.add(0,10,4,chatSettings.muted(chatId)?"Unmute notifications":"Mute notifications");m.add(0,14,4,chatSettings.snoozed(chatId)?"Snoozed until "+snoozeLabel(chatId)+"…":"Snooze notifications…");
+    /**
+     * The chat's ⋮ menu, as a sheet: who the chat is with, the four things you reach for most as
+     * tiles, this chat's settings with switches, then where it opens and Archive, and Block and
+     * Delete set apart in red at the bottom.
+     */
+    private Dialog chatMenu(View anchor){JSONObject c=store.chat(chatId);if(c==null)return null;String id=chatId;boolean group=PairedProtocol.other(c)==null;
+        LinearLayout content=vertical();Dialog[] d=new Dialog[1];
+        java.util.function.Function<Runnable,Runnable> closing=r->()->{if(d[0]!=null)d[0].dismiss();r.run();};
+        // Who it's with.
+        LinearLayout who=row();who.setPadding(dp(4),0,dp(4),dp(16));who.addView(avatar(c,52));
+        LinearLayout names=vertical();names.setPadding(dp(14),0,dp(4),0);TextView title=text(PairedProtocol.title(c),19,ink,true);title.setSingleLine(true);title.setEllipsize(TextUtils.TruncateAt.END);names.addView(title);
+        JSONObject other=PairedProtocol.other(c);String number=other==null?"":other.optString("formattedNumber",PairedProtocol.number(other));
+        String kind=PairedProtocol.rcs(c)?"RCS":"SMS";
+        TextView line=text(group?"Group \u00b7 "+(PairedProtocol.members(c).size()+1)+" people \u00b7 "+kind:(number.isEmpty()||number.equals(PairedProtocol.title(c))?"":number+" \u00b7 ")+kind,13,muted,false);
+        line.setPadding(0,dp(2),0,0);names.addView(line);who.addView(names,new LinearLayout.LayoutParams(0,-2,1));content.addView(who);
+        // The four you reach for most.
+        LinearLayout tiles=row();int notes=new Notes(this).list(notesKeyFor(c)).size();
+        menuTile(tiles,R.drawable.ic_info,group?"Group info":"Details",closing.apply(this::details));
+        menuTile(tiles,R.drawable.ic_notes,notes>0?"Notes \u00b7 "+notes:"Notes",closing.apply(()->openNotes(store.chat(id),()->thread(id))));
+        menuTile(tiles,R.drawable.ic_search,"Search",closing.apply(this::searchChat));
+        menuTile(tiles,R.drawable.ic_palette,"Theme",closing.apply(()->chooseTheme(id)));
+        content.addView(tiles,new LinearLayout.LayoutParams(-1,-2));gap(content,14);
+        // This chat's settings.
+        LinearLayout settings=menuGroup(content);
+        menuSwitch(settings,R.drawable.ic_pin,0xfff59e0b,"Pin to top",chatSettings.pinned(c),on->togglePin(store.chat(id)));
+        String notify=chatSettings.muted(id)?"Muted":chatSettings.snoozed(id)?"Snoozed until "+snoozeLabel(id):"On";
+        menuRow(settings,R.drawable.ic_bell,0xff8b5cf6,"Notifications",notify,false,closing.apply(()->notificationChoices(id)));
+        menuSwitch(settings,R.drawable.ic_eye,0xff3b82f6,"Read receipts",chatSettings.receipts(id),on->toggleReceipts(id));
+        gap(content,12);
+        // Where it opens, and putting it away.
         boolean archived=c.optString("status").contains("ARCHIVED"),blocked=c.optString("status").equals("BLOCKED_FOLDER")||c.optString("status").equals("SPAM_FOLDER");
-        if(!bubble()){m.add(0,11,8,archived?"Unarchive":"Archive");m.add(0,12,9,blocked?"Unblock":"Block…");m.add(0,13,10,"Delete conversation…");}
-        if(bubble())m.add(0,8,5,"Open in Message Center");else m.add(0,7,5,"Open as bubble");
-        m.add(0,4,6,"Refresh");m.add(0,5,7,"Load older messages");
-        menu.setOnMenuItemClickListener(item->{switch(item.getItemId()){case 1->togglePin(c);case 2->chooseTheme(chatId);case 3->toggleReceipts(chatId);case 4->loadMessages(false);case 5->loadOlderMessages();
-            case 6->details();case 7->openBubble(chatId);case 8->startActivity(new Intent(this,PairedActivity.class).setAction(OPEN_CHAT).putExtra("chat",chatId).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP|Intent.FLAG_ACTIVITY_CLEAR_TOP));
-            case 9->searchChat();case 10->toggleMute(chatId);case 11->archive(c,!archived);case 12->block(c);case 13->deleteChat(c);case 14->snoozeMenu(chatId);case 15->{String id=chatId;openNotes(c,()->thread(id));}default->{}}return true;});menu.show();}
+        LinearLayout places=menuGroup(content);
+        if(bubble())menuRow(places,R.drawable.ic_open,0xff14b8a6,"Open in Message Center",null,false,closing.apply(()->startActivity(new Intent(this,PairedActivity.class).setAction(OPEN_CHAT).putExtra("chat",id).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP|Intent.FLAG_ACTIVITY_CLEAR_TOP))));
+        else{menuRow(places,R.drawable.ic_chat,0xff14b8a6,"Open as bubble",null,false,closing.apply(()->openBubble(id)));
+            menuRow(places,R.drawable.ic_archive,0xff64748b,archived?"Unarchive":"Archive",null,false,closing.apply(()->archive(store.chat(id),!archived)));}
+        // Set apart, in red.
+        if(!bubble()){gap(content,12);LinearLayout risky=menuGroup(content);
+            menuRow(risky,R.drawable.ic_block,0xffef4444,blocked?"Unblock":"Block\u2026",null,!blocked,closing.apply(()->block(store.chat(id))));
+            menuRow(risky,R.drawable.ic_delete,0xffdc2626,"Delete conversation\u2026",null,true,closing.apply(()->deleteChat(store.chat(id))));}
+        ScrollView sc=new ScrollView(this);sc.setVerticalScrollBarEnabled(false);sc.setClipToPadding(false);sc.setPadding(0,0,0,dp(2));sc.addView(content);d[0]=sheet(sc);return d[0];}
+    /** A tile at the top of the chat menu: a round icon over its name, on a raised card. */
+    private void menuTile(LinearLayout tiles,int icon,String label,Runnable action){LinearLayout t=vertical();t.setGravity(Gravity.CENTER_HORIZONTAL);t.setPadding(dp(4),dp(14),dp(4),dp(12));
+        t.setBackground(shape(surface,20));t.setElevation(dp(2));pressDim(t);t.setContentDescription(label);t.setOnClickListener(v->action.run());
+        t.addView(roundIcon(icon,fab,onFab,44));TextView name=text(label,13,ink,true);name.setGravity(Gravity.CENTER);name.setSingleLine(true);name.setEllipsize(TextUtils.TruncateAt.END);name.setPadding(0,dp(8),0,0);t.addView(name);
+        LinearLayout.LayoutParams tl=new LinearLayout.LayoutParams(0,-2,1);if(tiles.getChildCount()>0)tl.setMarginStart(dp(8));tiles.addView(t,tl);}
+    /** A raised, rounded card holding a few rows of the chat menu. */
+    private LinearLayout menuGroup(LinearLayout content){LinearLayout g=vertical();g.setBackground(shape(surface,20));g.setClipToOutline(true);g.setElevation(dp(2));
+        LinearLayout.LayoutParams gl=new LinearLayout.LayoutParams(-1,-2);gl.setMargins(dp(1),0,dp(1),0);content.addView(g,gl);return g;}
+    /** A colored icon chip, like the ones in Android's Settings, so rows are told apart at a glance. */
+    private ImageView menuChip(int icon,int color){ImageView i=new ImageView(this);i.setImageResource(icon);i.setImageTintList(ColorStateList.valueOf(Color.WHITE));i.setBackground(shape(color,10));i.setPadding(dp(6),dp(6),dp(6),dp(6));return i;}
+    private LinearLayout menuLine(int icon,int color,String label,boolean red){LinearLayout r=row();r.setPadding(dp(14),dp(10),dp(14),dp(10));r.setMinimumHeight(dp(58));
+        r.addView(menuChip(icon,color),new LinearLayout.LayoutParams(dp(32),dp(32)));TextView name=text(label,16,red?danger:ink,false);name.setPadding(dp(14),0,dp(8),0);
+        r.addView(name,new LinearLayout.LayoutParams(0,-2,1));r.setContentDescription(label);return r;}
+    /** A row that does something (value shows its current setting; a › means it leads to more choices). */
+    private void menuRow(LinearLayout group,int icon,int color,String label,String value,boolean red,Runnable action){LinearLayout r=menuLine(icon,color,label,red);pressable(r);
+        if(value!=null){TextView v=text(value+"  \u203a",14,muted,false);v.setSingleLine(true);r.addView(v);r.setContentDescription(label+": "+value);}
+        r.setOnClickListener(x->action.run());addSettingRow(group,r);}
+    private void menuSwitch(LinearLayout group,int icon,int color,String label,boolean on,java.util.function.Consumer<Boolean> change){LinearLayout r=menuLine(icon,color,label,false);pressable(r);
+        android.widget.Switch sw=new android.widget.Switch(this);sw.setChecked(on);sw.setContentDescription(label);int[][] states={{android.R.attr.state_checked},{}};
+        sw.setThumbTintList(new ColorStateList(states,new int[]{BLUE,dark?0xffb8bcc6:0xfff4f5f8}));sw.setTrackTintList(new ColorStateList(states,new int[]{(BLUE&0x00ffffff)|0x80000000,(muted&0x00ffffff)|0x60000000}));
+        sw.setOnCheckedChangeListener((b,checked)->change.accept(checked));r.setOnClickListener(x->sw.toggle());r.addView(sw);addSettingRow(group,r);}
+    /** Mute or snooze this chat's notifications (or turn them back on). */
+    private void notificationChoices(String id){boolean muted=chatSettings.muted(id),snoozed=chatSettings.snoozed(id);List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
+        labels.add(muted?"Unmute":"Mute");actions.add(()->toggleMute(id));
+        if(!muted){labels.add(snoozed?"Snoozed until "+snoozeLabel(id)+": change\u2026":"Snooze\u2026");actions.add(()->snoozeMenu(id));}
+        menuSheet("Notifications",labels,actions);}
     /** The first message on screen in the chat and how far down it sits, or null when you're at (or near) the newest message. */
     private Spot currentSpot(){if(scroll==null||items==null)return null;View content=scroll.getChildAt(0);int y=scroll.getScrollY();
         if(content==null||content.getHeight()-scroll.getHeight()-y<dp(80))return null;return spotAt(y);}
@@ -1481,6 +1536,8 @@ public class PairedActivity extends Activity {
             if(PairedProtocol.rcs(c))sheetAction(content,"Rename group…",()->renameGroup(id));
             sheetAction(content,Avatars.ownGroupPhoto(this,id).isFile()?"Group photo: yours, on this phone (change)":"Group photo on this phone…",()->groupPhotoMenu(id));}
         sheetAction(content,"Search in chat",()->{thread(id);searchChat();});
+        sheetAction(content,"Refresh from Google",()->{thread(id);loadMessages(false);});
+        sheetAction(content,"Load older messages",()->{thread(id);loadOlderMessages();});
         sheetAction(content,"Needs a reply / mark handled…",()->replyFollowUp(c));
         if(!group&&!people.isEmpty()){JSONObject p0=people.get(0);String nick=Nicknames.get(PairedProtocol.number(p0));sheetAction(content,nick.isEmpty()?"Set a nickname…":"Nickname: "+nick+" (change)",()->setNickname(p0));}
         sheetAction(content,"Export chat to a file",()->exportChat(id));
@@ -3317,7 +3374,7 @@ public class PairedActivity extends Activity {
     // Search inside a chat
     private void searchChat(){LinearLayout content=vertical();EditText q=input("Search this conversation");q.setSingleLine(true);content.addView(q);gap(content,8);
         LinearLayout results=vertical();ScrollView rs=new ScrollView(this);rs.addView(results);content.addView(rs,new LinearLayout.LayoutParams(-1,Math.round(getResources().getDisplayMetrics().heightPixels*0.45f)));
-        TextView hint=text("Searches synced messages and indexed text in downloaded pictures. Use ⋮ → Load older messages to include more history.",13,muted,false);results.addView(hint);
+        TextView hint=text("Searches synced messages and indexed text in downloaded pictures. Use Details → Load older messages to include more history.",13,muted,false);results.addView(hint);
         Dialog d=sheet(content);String id=chatId;JSONObject c=store.chat(id);int[] generation={0};
         q.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int cc,int a){}public void afterTextChanged(Editable e){}
             public void onTextChanged(CharSequence s,int st,int b,int cc){String query=s.toString();int g=++generation[0];

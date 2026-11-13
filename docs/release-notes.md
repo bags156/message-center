@@ -1,11 +1,8 @@
-Message Center 1.5.22.
+Message Center 1.5.23.
 
-- Notes: private notes about each person and group, for gift ideas, birthdays, and things to follow up on. Open them from a chat's ⋮ menu (Notes) or from Details. They stay on this phone and are never sent.
-- Each note is dated and can have several tags of your own. Tags you've used before are suggested.
-- Pin a note to keep it on top. The rest are sorted newest first.
-- Attach photos, videos or files to a note.
-- Hold a message, photo or file in a chat to start a new note with it or add it to an existing one. In a group, it goes to the notes about whoever sent it.
-- Search a person's notes by words or #tag, or tap a tag to filter. Inbox search also looks through your notes.
-- Once you've written notes about someone, their chat shows a notes button at the top.
+- The chat's ⋮ menu is now a sheet that slides up, in place of the long plain list. The chat is shown at the top, with tiles for Details, Notes (with how many you have), Search and Theme below it.
+- Pin to top and Read receipts are switches. Mute and snooze are together under Notifications, which shows whether it's on, muted or snoozed.
+- Open as bubble and Archive come next. Block and Delete conversation sit apart at the bottom, in red.
+- Refresh and Load older messages moved to Details. Chats already refresh when you open them, and older messages load as you scroll up.
 
 Install over the existing app through Obtainium. Your pairing, conversations and settings are retained.
