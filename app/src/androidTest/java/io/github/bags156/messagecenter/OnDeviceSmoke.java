@@ -466,8 +466,65 @@ public final class OnDeviceSmoke extends Instrumentation {
         sendPointerSync(android.view.MotionEvent.obtain(t,t,android.view.MotionEvent.ACTION_DOWN,x0,y,0));
         for(int i=1;i<=12;i++){Thread.sleep(16);float x=x0+(x1-x0)*i/12f;sendPointerSync(android.view.MotionEvent.obtain(t,android.os.SystemClock.uptimeMillis(),android.view.MotionEvent.ACTION_MOVE,x,y,0));
             if(i==3||i==8||i==12){waitForIdleSync();shoot("swipe-"+i);}}
+        // An update arriving while you hold the chat over (it redraws the messages): the times must stay out.
+        onMainCall(()->method("renderMessages",boolean.class).invoke(a,false));waitForIdleSync();shoot("swipe-redraw");
         sendPointerSync(android.view.MotionEvent.obtain(t,android.os.SystemClock.uptimeMillis(),android.view.MotionEvent.ACTION_UP,x1,y,0));
         Thread.sleep(60);shoot("swipe-up");Thread.sleep(400);shoot("swipe-after");onMainCall(()->method("inbox").invoke(a));waitForIdleSync();}
+    // ---- Real touches, as a finger would make them (through the system, so status bar and back gestures apply) ----
+    private final StringBuilder probe=new StringBuilder();
+    private void note(String line){probe.append(line).append('\n');try{java.nio.file.Files.write(new java.io.File(getTargetContext().getCacheDir(),"probe.txt").toPath(),probe.toString().getBytes());}catch(Exception ignored){}}
+    private String shell(String command)throws Exception{android.os.ParcelFileDescriptor out=getUiAutomation().executeShellCommand(command);
+        try(java.io.InputStream in=new android.os.ParcelFileDescriptor.AutoCloseInputStream(out)){return new String(in.readAllBytes()).trim();}}
+    private void inject(long down,int action,float x,float y){android.view.MotionEvent e=android.view.MotionEvent.obtain(down,android.os.SystemClock.uptimeMillis(),action,x,y,0);
+        e.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);getUiAutomation().injectInputEvent(e,true);e.recycle();}
+    /** A finger tap at a point on the screen. */
+    private void press(float x,float y)throws Exception{long t=android.os.SystemClock.uptimeMillis();inject(t,android.view.MotionEvent.ACTION_DOWN,x,y);Thread.sleep(60);
+        inject(t,android.view.MotionEvent.ACTION_UP,x,y);waitForIdleSync();Thread.sleep(250);}
+    /** A finger drag from one point to another, at about the speed of a careful drag. */
+    private void slide(float x0,float y0,float x1,float y1)throws Exception{long t=android.os.SystemClock.uptimeMillis();inject(t,android.view.MotionEvent.ACTION_DOWN,x0,y0);Thread.sleep(80);
+        for(int i=1;i<=20;i++){inject(t,android.view.MotionEvent.ACTION_MOVE,x0+(x1-x0)*i/20f,y0+(y1-y0)*i/20f);Thread.sleep(16);}
+        Thread.sleep(80);inject(t,android.view.MotionEvent.ACTION_UP,x1,y1);waitForIdleSync();Thread.sleep(250);}
+    /** The middle of a view on the screen. */
+    private float[] middle(android.view.View v){float[] c=new float[2];runOnMainSync(()->{int[] at=new int[2];v.getLocationOnScreen(at);c[0]=at[0]+v.getWidth()/2f;c[1]=at[1]+v.getHeight()/2f;});return c;}
+    /** The view in a window showing exactly this text, or null. */
+    private android.widget.TextView labelled(android.view.View root,String text){android.widget.TextView[] hit=new android.widget.TextView[1];
+        runOnMainSync(()->{for(android.widget.TextView t:viewsOf(root,android.widget.TextView.class))if(t.isShown()&&text.contentEquals(t.getText())){hit[0]=t;break;}});return hit[0];}
+    /** Whether some window on screen shows this text right now. */
+    private boolean showing(String text){android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();
+        for(android.view.accessibility.AccessibilityWindowInfo w:getUiAutomation().getWindows()){android.view.accessibility.AccessibilityNodeInfo r=w.getRoot();if(r!=null&&!r.findAccessibilityNodeInfosByText(text).isEmpty())return true;}
+        return root!=null&&!root.findAccessibilityNodeInfosByText(text).isEmpty();}
+    private boolean gestureNavigation()throws Exception{shell("cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.gestural");Thread.sleep(3000);return "2".equals(shell("settings get secure navigation_mode"));}
+    private void buttonNavigation()throws Exception{shell("cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton");Thread.sleep(2000);}
+    /** The crop frame's corners on the screen: left, top, right, bottom. */
+    private float[] cropOnScreen(MarkupEditor editor)throws Exception{android.view.View board=(android.view.View)field(MarkupEditor.class,"board").get(editor);
+        android.graphics.RectF crop=new android.graphics.RectF((android.graphics.RectF)field(MarkupEditor.class,"crop").get(editor));float[] out=new float[4];
+        java.lang.reflect.Field toScreen=board.getClass().getDeclaredField("toScreen");toScreen.setAccessible(true);
+        runOnMainSync(()->{try{android.graphics.Matrix m=(android.graphics.Matrix)toScreen.get(board);float[] pts={crop.left,crop.top,crop.right,crop.bottom};m.mapPoints(pts);int[] at=new int[2];board.getLocationOnScreen(at);
+            out[0]=pts[0]+at[0];out[1]=pts[1]+at[1];out[2]=pts[2]+at[0];out[3]=pts[3]+at[1];}catch(Exception e){throw new RuntimeException(e);}});return out;}
+    private static java.lang.reflect.Field field(Class<?> c,String name)throws Exception{java.lang.reflect.Field f=c.getDeclaredField(name);f.setAccessible(true);return f;}
+    /** What a finger actually manages in the photo editor (before fixing it): Cancel, the crop corners, with gesture navigation on like most phones. */
+    private void probePhotoEditor(PairedActivity a){try{
+        note("gesture navigation: "+gestureNavigation());int[] size=new int[2];runOnMainSync(()->{android.view.View d=a.getWindow().getDecorView();size[0]=d.getWidth();size[1]=d.getHeight();});note("screen "+size[0]+"x"+size[1]);
+        java.io.File photo=new java.io.File(getTargetContext().getCacheDir(),"probe-photo.png");android.graphics.Bitmap pic=android.graphics.Bitmap.createBitmap(2000,1500,android.graphics.Bitmap.Config.ARGB_8888);pic.eraseColor(0xFF4477AA);
+        try(java.io.FileOutputStream f=new java.io.FileOutputStream(photo)){pic.compress(android.graphics.Bitmap.CompressFormat.PNG,100,f);}
+        java.io.File[] saved=new java.io.File[1];runOnMainSync(()->MarkupEditor.open(a,photo,f->saved[0]=f));for(int i=0;i<50&&MarkupEditor.shown==null;i++)Thread.sleep(100);
+        MarkupEditor editor=MarkupEditor.shown;note("editor open: "+(editor!=null));if(editor==null)return;waitForIdleSync();Thread.sleep(400);
+        android.view.View decor=((android.app.Dialog)field(MarkupEditor.class,"dialog").get(editor)).getWindow().getDecorView();
+        runOnMainSync(()->{android.view.WindowInsets in=decor.getRootWindowInsets();if(in!=null)note("insets status "+in.getInsets(android.view.WindowInsets.Type.statusBars())+" nav "+in.getInsets(android.view.WindowInsets.Type.navigationBars())+" cutout "+in.getInsets(android.view.WindowInsets.Type.displayCutout())+" gestures "+in.getInsets(android.view.WindowInsets.Type.systemGestures()));});
+        shoot("shot-editor-open");
+        android.widget.TextView cancel=labelled(decor,"Cancel"),crop=labelled(decor,"Crop");float[] cc=middle(cancel),kc=middle(crop);note("cancel at "+cc[0]+","+cc[1]+" crop button at "+kc[0]+","+kc[1]);
+        press(kc[0],kc[1]);note("mode after tapping Crop: "+field(MarkupEditor.class,"mode").get(editor));
+        float[] r=cropOnScreen(editor);note("crop frame on screen "+java.util.Arrays.toString(r));
+        slide(r[0]+4,r[1]+4,r[0]+160,r[1]+160);note("after dragging top-left: frame "+field(MarkupEditor.class,"crop").get(editor)+", editor still open: "+(MarkupEditor.shown==editor));
+        if(MarkupEditor.shown==editor){r=cropOnScreen(editor);slide(r[2]-4,r[3]-4,r[2]-160,r[3]-160);note("after dragging bottom-right: frame "+field(MarkupEditor.class,"crop").get(editor)+", editor still open: "+(MarkupEditor.shown==editor));}
+        shoot("shot-editor-crop");
+        if(MarkupEditor.shown==editor){press(cc[0],cc[1]);Thread.sleep(600);note("after tapping Cancel: editor open "+(MarkupEditor.shown==editor)+", asks to discard "+showing("Discard your changes?"));}
+        shoot("shot-editor-cancel");
+        if(showing("Discard your changes?")){android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();if(root!=null)for(android.view.accessibility.AccessibilityNodeInfo n:root.findAccessibilityNodeInfosByText("Discard"))if("Discard".contentEquals(n.getText()))n.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK);Thread.sleep(500);}
+        if(MarkupEditor.shown!=null){android.app.Dialog d=(android.app.Dialog)field(MarkupEditor.class,"dialog").get(MarkupEditor.shown);runOnMainSync(d::dismiss);}
+        photo.delete();}
+        catch(Throwable e){note("probe stopped: "+e);}
+        finally{try{buttonNavigation();}catch(Exception ignored){}}}
     /** The newest raw contact the shell just added: the highest "_id=12" it lists (arguments can't hold spaces, so no "DESC"). */
     private String newestRawContact()throws Exception{java.util.regex.Matcher m=java.util.regex.Pattern.compile("_id=(\\d+)").matcher(shell("content query --uri content://com.android.contacts/raw_contacts --projection _id"));
         long best=-1;while(m.find())best=Math.max(best,Long.parseLong(m.group(1)));return best<0?"":String.valueOf(best);}
@@ -1381,6 +1438,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkLockScreenPreviews((PairedActivity)activity);
         checkHoldLink((PairedActivity)activity);
         pictureTimeSwipe((PairedActivity)activity);
+        probePhotoEditor((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();
