@@ -473,8 +473,6 @@ public final class OnDeviceSmoke extends Instrumentation {
     // ---- Real touches, as a finger would make them (through the system, so status bar and back gestures apply) ----
     private final StringBuilder probe=new StringBuilder();
     private void note(String line){probe.append(line).append('\n');try{java.nio.file.Files.write(new java.io.File(getTargetContext().getCacheDir(),"probe.txt").toPath(),probe.toString().getBytes());}catch(Exception ignored){}}
-    private String shell(String command)throws Exception{android.os.ParcelFileDescriptor out=getUiAutomation().executeShellCommand(command);
-        try(java.io.InputStream in=new android.os.ParcelFileDescriptor.AutoCloseInputStream(out)){return new String(in.readAllBytes()).trim();}}
     private void inject(long down,int action,float x,float y){android.view.MotionEvent e=android.view.MotionEvent.obtain(down,android.os.SystemClock.uptimeMillis(),action,x,y,0);
         e.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);getUiAutomation().injectInputEvent(e,true);e.recycle();}
     /** A finger tap at a point on the screen. */
@@ -493,7 +491,7 @@ public final class OnDeviceSmoke extends Instrumentation {
     private boolean showing(String text){android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();
         for(android.view.accessibility.AccessibilityWindowInfo w:getUiAutomation().getWindows()){android.view.accessibility.AccessibilityNodeInfo r=w.getRoot();if(r!=null&&!r.findAccessibilityNodeInfosByText(text).isEmpty())return true;}
         return root!=null&&!root.findAccessibilityNodeInfosByText(text).isEmpty();}
-    private boolean gestureNavigation()throws Exception{shell("cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.gestural");Thread.sleep(3000);return "2".equals(shell("settings get secure navigation_mode"));}
+    private boolean gestureNavigation()throws Exception{shell("cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.gestural");Thread.sleep(3000);return "2".equals(shell("settings get secure navigation_mode").trim());}
     private void buttonNavigation()throws Exception{shell("cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton");Thread.sleep(2000);}
     /** The crop frame's corners on the screen: left, top, right, bottom. */
     private float[] cropOnScreen(MarkupEditor editor)throws Exception{android.view.View board=(android.view.View)field(MarkupEditor.class,"board").get(editor);
@@ -1437,8 +1435,8 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkSendWhileLoading((PairedActivity)activity);
         checkLockScreenPreviews((PairedActivity)activity);
         checkHoldLink((PairedActivity)activity);
-        pictureTimeSwipe((PairedActivity)activity);
         probePhotoEditor((PairedActivity)activity);
+        pictureTimeSwipe((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();
