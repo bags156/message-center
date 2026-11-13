@@ -194,16 +194,6 @@ public final class OnDeviceSmoke extends Instrumentation {
         runOnMainSync(()->{java.util.List<android.widget.GridView> g=viewsOf(d[0].getWindow().getDecorView(),android.widget.GridView.class);recent[0]=g.isEmpty()?"":firstEmoji(g.get(0),3);d[0].dismiss();});
         check(recent[0].startsWith("🔥"),"Recent emoji didn't start with the one just picked: "+recent[0]);
         a.getSharedPreferences("emoji",android.content.Context.MODE_PRIVATE).edit().clear().commit();}
-    /**
-     * Bubble and shortcut pictures are circles with clear corners, so bubbles stay round on phones
-     * whose icon shape is a rounded square.
-     */
-    private void checkRoundBubbleIcon(){int size=216;android.graphics.Bitmap photo=android.graphics.Bitmap.createBitmap(64,64,android.graphics.Bitmap.Config.ARGB_8888);photo.eraseColor(0xff2266cc);
-        int inner=size/6+6,top=size/2-size/3+4;
-        for(android.graphics.Bitmap b:new android.graphics.Bitmap[]{Avatars.adaptive(photo,"A",0xff884422,size),Avatars.adaptive(null,"A",0xff884422,size)}){
-            int[] clear={b.getPixel(0,0),b.getPixel(inner,inner),b.getPixel(size-1-inner,size-1-inner)},solid={b.getPixel(size/2,top),b.getPixel(top,size/2),b.getPixel(size/2,size-1-top)};
-            for(int c:clear)check(android.graphics.Color.alpha(c)==0,"A bubble picture's corner isn't clear ("+Integer.toHexString(c)+")");
-            for(int c:solid)check(android.graphics.Color.alpha(c)==255,"A bubble picture's circle has a gap ("+Integer.toHexString(c)+")");}}
     /** The newest raw contact the shell just added: the highest "_id=12" it lists (arguments can't hold spaces, so no "DESC"). */
     private String newestRawContact()throws Exception{java.util.regex.Matcher m=java.util.regex.Pattern.compile("_id=(\\d+)").matcher(shell("content query --uri content://com.android.contacts/raw_contacts --projection _id"));
         long best=-1;while(m.find())best=Math.max(best,Long.parseLong(m.group(1)));return best<0?"":String.valueOf(best);}
@@ -1108,12 +1098,11 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkContactPickerDeduplicates();
         checkPinsAndWhoIsThis((PairedActivity)activity);
         checkEmojiPicker((PairedActivity)activity);
-        checkRoundBubbleIcon();
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();
         checkSentTextStays((PairedActivity)activity);
         checkBubbleStepsAside((PairedActivity)activity);
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, emoji picker tabs and search, round bubbles, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, emoji picker tabs and search, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }

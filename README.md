@@ -52,7 +52,7 @@ Picture text search uses Tesseract (open source) with its English model, packed 
 
 Opening a chat draws its newest 30 messages (and every unread one) first, so it appears at once; older saved messages are added as you scroll up toward them. Going back to the inbox reuses the rows that haven't changed, and contact photos are decoded once at the size they're shown.
 
-Bubbles are round on every phone, even where the phone's icon shape is a rounded square. Bubbles step aside for the chat you're in: opening a chat in the full app (or its Details) puts that chat's bubble away, and it comes back, collapsed and without a dot, a moment after you leave. Other people's bubbles still pop up as usual. A chat that had no bubble doesn't get one when you leave it, and new messages in the chat you're looking at don't notify, since they're already on screen.
+Bubbles step aside for the chat you're in: opening a chat in the full app (or its Details) puts that chat's bubble away, and it comes back, collapsed and without a dot, a moment after you leave. Other people's bubbles still pop up as usual. A chat that had no bubble doesn't get one when you leave it, and new messages in the chat you're looking at don't notify, since they're already on screen.
 
 Group chats use a stable collage of participant photos or initials, a group marker and an additional-member count. The group design appears in the inbox and in Android bubble/shortcut icons, with every face inside the adaptive icon’s visible area. Your own and hidden participants are excluded.
 

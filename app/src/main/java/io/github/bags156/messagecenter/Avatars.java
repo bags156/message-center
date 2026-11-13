@@ -155,24 +155,12 @@ final class Avatars {
         return out;
     }
     /**
-     * The picture for Android's adaptive icons (bubbles, conversation shortcuts): a circle filling
-     * the middle two thirds Android shows, clear around it. Android cuts these to the phone's icon
-     * shape, which isn't a circle on every phone (rounded squares made square-looking bubbles);
-     * drawn as a circle, a bubble is round whatever the shape.
+     * Full-bleed square for Android's adaptive icons (bubbles, shortcuts). Android cuts it to the
+     * phone's icon shape (a circle on Pixels, a rounded square on OnePlus) showing roughly the
+     * middle two thirds, so the initial is drawn smaller. Keep it full-bleed: a circle with clear
+     * corners came out with black corners in OnePlus's rounded-square bubbles.
      */
     static Bitmap adaptive(Bitmap photo, String letter, int color, int size) {
-        Bitmap full = adaptiveSquare(photo, letter, color, size);
-        Bitmap out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
-        Canvas canvas = new Canvas(out);
-        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-        canvas.drawCircle(size / 2f, size / 2f, size / 3f, paint);
-        paint.setXfermode(new android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN));
-        canvas.drawBitmap(full, 0, 0, paint);
-        full.recycle();
-        return out;
-    }
-    /** Full-bleed square: Android shows roughly the middle two thirds, so the initial is drawn smaller. */
-    private static Bitmap adaptiveSquare(Bitmap photo, String letter, int color, int size) {
         Bitmap out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(out);
         if (photo != null) {
