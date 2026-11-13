@@ -243,10 +243,13 @@ public class PairedActivity extends Activity {
         reconnectButton.setContentDescription("Reconnect to Google Messages");reconnectButton.setOnClickListener(v->{PairedService.restart(this);reconnectButton.setVisibility(View.GONE);});
         LinearLayout.LayoutParams bl=new LinearLayout.LayoutParams(-2,-2);bl.setMarginStart(dp(10));line.addView(reconnectButton,bl);root.addView(line);updateStatus();}
     /** The connection line only shows while something needs attention. */
+    private final Runnable statusRecheck=this::updateStatus;
     private void updateStatus(){if(statusView==null)return;statusView.setText(PairedService.status(this));
-        boolean main=screen.equals("inbox")||screen.equals("chat"),quiet=main&&PairedService.ready();
+        // A drop of a few seconds that's already on its way back isn't mentioned; look again once it's been long enough.
+        long blip=PairedService.quietFor();ui.removeCallbacks(statusRecheck);if(blip>0)ui.postDelayed(statusRecheck,blip+200);
+        boolean main=screen.equals("inbox")||screen.equals("chat"),quiet=main&&(PairedService.ready()||blip>0);
         if(statusRow!=null)statusRow.setVisibility(quiet?View.GONE:View.VISIBLE);
-        if(reconnectButton!=null)reconnectButton.setVisibility(main&&!bubble()&&PairedService.canReconnect(this)?View.VISIBLE:View.GONE);}
+        if(reconnectButton!=null)reconnectButton.setVisibility(main&&!bubble()&&blip==0&&PairedService.canReconnect(this)?View.VISIBLE:View.GONE);}
     private void note(LinearLayout parent,String value){TextView t=text(value,14,muted,false);t.setPadding(dp(15),dp(12),dp(15),dp(12));t.setBackground(shape(card,18));parent.addView(t);gap(parent,10);}
     private void toast(String value){Toast.makeText(this,value,Toast.LENGTH_LONG).show();}
     private void error(String value){if(!isFinishing())new AlertDialog.Builder(this).setTitle("Message Center").setMessage(value).setPositiveButton("OK",null).show();}

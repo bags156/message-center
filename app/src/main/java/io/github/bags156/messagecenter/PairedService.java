@@ -77,7 +77,10 @@ public final class PairedService extends Service {
     /** For the problem report: background checks and chat saves since the connection started. */
     private static final java.util.concurrent.atomic.AtomicInteger syncs=new java.util.concurrent.atomic.AtomicInteger(),chatWrites=new java.util.concurrent.atomic.AtomicInteger();
     private static final long startedAt=System.currentTimeMillis();
-    static void screenVisible(boolean visible){visibleScreens=Math.max(0,visibleScreens+(visible?1:-1));PairedService s=current;if(s!=null)s.main.post(s::scheduleSync);}
+    static void screenVisible(boolean visible){visibleScreens=Math.max(0,visibleScreens+(visible?1:-1));PairedService s=current;
+        if(s!=null)s.main.post(()->{s.scheduleSync();if(visible&&!s.ready)s.reconnectSoon("app opened");});}
+    /** While the connection's been down only a few seconds, on its way back, the app doesn't say so. Returns how much longer that lasts (0: say it). */
+    static long quietFor(){PairedService s=current;if(s==null||s.ready||!ReconnectPlan.recovering(s.status))return 0;return ReconnectPlan.quietLeft(s.problemSince,System.currentTimeMillis());}
     static String backgroundSummary(){long hours=Math.max(1,(System.currentTimeMillis()-startedAt)/3_600_000);
         return "Background: "+syncs.get()+" catch-up checks and "+chatWrites.get()+" chat saves in about "+hours+" h; checking every "+(visibleScreens>0?"minute (app open)":"5 min (screen on) / 15 min (screen off)");}
     private android.content.BroadcastReceiver screenReceiver;private android.net.ConnectivityManager.NetworkCallback networkCallback;
@@ -147,7 +150,7 @@ public final class PairedService extends Service {
         return vault.exists()?START_STICKY:START_NOT_STICKY;
     }
     private void open(String cookies) {
-        int token=generation.incrementAndGet();ready=false;emoji="";
+        int token=generation.incrementAndGet();ready=false;emoji="";lastOpenAt=System.currentTimeMillis();
         Client previous=client;client=null;if(previous!=null)previous.close();
         try {
             update(cookies==null?"Connecting to Google Messages…":"Starting device pairing…");
@@ -175,17 +178,25 @@ public final class PairedService extends Service {
     }
     // ---- Reconnecting on its own ----
     /**
-     * While stuck (Google Messages not answering, the connection ended, or it couldn't connect),
-     * the connection is opened fresh from the saved session, like tapping Reconnect: after 1, 2,
-     * 5 and 15 minutes, then every 30. Only while online; recovering cancels it.
+     * While stuck (the connection ended, it couldn't connect, or Google Messages on the phone isn't
+     * answering), the connection is opened fresh from the saved session, like tapping Reconnect:
+     * quickly at first, then easing off to every 5 minutes (ReconnectPlan). Only while online;
+     * recovering cancels it, and the network coming back, the screen turning on or the app opening
+     * try again right away.
      */
-    private static final long[] AUTO_RECONNECT_MS={60_000,120_000,300_000,900_000,1_800_000};
-    private int autoTries;private String autoWhy="";
+    private int autoTries;private String autoWhy="";private volatile long lastOpenAt;private long lastWatchdog;private int syncFailures;
     private final Runnable autoReconnect=this::autoReconnectNow;
-    private void scheduleAutoReconnect(String why){
+    private void scheduleAutoReconnect(String why){scheduleAutoReconnect(why,0);}
+    /** first: the earliest step of ReconnectPlan to start from. */
+    private void scheduleAutoReconnect(String why,int first){
         if(main.hasCallbacks(autoReconnect))return;autoWhy=why;
-        main.postDelayed(autoReconnect,AUTO_RECONNECT_MS[Math.min(autoTries,AUTO_RECONNECT_MS.length-1)]);}
+        main.postDelayed(autoReconnect,ReconnectPlan.wait(autoTries,first,Math.random()));}
     private void stopAutoReconnect(){main.removeCallbacks(autoReconnect);autoTries=0;}
+    /** A sign the connection can come back now (network back, screen on, app opened): try right away, from the quick end, unless a try just started. */
+    private void reconnectSoon(String why){
+        if(ready||inactive||!vault.exists()||!getSharedPreferences("paired",MODE_PRIVATE).getBoolean("enabled",false))return;
+        if(System.currentTimeMillis()-lastOpenAt<10_000)return;
+        Diagnostics.note("Reconnecting now: "+why);main.removeCallbacks(autoReconnect);autoTries=0;autoWhy=why;main.post(autoReconnect);}
     private void autoReconnectNow(){
         if(ready||inactive||!vault.exists()||!getSharedPreferences("paired",MODE_PRIVATE).getBoolean("enabled",false))return;
         // Offline: a new connection can't help yet. Look again in a minute (the network watcher also nudges a sync when it's back).
@@ -239,8 +250,9 @@ public final class PairedService extends Service {
                     changed(kind);
                 }
                 case "AUTH_REQUIRED" -> {ready=false;stopAutoReconnect();getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("enabled",false).apply();update("Google session expired. Sign in again.");}
-                case "DISCONNECTED" -> {ready=false;update("Connection ended • reconnecting on its own");scheduleAutoReconnect("connection ended");}
-                case "RECONNECTING" -> {ready=false;update("Waiting for Google Messages • reconnecting on its own");scheduleAutoReconnect("waiting for Google Messages");}
+                case "DISCONNECTED" -> {ready=false;update("Connection ended • reconnecting on its own");main.post(()->scheduleAutoReconnect("connection ended"));}
+                // Google Messages on the phone isn't answering: the connection keeps asking by itself, so a fresh one waits a little longer.
+                case "RECONNECTING" -> {ready=false;update("Waiting for Google Messages • reconnecting on its own");main.post(()->scheduleAutoReconnect("waiting for Google Messages",2));}
                 case "RECOVERED" -> {ready=true;stopAutoReconnect();update("Connected to Google Messages");scheduleCodeSweep();main.post(this::flushOutbox);main.post(this::flushReadReceipts);main.post(this::flushMediaOutbox);main.post(()->requestSync(false));}
                 case "STALE" -> main.post(()->requestSync(true));
                 case "INACTIVE" -> {inactive=true;stopAutoReconnect();update("Google Messages for web is open somewhere else. Open Message Center to switch back.");}
@@ -281,9 +293,21 @@ public final class PairedService extends Service {
     private void requestSync(boolean throttled) {
         if(!ready||syncing||network.isShutdown())return;long now=System.currentTimeMillis();if(throttled&&now-lastSync<SYNC_MIN_GAP_MS)return;
         syncing=true;lastSync=now;int token=generation.get();
-        network.execute(()->{try{if(generation.get()==token&&client!=null&&ready)sync(client);}catch(Exception ignored){}
-            finally{main.post(()->{syncing=false;scheduleSync();});}});
+        network.execute(()->{boolean failed=false;
+            try{if(generation.get()==token&&client!=null&&ready)sync(client);}catch(Exception e){failed=generation.get()==token;}
+            boolean broke=failed;main.post(()->{syncing=false;checkFailed(broke,token);scheduleSync();});});
     }
+    /**
+     * The catch-up check doubles as a watchdog. After a network switch the connection can look
+     * fine but be dead; asking Google then fails. One failure is checked again in 10 seconds;
+     * two in a row reopen the connection (at most every 10 minutes, since if Google Messages on
+     * the phone is offline, reopening can't help).
+     */
+    private void checkFailed(boolean failed,int token){if(!failed){syncFailures=0;return;}if(generation.get()!=token||!ready)return;
+        syncFailures++;Diagnostics.note("A check with Google failed ("+syncFailures+" in a row)");
+        if(syncFailures<2){main.postDelayed(()->requestSync(false),10_000);return;}
+        syncFailures=0;long now=System.currentTimeMillis();if(now-lastWatchdog<ReconnectPlan.WATCHDOG_GAP_MS)return;lastWatchdog=now;
+        Diagnostics.note("The connection went quiet; reopening it");ready=false;update("Reconnecting…");network.execute(()->open(null));scheduleAutoReconnect("went quiet");}
     /**
      * Compares Google's newest chats with what arrived live. Google can stop pushing to a
      * paired session without an error; when that happened, the missed messages are fetched,
@@ -324,12 +348,13 @@ public final class PairedService extends Service {
     /** Pushes most often stall when the phone wakes or changes networks, so check right then. */
     private void watchWakeAndNetwork() {
         screenReceiver=new android.content.BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){
-            if(Intent.ACTION_SCREEN_OFF.equals(i.getAction()))scheduleSync();else requestSync(true);}};
+            if(Intent.ACTION_SCREEN_OFF.equals(i.getAction()))scheduleSync();else if(ready)requestSync(true);else reconnectSoon("screen on");}};
         android.content.IntentFilter filter=new android.content.IntentFilter(Intent.ACTION_SCREEN_ON);filter.addAction(Intent.ACTION_USER_PRESENT);filter.addAction(Intent.ACTION_SCREEN_OFF);
         registerReceiver(screenReceiver,filter,Context.RECEIVER_NOT_EXPORTED);
         networkCallback=new android.net.ConnectivityManager.NetworkCallback(){
             // Give the connection a few seconds to come back on the new network before checking.
-            @Override public void onAvailable(android.net.Network n){main.postDelayed(()->requestSync(true),4000);}};
+            // Down: reconnect as soon as the network's settled (2 s), rather than waiting out the next try.
+            @Override public void onAvailable(android.net.Network n){main.postDelayed(()->{if(ready)requestSync(true);else reconnectSoon("network back");},ready?4000:2000);}};
         try{getSystemService(android.net.ConnectivityManager.class).registerDefaultNetworkCallback(networkCallback);}catch(Exception e){networkCallback=null;}
     }
     static void loadChats(String cursor,int folder,Result done) {
