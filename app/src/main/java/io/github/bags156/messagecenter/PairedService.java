@@ -49,7 +49,10 @@ public final class PairedService extends Service {
     private static final long PROBLEM_GRACE_MS=3*60_000L;
     private static volatile PairedService current;
     private static volatile String pendingCookies;
-    private final ExecutorService network=Executors.newSingleThreadExecutor(),events=Executors.newSingleThreadExecutor();
+    /** The line for loading and checking (swapped for a fresh one if a request gets stuck; see stuckCheck). */
+    private volatile ExecutorService network=Executors.newSingleThreadExecutor();private final ExecutorService events=Executors.newSingleThreadExecutor();
+    /** Texts go out on their own line, so a slow load or a reconnect never holds up a message you sent. */
+    private final ExecutorService texts=Executors.newSingleThreadExecutor();
     /** Attachment downloads and uploads run here so a large file never delays sending or loading. */
     private final ExecutorService sending=Executors.newSingleThreadExecutor(),media=Executors.newFixedThreadPool(2),phoneRequests=Executors.newSingleThreadExecutor(),readRequests=Executors.newSingleThreadExecutor();
     private final Handler main=new Handler(Looper.getMainLooper());
@@ -101,6 +104,7 @@ public final class PairedService extends Service {
     static String emoji() {PairedService s=current;return s==null?"":s.emoji;}
     static boolean ready() {PairedService s=current;return s!=null && s.ready;}
     static void execute(Operation work,Result result) {run(work,result,0);}
+    static void executeText(Operation work,Result result) {run(work,result,3);}
     static void executeMedia(Operation work,Result result) {run(work,result,1);}
     /**
      * Sending a photo or file. It has a line of its own: downloads (every photo in a chat, its
@@ -111,10 +115,11 @@ public final class PairedService extends Service {
     private static void run(Operation work,Result result,int lane) {
         PairedService s=current;
         if(s==null || !s.ready || s.client==null) {result.done("","Connect to Google Messages first.");return;}
-        (lane==2?s.sending:lane==1?s.media:s.network).execute(()-> {
-            String value="",error="";
+        (lane==3?s.texts:lane==2?s.sending:lane==1?s.media:s.network).execute(()-> {
+            String value="",error="";if(lane==0)s.laneSince=System.currentTimeMillis();
             try {if(!s.ready||s.client==null)throw new IllegalStateException("The connection is not ready.");value=work.run(s.client);}
             catch(Exception e){error=e.getMessage()==null ? "This operation failed.":e.getMessage();}
+            finally{if(lane==0)s.laneSince=0;}
             String v=value,err=error;s.main.post(()->result.done(v,err));
         });
     }
@@ -125,7 +130,7 @@ public final class PairedService extends Service {
         context.stopService(new Intent(context,PairedService.class));
     }
     @Override public void onCreate() {
-        super.onCreate();current=this;Diagnostics.init(this);HevcSandbox.init(this);GivenNames.init(this);Nicknames.load(this);store=new PairedStore(this);vault=new SessionVault(this);outbox=new Outbox(this);receipts=new ReadReceiptQueue(this);attachmentOutbox=new MediaOutbox(this);attachmentOutbox.recover();outbox.recover();watchWakeAndNetwork();Arrivals.registerAll(this);
+        super.onCreate();current=this;Diagnostics.init(this);HevcSandbox.init(this);GivenNames.init(this);Nicknames.load(this);store=new PairedStore(this);vault=new SessionVault(this);outbox=new Outbox(this);receipts=new ReadReceiptQueue(this);attachmentOutbox=new MediaOutbox(this);attachmentOutbox.recover();outbox.recover();watchWakeAndNetwork();main.postDelayed(stuckCheck,30_000);Arrivals.registerAll(this);
         NotificationManager manager=getSystemService(NotificationManager.class);
         try{manager.deleteNotificationChannel(OLD_CONNECTION);}catch(Exception ignored){}
         NotificationChannel running=new NotificationChannel(RUNNING,"Running in background",NotificationManager.IMPORTANCE_MIN);
@@ -150,7 +155,9 @@ public final class PairedService extends Service {
         return vault.exists()?START_STICKY:START_NOT_STICKY;
     }
     private void open(String cookies) {
-        int token=generation.incrementAndGet();ready=false;emoji="";lastOpenAt=System.currentTimeMillis();
+        int token=generation.incrementAndGet();ready=false;emoji="";lastOpenAt=System.currentTimeMillis();opening=true;try{openNow(cookies,token);}finally{opening=false;}}
+    private volatile boolean opening;
+    private void openNow(String cookies,int token){
         Client previous=client;client=null;if(previous!=null)previous.close();
         try {
             update(cookies==null?"Connecting to Google Messages…":"Starting device pairing…");
@@ -195,12 +202,15 @@ public final class PairedService extends Service {
     /** A sign the connection can come back now (network back, screen on, app opened): try right away, from the quick end, unless a try just started. */
     private void reconnectSoon(String why){
         if(ready||inactive||!vault.exists()||!getSharedPreferences("paired",MODE_PRIVATE).getBoolean("enabled",false))return;
-        if(System.currentTimeMillis()-lastOpenAt<10_000)return;
+        if(opening||System.currentTimeMillis()-lastOpenAt<10_000)return;
+        // Google Messages on the phone not answering: the connection's still up and asking by itself; a fresh one wouldn't help.
+        if(status!=null&&status.startsWith("Waiting for Google Messages"))return;
         Diagnostics.note("Reconnecting now: "+why);main.removeCallbacks(autoReconnect);autoTries=0;autoWhy=why;main.post(autoReconnect);}
     private void autoReconnectNow(){
         if(ready||inactive||!vault.exists()||!getSharedPreferences("paired",MODE_PRIVATE).getBoolean("enabled",false))return;
         // Offline: a new connection can't help yet. Look again in a minute (the network watcher also nudges a sync when it's back).
         if(!online()){main.postDelayed(autoReconnect,60_000);return;}
+        if(opening){main.postDelayed(autoReconnect,15_000);return;}
         autoTries++;Diagnostics.note("Reconnecting on its own (try "+autoTries+", "+autoWhy+")");
         network.execute(()->open(null));
         // If this try doesn't connect, the next one comes later; connecting cancels it.
@@ -293,8 +303,8 @@ public final class PairedService extends Service {
     private void requestSync(boolean throttled) {
         if(!ready||syncing||network.isShutdown())return;long now=System.currentTimeMillis();if(throttled&&now-lastSync<SYNC_MIN_GAP_MS)return;
         syncing=true;lastSync=now;int token=generation.get();
-        network.execute(()->{boolean failed=false;
-            try{if(generation.get()==token&&client!=null&&ready)sync(client);}catch(Exception e){failed=generation.get()==token;}
+        network.execute(()->{boolean failed=false;laneSince=System.currentTimeMillis();
+            try{if(generation.get()==token&&client!=null&&ready)sync(client);}catch(Exception e){failed=generation.get()==token;}finally{laneSince=0;}
             boolean broke=failed;main.post(()->{syncing=false;checkFailed(broke,token);scheduleSync();});});
     }
     /**
@@ -303,6 +313,19 @@ public final class PairedService extends Service {
      * two in a row reopen the connection (at most every 10 minutes, since if Google Messages on
      * the phone is offline, reopening can't help).
      */
+    /** When the request now running on the loading line started (0: none). */
+    private volatile long laneSince;
+    private final Runnable stuckCheck=this::stuckCheck;
+    /**
+     * A request to Google that hasn't come back in 90 seconds is stuck (the connection died under
+     * it). Everything else would wait behind it, so the line is replaced with a fresh one and the
+     * connection reopened, which also ends the stuck request.
+     */
+    private void stuckCheck(){main.removeCallbacks(stuckCheck);main.postDelayed(stuckCheck,30_000);long since=laneSince;
+        if(since==0||System.currentTimeMillis()-since<90_000||opening)return;
+        Diagnostics.note("A request to Google was stuck for "+((System.currentTimeMillis()-since)/1000)+" s; starting over");
+        ExecutorService old=network;network=Executors.newSingleThreadExecutor();laneSince=0;old.shutdownNow();syncing=false;
+        ready=false;update("Reconnecting…");network.execute(()->open(null));scheduleAutoReconnect("a request was stuck");}
     private void checkFailed(boolean failed,int token){if(!failed){syncFailures=0;return;}if(generation.get()!=token||!ready)return;
         syncFailures++;Diagnostics.note("A check with Google failed ("+syncFailures+" in a row)");
         if(syncFailures<2){main.postDelayed(()->requestSync(false),10_000);return;}
@@ -861,7 +884,7 @@ public final class PairedService extends Service {
         if(chat==null){outbox.setState(id,Outbox.FAILED,"This conversation isn't synced yet. Open it, then retry.");changed("OUTBOX");main.post(this::flushOutbox);return;}
         flushing=true;outbox.setState(id,Outbox.SENDING,"");changed("OUTBOX");
         String chatId=o.optString("chat");
-        execute(c->c.sendText(chat.toString(),o.optString("text"),o.optString("reply")),(v,e)->{flushing=false;
+        executeText(c->c.sendText(chat.toString(),o.optString("text"),o.optString("reply")),(v,e)->{flushing=false;
             // Accepted: it stays drawn until Google's copy is in the chat, so the message never vanishes for a moment.
             // Marked first, then checked, so a copy that arrives at any point in between still clears it.
             if(e.isEmpty()){if(v==null||v.isEmpty())outbox.remove(id);else{outbox.sent(id,v);if(store.hasSent(chatId,v))outbox.remove(id);}}
@@ -874,7 +897,7 @@ public final class PairedService extends Service {
         PairedService s=current;
         if(s==null||!s.ready){new Outbox(context).add(chat,text,reply);if(s!=null)s.changed("OUTBOX");done.done("queued","");return;}
         JSONObject c=s.store.chat(chat);if(c==null){done.done("","Refresh this conversation before sending.");return;}
-        execute(cl->cl.sendText(c.toString(),text,reply),done);
+        executeText(cl->cl.sendText(c.toString(),text,reply),done);
     }
     /** Sends whatever is waiting in the outbox now, starting the connection first if it isn't running. */
     static void flushOutboxNow(Context context) {PairedService s=current;
@@ -903,10 +926,10 @@ public final class PairedService extends Service {
         if(kind.equals("CONVERSATION")||kind.equals("MESSAGE")){main.removeCallbacks(widgetRefresh);main.postDelayed(widgetRefresh,2000);}}
     @Override public IBinder onBind(Intent intent) {return null;}
     @Override public void onDestroy() {
-        generation.incrementAndGet();ready=false;main.removeCallbacks(autoReconnect);main.removeCallbacks(syncTick);main.removeCallbacks(problemCheck);main.removeCallbacks(codeSweep);main.removeCallbacks(receiptRetry);if(current==this)current=null;
+        generation.incrementAndGet();ready=false;main.removeCallbacks(autoReconnect);main.removeCallbacks(syncTick);main.removeCallbacks(problemCheck);main.removeCallbacks(codeSweep);main.removeCallbacks(receiptRetry);main.removeCallbacks(stuckCheck);if(current==this)current=null;
         try{if(screenReceiver!=null)unregisterReceiver(screenReceiver);}catch(Exception ignored){}
         try{if(networkCallback!=null)getSystemService(android.net.ConnectivityManager.class).unregisterNetworkCallback(networkCallback);}catch(Exception ignored){}
-        Client old=client;client=null;network.shutdownNow();events.shutdownNow();media.shutdownNow();sending.shutdownNow();phoneRequests.shutdownNow();readRequests.shutdownNow();
+        Client old=client;client=null;network.shutdownNow();texts.shutdownNow();events.shutdownNow();media.shutdownNow();sending.shutdownNow();phoneRequests.shutdownNow();readRequests.shutdownNow();
         if(old!=null)new Thread(old::close,"paired-disconnect").start();
         // SQLiteOpenHelper stays alive until in-flight JNI calls return; the process
         // reclaims it. Closing here races with a final incoming update.

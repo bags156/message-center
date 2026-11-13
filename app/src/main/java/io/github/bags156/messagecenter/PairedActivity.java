@@ -451,8 +451,8 @@ public class PairedActivity extends Activity {
         content.setPadding(dp(3),0,dp(3),dp(8));ScrollView sc=new ScrollView(this);sc.setVerticalScrollBarEnabled(false);sc.addView(content);
         View focused=getCurrentFocus();if(focused!=null)hideKeyboard(focused);
         d[0]=sheet(sc,WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING|WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);return d[0];}
-    private void refreshInbox(boolean force){if(!PairedService.ready()||busy)return;long now=System.currentTimeMillis();if(!force&&now-lastInboxRefresh<30_000)return;lastInboxRefresh=now;loadChats(false);}
-    private void loadOlderChats(){if(busy||!PairedService.ready())return;if(store.page("folder:"+folder,false).isEmpty())return;loadChats(true);}
+    private void refreshInbox(boolean force){if(!PairedService.ready()||isBusy())return;long now=System.currentTimeMillis();if(!force&&now-lastInboxRefresh<30_000)return;lastInboxRefresh=now;loadChats(false);}
+    private void loadOlderChats(){if(isBusy()||!PairedService.ready())return;if(store.page("folder:"+folder,false).isEmpty())return;loadChats(true);}
     private void renderInbox(){if(items==null||!screen.equals("inbox"))return;
         // Replacing a touched row cancels Android's gesture; restoring an anchor also stops a fling.
         // Coalesce live updates until the finger is up and scrolling has actually settled.
@@ -681,7 +681,7 @@ public class PairedActivity extends Activity {
             case "waiting","queued","retrying"->"Read receipt sending…";
             default->null;};
         if(label==null)return null;TextView t=text(label,11,muted,false);t.setPadding(dp(16),dp(2),dp(16),0);t.setContentDescription(label+". Tap for details.");t.setOnClickListener(v->details());return t;}
-    private void loadChats(boolean more){if(busy)return;busy=true;int selected=folder;String cursor=more?store.page("folder:"+selected,false):"";
+    private void loadChats(boolean more){if(isBusy())return;busy=true;busySince=System.currentTimeMillis();int selected=folder;String cursor=more?store.page("folder:"+selected,false):"";
         PairedService.loadChats(cursor,selected,(v,e)->{busy=false;if(!e.isEmpty()&&!more)toast(e);if(screen.equals("inbox"))renderInbox();});}
 
     // ---- Conversation ----
@@ -1140,12 +1140,12 @@ public class PairedActivity extends Activity {
     private void findOriginal(String target,int pagesLeft){if(!screen.equals("chat"))return;JSONObject o=store.messageByReference(chatId,target);if(o!=null){showMessage(o);return;}
         String id=chatId,cursor=store.page("messages:"+id,false);
         if(pagesLeft<=0||cursor.isEmpty()||!PairedService.ready()){toast("The original message isn't in the synced history.");return;}
-        if(busy){toast("Still loading. Try again in a moment.");return;}if(pagesLeft==6)toast("Finding the original message…");
-        busy=true;PairedService.loadMessages(id,cursor,(v,e)->{busy=false;if(!e.isEmpty()){toast(e);return;}if(screen.equals("chat")&&chatId.equals(id))findOriginal(target,pagesLeft-1);});}
+        if(isBusy()){toast("Still loading. Try again in a moment.");return;}if(pagesLeft==6)toast("Finding the original message…");
+        busy=true;busySince=System.currentTimeMillis();PairedService.loadMessages(id,cursor,(v,e)->{busy=false;if(!e.isEmpty()){toast(e);return;}if(screen.equals("chat")&&chatId.equals(id))findOriginal(target,pagesLeft-1);});}
     private void refreshReply(JSONObject message){
-        if(busy){toast("Still loading. Try again in a moment.");return;}String id=chatId,mid=message.optString("messageID");
+        if(isBusy()){toast("Still loading. Try again in a moment.");return;}String id=chatId,mid=message.optString("messageID");
         if(!PairedService.ready()){unlinkedReply(message);return;}
-        busy=true;toast("Refreshing this reply from Google Messages…");
+        busy=true;busySince=System.currentTimeMillis();toast("Refreshing this reply from Google Messages…");
         PairedService.refreshReply(id,mid,(v,e)->{busy=false;if(!screen.equals("chat")||!chatId.equals(id))return;
             JSONObject current=store.message(mid);if(current==null)current=message;
             String target=store.replyTarget(current);renderMessages(false);
@@ -1288,7 +1288,7 @@ public class PairedActivity extends Activity {
     }
     private static boolean sending(String status){return switch(status){case "OUTGOING_SENDING","OUTGOING_YET_TO_SEND","OUTGOING_RESENDING","OUTGOING_VALIDATING","OUTGOING_AWAITING_RETRY"->true;default->false;};}
     /** While a message you sent shows "Sending…", check with Google every 20 seconds (for up to 10 minutes), in case an update was missed. */
-    private final Runnable recheckSending=()->{if(screen.equals("chat")&&PairedService.ready()&&!busy)loadMessages(false);};
+    private final Runnable recheckSending=()->{if(screen.equals("chat")&&PairedService.ready()&&!isBusy())loadMessages(false);};
     private void watchSending(List<JSONObject> messages,JSONObject c){ui.removeCallbacks(recheckSending);long now=System.currentTimeMillis();
         // A photo sent to your phone but not shown back by Google yet: keep checking too.
         for(PendingMedia p:pendingMedia)if(p.chat.equals(chatId)&&p.sent>0&&now-p.sent<10*60_000){ui.postDelayed(recheckSending,20_000);return;}
@@ -1315,12 +1315,12 @@ public class PairedActivity extends Activity {
         }
         return r;
     }
-    private void loadOlderMessages(){if(busy||!screen.equals("chat"))return;
+    private void loadOlderMessages(){if(isBusy()||!screen.equals("chat"))return;
         // Older saved messages first (no network), keeping your place; then older pages from Google.
         if(moreSaved){limit+=WINDOW;renderMessages(false);return;}String cursor=store.page("messages:"+chatId,false);if(cursor.isEmpty())return;anchorOlder=true;loadMessages(true);}
-    private void loadMessages(boolean more){if(busy)return;String id=chatId,cursor=more?store.page("messages:"+id,false):"";
+    private void loadMessages(boolean more){if(isBusy())return;String id=chatId,cursor=more?store.page("messages:"+id,false):"";
         if(more&&cursor.isEmpty()){anchorOlder=false;String note=store.page("messages:"+id,true);toast(note.isEmpty()?"Refresh this conversation first.":note);return;}
-        busy=true;PairedService.loadMessages(id,cursor,(v,e)->{busy=false;if(!e.isEmpty()){anchorOlder=false;toast(e);}if(screen.equals("chat")&&chatId.equals(id))messagesLoaded(more);});}
+        busy=true;busySince=System.currentTimeMillis();PairedService.loadMessages(id,cursor,(v,e)->{busy=false;if(!e.isEmpty()){anchorOlder=false;toast(e);}if(screen.equals("chat")&&chatId.equals(id))messagesLoaded(more);});}
     /** Google sent this chat's messages: show them without moving you (renderMessages keeps your place unless you were at the bottom). */
     private void messagesLoaded(boolean more){if(more)limit+=100;renderMessages(false);markReadIfAllowed();}
     /**
@@ -1359,7 +1359,8 @@ public class PairedActivity extends Activity {
             default -> "Read request queued for Google Messages.";};
         receiptStatusView.setText(value);
     }
-    private void send(){if(busy||composer==null)return;repliedSinceInbox=true;unreadSince=-1;String body=composer.getText().toString(),id=chatId,reply=replyId;JSONObject c=store.chat(id);
+    private boolean sendingText;
+    private void send(){if(composer==null)return;repliedSinceInbox=true;unreadSince=-1;String body=composer.getText().toString(),id=chatId,reply=replyId;JSONObject c=store.chat(id);
         boolean files=false;for(Outgoing o:outgoing)if(!o.sending)files=true;
         if(body.trim().isEmpty()&&!files)return;if(c==null){error("Refresh this conversation before sending.");return;}
         if(sendButton!=null)sendButton.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM);
@@ -1368,7 +1369,9 @@ public class PairedActivity extends Activity {
         if(files){sendAttachments(c,body.trim(),reply);return;}
         if(undoSendOn()){long hold=undoSendMs();JSONObject held=outbox.add(id,body,reply,hold);drafts.remove(id);composer.setText("");cancelReply();renderMessages(true);
             String hid=held.optString("id");ui.postDelayed(()->releaseHeld(hid),hold);return;}
-        busy=true;PairedService.sendOrQueue(this,id,body,reply,(value,e)->{busy=false;
+        // Its own guard (not the one for loading): a slow or stuck load never stops you sending.
+        if(sendingText)return;sendingText=true;ui.postDelayed(()->sendingText=false,30_000);
+        PairedService.sendOrQueue(this,id,body,reply,(value,e)->{sendingText=false;
             if(!e.isEmpty()){error(e);return;}if("queued".equals(value))toast("Saved. It will send when Message Center reconnects.");drafts.remove(id);if(screen.equals("chat")&&chatId.equals(id)){composer.setText("");cancelReply();}
             if(screen.equals("chat")&&chatId.equals(id))loadMessages(false);});}
     private void startChat(String typed){if(!PairedService.ready()){toast("Connect first, then start a chat.");return;}String n=ChatText.normalizeNumber(typed),value=n.isEmpty()?typed:n;
@@ -2432,11 +2435,11 @@ public class PairedActivity extends Activity {
             LinearLayout.LayoutParams tl=new LinearLayout.LayoutParams(dp(72),dp(72));tl.setMarginEnd(dp(8));attachStrip.addView(tile,tl);}
         boolean photos=false,preparing=false;long bytes=0;for(Outgoing o:outgoing)if(o.mime.startsWith("image/")){photos=true;preparing|=o.preparing;bytes+=o.prepared!=null?o.prepared.file.length():Math.min(o.file.length(),PhotoQuality.bytes(photoQuality(),false));}
         if(photos){TextView quality=text("Photo quality: "+PhotoQuality.label(photoQuality())+"\n"+(preparing?"Preparing size…":PhotoQuality.size(bytes))+" • Tap to change",13,ink,false);quality.setPadding(dp(12),dp(10),dp(12),dp(10));quality.setBackground(shape(surface,14));
-            quality.setContentDescription("Photo quality: "+PhotoQuality.label(photoQuality())+(preparing?", preparing":", "+PhotoQuality.size(bytes)));quality.setOnClickListener(v->{if(!busy)choosePhotoQuality();});attachStrip.addView(quality,new LinearLayout.LayoutParams(-2,dp(72)));}
+            quality.setContentDescription("Photo quality: "+PhotoQuality.label(photoQuality())+(preparing?", preparing":", "+PhotoQuality.size(bytes)));quality.setOnClickListener(v->{if(!isBusy())choosePhotoQuality();});attachStrip.addView(quality,new LinearLayout.LayoutParams(-2,dp(72)));}
         boolean videos=false;for(Outgoing o:outgoing)if(o.mime.startsWith("video/"))videos=true;
         if(videos){JSONObject c=store.chat(chatId);boolean mms=c==null||!PairedProtocol.rcs(c);
             TextView vq=text("Video quality: "+(mms?"picture message (under 1 MB)":PhotoQuality.label(videoQuality()))+"\n"+(mms?"Made to fit MMS":VideoPlan.describe(videoQuality()).replace(", otherwise sharp 1080p",""))+(mms?"":" • Tap to change"),13,ink,false);
-            vq.setPadding(dp(12),dp(10),dp(12),dp(10));vq.setBackground(shape(surface,14));vq.setMaxWidth(dp(220));if(!mms)vq.setOnClickListener(v->{if(!busy)chooseVideoQuality();});
+            vq.setPadding(dp(12),dp(10),dp(12),dp(10));vq.setBackground(shape(surface,14));vq.setMaxWidth(dp(220));if(!mms)vq.setOnClickListener(v->{if(!isBusy())chooseVideoQuality();});
             LinearLayout.LayoutParams vl=new LinearLayout.LayoutParams(-2,dp(72));vl.setMarginStart(dp(8));attachStrip.addView(vq,vl);}
         updateComposeButton();}
     /** Opens an attached photo to draw on, add text to, or crop; the edited copy takes its place. */
@@ -2459,7 +2462,7 @@ public class PairedActivity extends Activity {
      */
     private void queueAttachments(JSONObject c,List<Outgoing> batch,String caption,String reply,String replaces,boolean fromComposer){
         if(batch.isEmpty())return;String id=c.optString("conversationID"),quality=photoQuality(),videos=videoQuality();boolean mms=!PairedProtocol.rcs(c);
-        for(Outgoing o:batch)o.sending=true;if(fromComposer){busy=true;if(composer!=null)composer.setEnabled(false);renderAttachments();}
+        for(Outgoing o:batch)o.sending=true;if(fromComposer){busy=true;busySince=System.currentTimeMillis();if(composer!=null)composer.setEnabled(false);renderAttachments();}
         android.content.Context app=getApplicationContext();
         photoPreparation.execute(()->{List<Outgoing> saved=new ArrayList<>();String problem="";MediaOutbox box=new MediaOutbox(app);
             for(int i=0;i<batch.size();i++){Outgoing o=batch.get(i);try{
@@ -3489,6 +3492,9 @@ public class PairedActivity extends Activity {
     /** The button shows the mic when there's nothing to send yet. */
     private boolean micShowing(){if(composer==null)return false;boolean files=false;for(Outgoing o:outgoing)if(!o.sending)files=true;return composer.getText().toString().trim().isEmpty()&&!files;}
     /** Tap: dictate (mic), stop dictating, or send. Press and hold the mic to record a voice message instead. */
+    /** Loading chats or messages is underway (one at a time). A load that never answers stops counting after a minute, so nothing waits on it forever. */
+    private long busySince;
+    private boolean isBusy(){if(busy&&System.currentTimeMillis()-busySince>60_000){busy=false;Diagnostics.note("A load took over a minute; stopped waiting for it");}return busy;}
     private void sendOrRecord(){if(dictation!=null){stopDictation();return;}if(micShowing())startDictation();else send();}
 
     // ---- Dictation: tap the mic, talk, and the words go into the message box ----

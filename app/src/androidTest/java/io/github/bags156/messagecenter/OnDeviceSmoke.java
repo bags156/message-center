@@ -400,6 +400,18 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(viewsWithDescription(a,"Data & about")>0,"Clearing the settings search didn't bring the pages back");
         runOnMainSync(a::onBackPressed);waitForIdleSync();onMainCall(()->{where[0]=(String)screen.get(a);return null;});
         check("inbox".equals(where[0]),"Back from the main settings page didn't go to the inbox ("+where[0]+")");}
+    /**
+     * Send works while a load is underway (or stuck): the message goes into the outbox instead of
+     * the tap doing nothing. A load stuck for over a minute stops counting as underway.
+     */
+    private void checkSendWhileLoading(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();
+        java.lang.reflect.Method thread=method("thread",String.class),send=method("send"),isBusy=method("isBusy");java.lang.reflect.Field busy=field("busy"),since=field("busySince"),box=field("composer");
+        onMainCall(()->{thread.invoke(a,"menu-check");busy.setBoolean(a,true);since.setLong(a,System.currentTimeMillis());((android.widget.EditText)box.get(a)).setText("Sent while loading");return send.invoke(a);});waitForIdleSync();
+        Outbox out=new Outbox(ctx);JSONObject sent=null;for(JSONObject o:out.forChat("menu-check"))if("Sent while loading".equals(o.optString("text")))sent=o;
+        if(sent!=null)out.remove(sent.optString("id"));
+        check(sent!=null,"Tapping Send did nothing while a load was underway");
+        boolean[] stale={true};onMainCall(()->{busy.setBoolean(a,true);since.setLong(a,System.currentTimeMillis()-61_000);stale[0]=(Boolean)isBusy.invoke(a);busy.setBoolean(a,false);return null;});
+        check(!stale[0],"A load stuck for over a minute still counted as underway");}
     /** The newest raw contact the shell just added: the highest "_id=12" it lists (arguments can't hold spaces, so no "DESC"). */
     private String newestRawContact()throws Exception{java.util.regex.Matcher m=java.util.regex.Pattern.compile("_id=(\\d+)").matcher(shell("content query --uri content://com.android.contacts/raw_contacts --projection _id"));
         long best=-1;while(m.find())best=Math.max(best,Long.parseLong(m.group(1)));return best<0?"":String.valueOf(best);}
@@ -1309,11 +1321,12 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkInboxMenu((PairedActivity)activity);
         checkDialogLook((PairedActivity)activity);
         checkSettingsPages((PairedActivity)activity);
+        checkSendWhileLoading((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();
         checkSentTextStays((PairedActivity)activity);
         checkBubbleStepsAside((PairedActivity)activity);
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, emoji picker tabs and search, notes, chat menu sheet, inbox menu sheet, dialog look, settings pages, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, emoji picker tabs and search, notes, chat menu sheet, inbox menu sheet, dialog look, settings pages, send while loading, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }
