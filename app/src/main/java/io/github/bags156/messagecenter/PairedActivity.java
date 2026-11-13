@@ -741,6 +741,8 @@ public class PairedActivity extends Activity {
      * Delete set apart in red at the bottom.
      */
     private Dialog chatMenu(View anchor){JSONObject c=store.chat(chatId);if(c==null)return null;String id=chatId;boolean group=PairedProtocol.other(c)==null;
+        // The keyboard goes down first, so the sheet has the screen's height and isn't squeezed above it.
+        View focused=getCurrentFocus();if(focused!=null)hideKeyboard(focused);
         LinearLayout content=vertical();Dialog[] d=new Dialog[1];
         java.util.function.Function<Runnable,Runnable> closing=r->()->{if(d[0]!=null)d[0].dismiss();r.run();};
         // Who it's with.
