@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dialogs (and date and time pickers) match the app's sheets: rounded, its colors, quieter buttons. -->
+    <color name="dialog_surface">#FFFFFF</color>
+    <color name="dialog_text">#1A1B20</color>
+    <color name="dialog_muted">#5D5F67</color>
+    <color name="dialog_accent">#2864F0</color>
+    <dimen name="dialog_radius">28dp</dimen>
+</resources>

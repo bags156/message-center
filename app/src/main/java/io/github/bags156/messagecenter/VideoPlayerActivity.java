@@ -170,7 +170,7 @@ public final class VideoPlayerActivity extends Activity {
 
     private void cantPlay() {
         if (isFinishing()) return;
-        new AlertDialog.Builder(this).setTitle("Can't play this video here").setMessage("Android's video player can't handle this file. Another app on your phone may be able to.")
+        new AlertDialog.Builder(this,R.style.AppDialog).setTitle("Can't play this video here").setMessage("Android's video player can't handle this file. Another app on your phone may be able to.")
             .setPositiveButton("Open in another app", (d, w) -> {
                 Intent view = new Intent(Intent.ACTION_VIEW).setDataAndType(uri(), mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 try { startActivity(view); } catch (Exception e) { Toast.makeText(this, "No app on this phone can open it. Try Share.", Toast.LENGTH_SHORT).show(); }

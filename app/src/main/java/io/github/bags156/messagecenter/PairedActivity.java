@@ -70,7 +70,6 @@ import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -410,9 +409,11 @@ public class PairedActivity extends Activity {
     private boolean needsReply(JSONObject c){String id=c.optString("conversationID");return NeedsReply.pending(store.replyBoundary(id,c),c,chatSettings.replyDismissed(id),chatSettings.replySnoozed(id),System.currentTimeMillis());}
     private void replyFollowUp(JSONObject c){String id=c.optString("conversationID");long latest=NeedsReply.incoming(store.replyBoundary(id,c),c);
         String[] choices={"Mark handled","Show in this list in 1 hour","Show tomorrow","Show in 3 days","Clear follow-up snooze / handled mark"};
-        new AlertDialog.Builder(this).setTitle("Needs a reply").setItems(choices,(d,which)->{long now=System.currentTimeMillis();if(which==0)chatSettings.dismissReply(id,latest);
+        List<Runnable> actions=new ArrayList<>();
+        for(int i=0;i<choices.length;i++){int which=i;actions.add(()->{long now=System.currentTimeMillis();if(which==0)chatSettings.dismissReply(id,latest);
             else if(which==4){chatSettings.dismissReply(id,0);chatSettings.snoozeReply(id,0);}else chatSettings.snoozeReply(id,now+(which==1?3_600_000L:which==2?86_400_000L:3*86_400_000L));
-            if(screen.equals("inbox"))renderInbox();else if(screen.equals("details"))details();}).setNegativeButton("Close",null).show();}
+            if(screen.equals("inbox"))renderInbox();else if(screen.equals("details"))details();});}
+        menuSheet("Needs a reply",java.util.Arrays.asList(choices),actions);}
     private void toggleSearch(){if(searchRow==null)return;boolean show=searchRow.getVisibility()!=View.VISIBLE;searchRow.setVisibility(show?View.VISIBLE:View.GONE);
         EditText field=(EditText)searchRow.getChildAt(0);if(show){field.requestFocus();getSystemService(InputMethodManager.class).showSoftInput(field,0);}else{field.setText("");hideKeyboard(field);}}
     /**
@@ -1727,8 +1728,8 @@ public class PairedActivity extends Activity {
         LinearLayout bar=row();bar.addView(icon(R.drawable.ic_back,ink,"Back",this::leaveNote));
         TextView title=text(n==null?"New note":"Note",24,ink,false);title.setPadding(dp(8),0,dp(8),0);bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
         notePin=icon(R.drawable.ic_pin,note.pinned?BLUE:muted,note.pinned?"Unpin note":"Pin note",this::toggleNotePin);bar.addView(notePin);
-        ImageView more=icon(R.drawable.ic_more,ink,"More options",null);pressable(more);more.setOnClickListener(v->{PopupMenu menu=new PopupMenu(this,v);menu.getMenu().add(0,1,0,"Delete note…");
-            menu.setOnMenuItemClickListener(item->{saveNote();Notes.Note e=editing;if(e!=null)deleteNote(key,e.id,()->{editing=null;Runnable b=noteBack;if(b!=null)b.run();else inbox();});return true;});menu.show();});bar.addView(more);
+        ImageView more=icon(R.drawable.ic_more,ink,"More options",null);pressable(more);more.setOnClickListener(v->menuSheet("Note",java.util.Arrays.asList("Delete note…"),java.util.Arrays.<Runnable>asList(()->{saveNote();Notes.Note e=editing;
+            if(e!=null)deleteNote(key,e.id,()->{editing=null;Runnable b=noteBack;if(b!=null)b.run();else inbox();});})));bar.addView(more);
         root.addView(bar,new LinearLayout.LayoutParams(-1,dp(56)));
         String dated=who+" · "+android.text.format.DateUtils.formatDateTime(this,note.created,android.text.format.DateUtils.FORMAT_SHOW_DATE|android.text.format.DateUtils.FORMAT_SHOW_TIME|android.text.format.DateUtils.FORMAT_ABBREV_MONTH)
             +(note.updated-note.created>60_000?" · edited "+android.text.format.DateUtils.getRelativeTimeSpanString(note.updated,now,android.text.format.DateUtils.MINUTE_IN_MILLIS):"");
@@ -2295,12 +2296,16 @@ public class PairedActivity extends Activity {
     /** Which of their numbers, when there's more than one; then their email, if wanted. */
     private void chooseContactNumber(ContactPeople.Person p){if(p.numbers.size()==1){shareContact(p,p.numbers.get(0).shown);return;}
         String[] choices=new String[p.numbers.size()];for(int i=0;i<choices.length;i++){ContactPeople.Number n=p.numbers.get(i);choices[i]=n.label.isEmpty()?n.shown:n.label+" · "+n.shown;}
-        new AlertDialog.Builder(this).setTitle(p.name).setItems(choices,(x,which)->shareContact(p,p.numbers.get(which).shown)).setNegativeButton("Cancel",null).show();}
+        List<Runnable> actions=new ArrayList<>();for(ContactPeople.Number n:p.numbers)actions.add(()->shareContact(p,n.shown));menuSheet(p.name,java.util.Arrays.asList(choices),actions);}
     private void shareContact(ContactPeople.Person p,String number){String chat=chatId,shown=readableNumber(number),who=p.name;decoder.execute(()->{List<String> emails=contactEmails(p.contact);ui.post(()->{
         if(!screen.equals("chat")||!chatId.equals(chat)||composer==null)return;
         if(emails.isEmpty()){insertContact(who,shown,"");return;}
-        String[] choices=new String[emails.size()+1];choices[0]="Just the number";for(int i=0;i<emails.size();i++)choices[i+1]="Add "+emails.get(i);
-        new AlertDialog.Builder(this).setTitle(who).setItems(choices,(x,which)->insertContact(who,shown,which==0?"":emails.get(which-1))).setNegativeButton("Cancel",null).show();});});}
+        
+        emailChoices(who,who,shown,emails);});});}
+    /** Share just the number, or the number with one of the contact's email addresses. */
+    private void emailChoices(String title,String who,String shown,List<String> emails){List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
+        labels.add("Just the number");actions.add(()->insertContact(who,shown,""));
+        for(String e:emails){labels.add("Add "+e);actions.add(()->insertContact(who,shown,e));}menuSheet(title,labels,actions);}
     /** A contact's email addresses, each once (needs the contacts permission). Off the main thread. */
     private List<String> contactEmails(long contact){List<String> emails=new ArrayList<>();
         if(contact<0||checkSelfPermission(android.Manifest.permission.READ_CONTACTS)!=PackageManager.PERMISSION_GRANTED)return emails;
@@ -2319,8 +2324,8 @@ public class PairedActivity extends Activity {
         ui.post(()->{if(!screen.equals("chat")||!chatId.equals(chat)||composer==null)return;
             if(shown.isEmpty()){toast("That contact has no phone number.");return;}
             if(emails.isEmpty()){insertContact(who,shown,"");return;}
-            String[] choices=new String[emails.size()+1];choices[0]="Just the number";for(int i=0;i<emails.size();i++)choices[i+1]="Add "+emails.get(i);
-            new AlertDialog.Builder(this).setTitle(who.isEmpty()?shown:who).setItems(choices,(x,which)->insertContact(who,shown,which==0?"":emails.get(which-1))).setNegativeButton("Cancel",null).show();});});}
+            
+            emailChoices(who.isEmpty()?shown:who,who,shown,emails);});});}
     /** A number as people write it: "(479) 555-0134" for one saved as bare digits; anything already formatted stays as saved. */
     private String readableNumber(String number){number=number==null?"":number.trim();if(!number.matches("\\+?\\d{7,15}"))return number;
         String country="";try{country=getSystemService(android.telephony.TelephonyManager.class).getSimCountryIso();}catch(Exception ignored){}

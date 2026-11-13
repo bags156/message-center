@@ -5,10 +5,32 @@
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:alertDialogTheme">@style/AppDialog</item>
+        <item name="android:datePickerDialogTheme">@style/AppDialog</item>
+        <item name="android:timePickerDialogTheme">@style/AppDialog</item>
         <!-- No highlight box when pressing menu items, dialog buttons or switches. -->
         <item name="android:colorControlHighlight">#00000000</item>
         <item name="android:windowBackground">#F8F9FC</item>
         <item name="android:statusBarColor">#F8F9FC</item>
         <item name="android:navigationBarColor">#F8F9FC</item>
+    </style>
+    <!-- Dialogs: rounded like the app's sheets, in its colors, with sentence-case buttons. -->
+    <style name="AppDialog" parent="android:style/Theme.Material.Light.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/dialog_background</item>
+        <item name="android:colorBackground">@color/dialog_surface</item>
+        <item name="android:dialogCornerRadius">@dimen/dialog_radius</item>
+        <item name="android:colorAccent">@color/dialog_accent</item>
+        <item name="android:textColorPrimary">@color/dialog_text</item>
+        <item name="android:textColorSecondary">@color/dialog_muted</item>
+        <item name="android:textColorAlertDialogListItem">@color/dialog_text</item>
+        <item name="android:colorControlHighlight">#00000000</item>
+        <item name="android:buttonBarButtonStyle">@style/AppDialogButton</item>
+        <item name="android:fontFamily">sans-serif</item>
+    </style>
+    <style name="AppDialogButton" parent="android:style/Widget.Material.Button.Borderless.Colored">
+        <item name="android:textAllCaps">false</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:minWidth">72dp</item>
     </style>
 </resources>

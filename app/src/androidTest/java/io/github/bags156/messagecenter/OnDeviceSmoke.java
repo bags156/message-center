@@ -328,6 +328,32 @@ public final class OnDeviceSmoke extends Instrumentation {
         Thread.sleep(700);android.graphics.Bitmap darkShot=getUiAutomation().takeScreenshot();
         if(darkShot!=null)try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(ctx.getCacheDir(),"inbox-menu-dark.png"))){darkShot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
         onMainCall(()->{d[0].dismiss();return inbox.invoke(a);});waitForIdleSync();}
+    /**
+     * Dialogs use the app's look: a rounded background in the app's colors and sentence-case
+     * buttons in its accent color (not Android's gray box with capitals). Pictured light and
+     * dark for the CI log.
+     */
+    private void checkDialogLook(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();String message="Off for every chat unless you turn them on for that chat. When on, opening the chat here marks it read on your phone and Google Messages sends a receipt.";
+        android.app.AlertDialog[] d={null};
+        onMainCall(()->{d[0]=new android.app.AlertDialog.Builder(a).setTitle("Read receipts").setMessage(message).setNegativeButton("Cancel",null).setPositiveButton("Got it",null).show();return null;});waitForIdleSync();
+        int[] color={0};boolean[] caps={true};Object[] background={null};
+        runOnMainSync(()->{android.widget.Button ok=d[0].getButton(android.content.DialogInterface.BUTTON_POSITIVE);color[0]=ok.getCurrentTextColor();
+            caps[0]=ok.getTransformationMethod()!=null&&ok.getTransformationMethod().getClass().getSimpleName().contains("AllCaps");background[0]=d[0].getWindow().getDecorView().getBackground();});
+        int accent=ctx.getColor(ctx.getResources().getIdentifier("dialog_accent","color",ctx.getPackageName()));
+        Thread.sleep(500);android.graphics.Bitmap shot=getUiAutomation().takeScreenshot();
+        if(shot!=null)try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(ctx.getCacheDir(),"dialog.png"))){shot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
+        runOnMainSync(()->d[0].dismiss());
+        check(color[0]==accent&&!caps[0]&&background[0] instanceof android.graphics.drawable.InsetDrawable,
+            "Dialogs don't have the app's look (button color "+Integer.toHexString(color[0])+" vs "+Integer.toHexString(accent)+", capitals "+caps[0]+", background "+background[0]+")");
+        // Dark, for the picture.
+        int style=ctx.getResources().getIdentifier("AppDialog","style",ctx.getPackageName());
+        onMainCall(()->{android.content.res.Configuration night=new android.content.res.Configuration(a.getResources().getConfiguration());
+            night.uiMode=(night.uiMode&~android.content.res.Configuration.UI_MODE_NIGHT_MASK)|android.content.res.Configuration.UI_MODE_NIGHT_YES;
+            android.view.ContextThemeWrapper dark=new android.view.ContextThemeWrapper(a,style);dark.applyOverrideConfiguration(night);
+            d[0]=new android.app.AlertDialog.Builder(dark,style).setTitle("Read receipts").setMessage(message).setNegativeButton("Cancel",null).setPositiveButton("Got it",null).show();return null;});
+        Thread.sleep(600);android.graphics.Bitmap darkShot=getUiAutomation().takeScreenshot();
+        if(darkShot!=null)try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(ctx.getCacheDir(),"dialog-dark.png"))){darkShot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
+        runOnMainSync(()->d[0].dismiss());}
     /** The newest raw contact the shell just added: the highest "_id=12" it lists (arguments can't hold spaces, so no "DESC"). */
     private String newestRawContact()throws Exception{java.util.regex.Matcher m=java.util.regex.Pattern.compile("_id=(\\d+)").matcher(shell("content query --uri content://com.android.contacts/raw_contacts --projection _id"));
         long best=-1;while(m.find())best=Math.max(best,Long.parseLong(m.group(1)));return best<0?"":String.valueOf(best);}
@@ -1235,11 +1261,12 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkNotes((PairedActivity)activity);
         checkChatMenu((PairedActivity)activity);
         checkInboxMenu((PairedActivity)activity);
+        checkDialogLook((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();
         checkSentTextStays((PairedActivity)activity);
         checkBubbleStepsAside((PairedActivity)activity);
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, emoji picker tabs and search, notes, chat menu sheet, inbox menu sheet, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, emoji picker tabs and search, notes, chat menu sheet, inbox menu sheet, dialog look, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }
