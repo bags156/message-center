@@ -32,6 +32,10 @@ For Obtainium, use `https://github.com/bags156/message-center`. Regular releases
 - Details → Shared: the chat's photos & videos, links and files, each in its own tab, newest first under month headings. Hold any item to jump to it in the chat, copy or share it.
 - Message effects: when an iPhone sends Balloons, Confetti, Slam, Invisible Ink and the rest, RCS only delivers a "(sent with …)" note. The chat plays the effect and hides the note (tap "Replay" to see it again); "Happy birthday", "Congratulations" and "Happy New Year" play theirs too. RCS can't carry an effect, so none are sent.
 
+## Notes
+
+Each person (and each group) has a private notepad for gift ideas, birthdays, and things to follow up on. Open it from a chat's ⋮ › Notes or from Details. Notes save as you type, stay on this phone (and in your Message Center backups), and are never sent. A person's notes go with their number, so they're the same in your chat with them and from any group they're in (Group details › tap a member › Notes about…). Once you've written notes about someone, their chat shows a notes button up top. Long-press a message › Add to notes saves it as a dated line, and in a group it goes to whoever sent it. Inbox search looks through notes too.
+
 ## Arrival texts
 
 Text on arrival (⊕ › Text on arrival) texts someone when you get to a place you pick: where you are now, an address search, or a saved place. It uses Android's own proximity alerts (no Google Play services), needs location "all the time" only for that, and sends through the normal outbox. Just once lasts a day; every time waits for you to leave before it can send again. If you're already there, it waits until you next arrive.

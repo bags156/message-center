@@ -177,7 +177,7 @@ public class PairedActivity extends Activity {
     @Override protected void onStart(){super.onStart();started=true;reportChatOnScreen();}
     @Override protected void onStop(){started=false;reportChatOnScreen();super.onStop();}
     /** Tells ChatBubbles which chat you're in (its Details and Shared count), so that chat's bubble steps aside. */
-    private void reportChatOnScreen(){if(bubble())return;boolean inChat=screen.equals("chat")||screen.equals("details")||screen.equals("media");
+    private void reportChatOnScreen(){if(bubble())return;boolean inChat=screen.equals("chat")||screen.equals("details")||screen.equals("media")||screen.equals("notes");
         ChatBubbles.showing(this,started&&inChat?chatId:"");}
     @Override protected void onResume(){super.onResume();resumed=true;timeFormat=null;dateFormat=null;PairedService.screenVisible(true);refreshDraft();if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
         PhotoText.indexDownloaded(this,false);
@@ -188,17 +188,18 @@ public class PairedActivity extends Activity {
             if(screen.equals("chat")){renderMessages(false);if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();if(!bubble())PairedService.clearNotification(this,chatId);}
             else if(screen.equals("inbox")){if(batteryCard!=null&&!showBatteryCard()){root.removeView(batteryCard);batteryCard=null;}renderInbox();refreshInbox(false);
                 if(!bubble()&&PairedService.ready()&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED)askContactPhotos();}}}
-    @Override protected void onPause(){if(resumed)PairedService.screenVisible(false);resumed=false;if(dictation!=null)stopDictation();remember();if(inline!=null)inline.pause();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&!playingId.isEmpty())pauseVoice();if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
+    @Override protected void onPause(){saveNotes();if(resumed)PairedService.screenVisible(false);resumed=false;if(dictation!=null)stopDictation();remember();if(inline!=null)inline.pause();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&!playingId.isEmpty())pauseVoice();if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
     @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);if(focused)refreshDraft();if(focused&&store!=null){markReadIfAllowed();updateReceiptStatus();}}
     /** Picks up a draft typed in the other window (bubble or full app) so you carry on where you left off. */
     private void refreshDraft(){if(composer==null||drafts==null||chatId.isEmpty()||!screen.equals("chat"))return;String stored=drafts.getOrDefault(chatId,"");
         if(stored.equals(composer.getText().toString()))return;composer.setText(stored);composer.setSelection(stored.length());}
     @Override protected void onSaveInstanceState(Bundle out){remember();out.putString("screen",screen);if(screen.equals("settings")&&settingsScroll!=null)out.putInt("settings_y",settingsScroll.getScrollY());if(pendingCapture!=null)out.putString("capture",pendingCapture.getPath());out.putString("chat",chatId);if(screen.equals("chat")){Spot at=chatSpotNow();if(at!=null){out.putString("spot",at.id);out.putInt("spot_offset",at.offset);}}out.putString("reply",replyId);out.putString("draft",drafts.getOrDefault(chatId,""));super.onSaveInstanceState(out);}
-    @Override public void onBackPressed(){if(selecting){stopSelecting();return;}if(screen.equals("media")){details();return;}if(screen.equals("details")){thread(chatId);return;}if(bubble()){super.onBackPressed();return;}if(login!=null){destroyLogin();inbox();}else if(screen.equals("inbox")&&(folder!=1||unknownOnly||promoOnly||needsReplyOnly)){folder=1;unknownOnly=false;promoOnly=false;needsReplyOnly=false;inbox();}else if(!screen.equals("inbox")){remember();inbox();}else super.onBackPressed();}
+    @Override public void onBackPressed(){if(selecting){stopSelecting();return;}if(screen.equals("notes")){leaveNotes();return;}if(screen.equals("media")){details();return;}if(screen.equals("details")){thread(chatId);return;}if(bubble()){super.onBackPressed();return;}if(login!=null){destroyLogin();inbox();}else if(screen.equals("inbox")&&(folder!=1||unknownOnly||promoOnly||needsReplyOnly)){folder=1;unknownOnly=false;promoOnly=false;needsReplyOnly=false;inbox();}else if(!screen.equals("inbox")){remember();inbox();}else super.onBackPressed();}
 
     // ---- Shared building blocks ----
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
     private void base(String name){
+        if(screen.equals("notes"))saveNotes();notesField=null;notesKey="";
         if(!name.equals("chat"))stopInline();
         if(screen.equals("inbox")&&!name.equals("inbox")&&scroll!=null){inboxScrollY=scroll.getScrollY();inboxBack=inboxSpotNow();inboxKey=inboxKey();repliedSinceInbox=false;}
         inboxPlacing=null;inboxSpots=null;keepSpot=null;
@@ -447,7 +448,7 @@ public class PairedActivity extends Activity {
         if(!pins.isEmpty()){View g=pinnedGrid(pins);g.setTag(R.id.chat_row,"\npinned");items.addView(g);}
         if(!promos.isEmpty())items.addView(promotionsRow(promos));
         for(JSONObject c:chats)if(pins.isEmpty()||!chatSettings.pinned(c)){View row=chatRow(c);row.setTag(R.id.chat_row,c.optString("conversationID"));row.setTag(R.id.chat_time,PairedProtocol.time(c));items.addView(row);}
-        Perf.end("inbox: rows",perf);perf=Perf.start();renderMessageHits();
+        Perf.end("inbox: rows",perf);perf=Perf.start();renderNoteHits();renderMessageHits();
         String note=store.page("folder:"+folder,true);if(!chats.isEmpty()&&store.page("folder:"+folder,false).isEmpty()&&!note.isEmpty()){TextView end=text(note,12,muted,false);end.setGravity(Gravity.CENTER);end.setPadding(dp(16),dp(16),dp(16),dp(8));items.addView(end);}
         requestPhotos(chats);
         if(keep!=null||fallbackY>0)placeInbox(keep==null?new ArrayList<>():keep,fallbackY);Perf.end("inbox: rest",perf);
@@ -653,7 +654,7 @@ public class PairedActivity extends Activity {
     // ---- Conversation ----
     private void thread(String id){long perfAll=Perf.start(),perf=perfAll;
         if(!id.equals(chatId))stopInline();
-        Spot back=(screen.equals("details")||backFromSaved)&&id.equals(backChat)?backSpot:null;backChat="";backSpot=null;backFromSaved=false;
+        Spot back=(screen.equals("details")||screen.equals("notes")||backFromSaved)&&id.equals(backChat)?backSpot:null;backChat="";backSpot=null;backFromSaved=false;
         // Opening a chat with unread messages: remember where they start, for the "New messages" line.
         if(!id.equals(chatId)||!screen.equals("chat")){JSONObject before=store.chat(id);unreadSince=before!=null&&chatSettings.unread(before)?chatSettings.seen(id):-1;unreadJump=unreadSince>0;}
         remember();chatId=id;if(back==null)limit=firstWindow(id);replyId="";base("chat");JSONObject c=store.chat(id);ChatTheme theme=chatSettings.theme(id);
@@ -668,6 +669,8 @@ public class PairedActivity extends Activity {
         titles.addView(receiptsMark);updateReceiptsMark();
         who.addView(titles,new LinearLayout.LayoutParams(0,-2,1));who.setGravity(Gravity.CENTER_VERTICAL);who.setContentDescription("Conversation details");who.setOnClickListener(v->details());
         bar.addView(who,new LinearLayout.LayoutParams(0,-1,1));
+        // A notes button shows when you've written notes about them (or the group), as a reminder they're there.
+        if(c!=null&&new Notes(this).has(notesKeyFor(c)))bar.addView(icon(R.drawable.ic_notes,ink,"Your notes",()->openNotes(store.chat(id),()->thread(id))));
         String number=PairedProtocol.number(PairedProtocol.other(c));
         if(SmartText.shortCodeSender(number)){TextView stop=text("Unsubscribe",14,ink,true);stop.setPadding(dp(12),dp(8),dp(12),dp(8));stop.setBackground(shape(surface,16));stop.setOnClickListener(v->unsubscribe(id,c));
             LinearLayout.LayoutParams ul=new LinearLayout.LayoutParams(-2,-2);ul.gravity=Gravity.CENTER_VERTICAL;ul.setMarginEnd(dp(4));bar.addView(stop,ul);}
@@ -735,14 +738,14 @@ public class PairedActivity extends Activity {
     private void chatMenu(View anchor){JSONObject c=store.chat(chatId);if(c==null)return;PopupMenu menu=new PopupMenu(this,anchor);Menu m=menu.getMenu();
         m.add(0,1,0,chatSettings.pinned(c)?"Unpin":"Pin to top");m.add(0,2,1,"Theme & background");
         m.add(0,3,2,"Read receipts for this chat").setCheckable(true).setChecked(chatSettings.receipts(chatId));
-        m.add(0,6,0,PairedProtocol.other(c)==null?"Group details":"Details");m.add(0,9,0,"Search in chat");m.add(0,10,4,chatSettings.muted(chatId)?"Unmute notifications":"Mute notifications");m.add(0,14,4,chatSettings.snoozed(chatId)?"Snoozed until "+snoozeLabel(chatId)+"…":"Snooze notifications…");
+        m.add(0,6,0,PairedProtocol.other(c)==null?"Group details":"Details");m.add(0,15,0,"Notes");m.add(0,9,0,"Search in chat");m.add(0,10,4,chatSettings.muted(chatId)?"Unmute notifications":"Mute notifications");m.add(0,14,4,chatSettings.snoozed(chatId)?"Snoozed until "+snoozeLabel(chatId)+"…":"Snooze notifications…");
         boolean archived=c.optString("status").contains("ARCHIVED"),blocked=c.optString("status").equals("BLOCKED_FOLDER")||c.optString("status").equals("SPAM_FOLDER");
         if(!bubble()){m.add(0,11,8,archived?"Unarchive":"Archive");m.add(0,12,9,blocked?"Unblock":"Block…");m.add(0,13,10,"Delete conversation…");}
         if(bubble())m.add(0,8,5,"Open in Message Center");else m.add(0,7,5,"Open as bubble");
         m.add(0,4,6,"Refresh");m.add(0,5,7,"Load older messages");
         menu.setOnMenuItemClickListener(item->{switch(item.getItemId()){case 1->togglePin(c);case 2->chooseTheme(chatId);case 3->toggleReceipts(chatId);case 4->loadMessages(false);case 5->loadOlderMessages();
             case 6->details();case 7->openBubble(chatId);case 8->startActivity(new Intent(this,PairedActivity.class).setAction(OPEN_CHAT).putExtra("chat",chatId).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP|Intent.FLAG_ACTIVITY_CLEAR_TOP));
-            case 9->searchChat();case 10->toggleMute(chatId);case 11->archive(c,!archived);case 12->block(c);case 13->deleteChat(c);case 14->snoozeMenu(chatId);default->{}}return true;});menu.show();}
+            case 9->searchChat();case 10->toggleMute(chatId);case 11->archive(c,!archived);case 12->block(c);case 13->deleteChat(c);case 14->snoozeMenu(chatId);case 15->{String id=chatId;openNotes(c,()->thread(id));}default->{}}return true;});menu.show();}
     /** The first message on screen in the chat and how far down it sits, or null when you're at (or near) the newest message. */
     private Spot currentSpot(){if(scroll==null||items==null)return null;View content=scroll.getChildAt(0);int y=scroll.getScrollY();
         if(content==null||content.getHeight()-scroll.getHeight()-y<dp(80))return null;return spotAt(y);}
@@ -1292,6 +1295,8 @@ public class PairedActivity extends Activity {
         String typed=PairedProtocol.text(m),plain=ChatText.replyFallbackBody(typed)!=null?ChatText.replyFallbackBody(typed):typed;
         if(!plain.isEmpty())sheetAction(content,"Copy text",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Message",plain));});
         if(!plain.isEmpty())sheetAction(content,"Select text…",()->{d[0].dismiss();selectText(plain);});
+        String[] noteTo=c==null||plain.isEmpty()?null:noteTarget(m,c);
+        if(noteTo!=null&&!noteTo[0].isEmpty())sheetAction(content,noteTo[3],()->{d[0].dismiss();addToNotes(m,c,plain);});
         for(JSONObject media:PairedProtocol.media(m)){String transcript=Transcriber.saved(this,PairedProtocol.string(media,"mediaID"));
             if(transcript!=null){sheetAction(content,"Copy transcript",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Transcript",transcript));});
                 sheetAction(content,"Transcribe again",()->{d[0].dismiss();Transcriber.forget(this,PairedProtocol.string(media,"mediaID"));transcribe(media);});}
@@ -1452,6 +1457,7 @@ public class PairedActivity extends Activity {
                     texts.addView(text((PairedProtocol.members(g).size()+1)+" people",14,muted,false));r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));
                     r.setOnClickListener(v->thread(g.optString("conversationID")));content.addView(r);}}}
         if(group){LinearLayout me=row();me.setPadding(dp(4),dp(10),dp(4),dp(10));me.addView(personAvatar(null,"You",44));TextView you=text("You",17,ink,false);you.setPadding(dp(16),0,0,0);me.addView(you);content.addView(me);}
+        gap(content,16);notesCard(content,notesKeyFor(c),PairedProtocol.title(c),this::details);
         // What's been shared here; filled in once it's been looked up.
         LinearLayout shared=vertical();content.addView(shared,new LinearLayout.LayoutParams(-1,-2));
         loadShared(id,sh->{if(screen.equals("details")&&chatId.equals(id))fillSharedSummary(shared,sh);});
@@ -1535,10 +1541,77 @@ public class PairedActivity extends Activity {
             try{startActivity(i);}catch(Exception e){toast("No contacts app is available.");}});
         card.addView(save,new LinearLayout.LayoutParams(-2,-2));
         FrameLayout wrap=new FrameLayout(this);FrameLayout.LayoutParams cl=new FrameLayout.LayoutParams(-1,-2);cl.setMargins(dp(8),dp(2),dp(8),dp(4));wrap.addView(card,cl);holder[0]=wrap;return wrap;}
+    // ---- Notes: private notes about a person or group, kept on this phone ----
+    private String notesKey="";private Runnable notesBack;private EditText notesField;
+    private final Runnable notesSaver=()->saveNotes();
+    /** Whose notes a chat opens: the person's in a one-to-one chat, the group's in a group. */
+    private String notesKeyFor(JSONObject chat){if(chat==null)return "";JSONObject other=PairedProtocol.other(chat);
+        return other!=null?Notes.personKey(PairedProtocol.number(other)):Notes.groupKey(chat.optString("conversationID"));}
+    private void openNotes(JSONObject chat,Runnable back){if(chat!=null)notes(notesKeyFor(chat),PairedProtocol.title(chat),back);}
+    /**
+     * Your notes about someone (or a group): gift ideas, birthdays, things to follow up on. Saved
+     * as you type, kept on this phone only, never sent. back is where the back arrow goes.
+     */
+    private void notes(String key,String who,Runnable back){if(key==null||key.isEmpty()){toast("Notes need a phone number to go with.");return;}
+        base("notes");notesKey=key;notesBack=back;Notes saved=new Notes(this);
+        header("Notes",this::leaveNotes);
+        TextView about=text(who+" \u00b7 only on this phone, never sent",13,muted,false);about.setPadding(dp(16),0,dp(16),dp(10));root.addView(about);
+        EditText field=input("Gift ideas, birthdays, kids' names, things to follow up on…");field.setSingleLine(false);field.setGravity(Gravity.TOP|Gravity.START);
+        field.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES|InputType.TYPE_TEXT_FLAG_AUTO_CORRECT);
+        field.setTextSize(17);field.setLineSpacing(0,1.15f);field.setContentDescription("Notes about "+who);
+        String text=saved.text(key);field.setText(text);field.setSelection(field.length());
+        LinearLayout.LayoutParams fl=new LinearLayout.LayoutParams(-1,0,1);fl.setMargins(dp(8),0,dp(8),0);root.addView(field,fl);
+        long when=saved.updated(key);TextView edited=text(when>0?"Edited "+android.text.format.DateUtils.getRelativeTimeSpanString(when,System.currentTimeMillis(),android.text.format.DateUtils.MINUTE_IN_MILLIS):"",12,muted,false);
+        edited.setPadding(dp(16),dp(6),dp(16),0);root.addView(edited);
+        field.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int b,int c){}public void onTextChanged(CharSequence s,int a,int b,int c){}
+            public void afterTextChanged(Editable e){ui.removeCallbacks(notesSaver);ui.postDelayed(notesSaver,600);edited.setText("Saved as you type");}});
+        notesField=field;
+        // New notes open ready to type; existing ones open for reading, keyboard down.
+        if(text.trim().isEmpty()){field.requestFocus();field.post(()->getSystemService(InputMethodManager.class).showSoftInput(field,0));}}
+    private void saveNotes(){ui.removeCallbacks(notesSaver);if(notesField==null||notesKey.isEmpty())return;new Notes(this).set(notesKey,notesField.getText().toString(),System.currentTimeMillis());}
+    private void leaveNotes(){saveNotes();if(notesField!=null)hideKeyboard(notesField);Runnable back=notesBack;notesBack=null;if(back!=null)back.run();else inbox();}
+    /** Details' notes card: the start of your notes, or what they're for. Tap to open them. */
+    private void notesCard(LinearLayout content,String key,String who,Runnable back){if(key.isEmpty())return;Notes saved=new Notes(this);String text=saved.text(key).trim();
+        content.addView(text("Notes",14,muted,true));gap(content,6);
+        LinearLayout box=vertical();box.setPadding(dp(16),dp(12),dp(16),dp(12));box.setBackground(shape(surface,18));pressDim(box);box.setContentDescription("Notes about "+who);
+        TextView body=text(text.isEmpty()?"Add gift ideas, birthdays, things to follow up on. Only on this phone, never sent.":text,15,text.isEmpty()?muted:ink,false);
+        body.setMaxLines(6);body.setEllipsize(TextUtils.TruncateAt.END);box.addView(body);
+        if(!text.isEmpty()){TextView when=text("Edited "+android.text.format.DateUtils.getRelativeTimeSpanString(saved.updated(key),System.currentTimeMillis(),android.text.format.DateUtils.MINUTE_IN_MILLIS),12,muted,false);when.setPadding(0,dp(6),0,0);box.addView(when);}
+        box.setOnClickListener(v->notes(key,who,back));LinearLayout.LayoutParams bl=new LinearLayout.LayoutParams(-1,-2);bl.setMargins(dp(4),0,dp(4),0);content.addView(box,bl);}
+    /**
+     * Where "Add to notes" puts a message: {key, whose notes, how the line says whose it was, the
+     * menu label}. A person's notes in a one-to-one chat; in a group, the sender's (or the group's
+     * for your own messages).
+     */
+    private String[] noteTarget(JSONObject m,JSONObject c){boolean mine=PairedProtocol.outgoing(m,c);JSONObject other=PairedProtocol.other(c);
+        if(other!=null){String who=PairedProtocol.title(c);return new String[]{Notes.personKey(PairedProtocol.number(other)),who,mine?"(you)":"","Add to notes about "+who};}
+        String group=PairedProtocol.title(c);
+        if(mine)return new String[]{Notes.groupKey(c.optString("conversationID")),group,"(you)","Add to the group's notes"};
+        JSONObject sender=PairedProtocol.participant(c,m.optString("participantID"));String who=senderName(m,c);
+        return new String[]{Notes.personKey(sender==null?"":PairedProtocol.number(sender)),who,"in "+group,"Add to notes about "+who};}
+    /** Saves a message to notes as a dated line, like "• Nov 12: Starting the new job Monday". */
+    private void addToNotes(JSONObject m,JSONObject c,String words){String[] to=noteTarget(m,c);if(to[0].isEmpty())return;
+        String date=new java.text.SimpleDateFormat(android.text.format.DateFormat.getBestDateTimePattern(Locale.getDefault(),"MMMd"),Locale.getDefault()).format(new Date(PairedProtocol.time(m)));
+        new Notes(this).add(to[0],Notes.clip(date,to[2],words),System.currentTimeMillis());toast("Added to notes about "+to[1]+".");}
+    /** Inbox search looks through your notes too: each chat whose notes match, with the line that does. */
+    private void renderNoteHits(){if(items==null)return;SmartText.Search f=SmartText.parseSearch(query);if(SmartText.hasFilters(f)||f.text.trim().length()<2)return;
+        Map<String,String> all=new Notes(this).all();if(all.isEmpty())return;String q=f.text.trim();List<JSONObject> chats=null;boolean labeled=false;
+        for(Map.Entry<String,String> e:all.entrySet()){if(!Notes.matches(e.getValue(),q))continue;String key=e.getKey();JSONObject chat=null;
+            if(key.startsWith("g:"))chat=store.chat(key.substring(2));
+            else{if(chats==null)chats=allChats();for(JSONObject c:chats){JSONObject o=PairedProtocol.other(c);if(o!=null&&key.equals(Notes.personKey(PairedProtocol.number(o)))){chat=c;break;}}}
+            if(chat==null)continue;
+            if(!labeled){items.addView(sectionLabel("Notes"));labeled=true;}
+            items.addView(noteResult(chat,key,Notes.snippet(e.getValue(),q)));}}
+    private View noteResult(JSONObject chat,String key,String line){String id=chat.optString("conversationID"),title=PairedProtocol.title(chat);
+        LinearLayout r=row();r.setPadding(dp(8),dp(10),dp(8),dp(10));pressable(r);r.addView(avatar(chat,44));
+        LinearLayout texts=vertical();texts.setPadding(dp(14),0,dp(8),0);texts.addView(text(title,17,ink,false));
+        TextView l=text(line,14,muted,false);l.setMaxLines(2);l.setEllipsize(TextUtils.TruncateAt.END);texts.addView(l);r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));
+        r.setContentDescription("Notes about "+title+": "+line);r.setOnClickListener(v->{chatId=id;notes(key,title,()->thread(id));});return r;}
     private void memberActions(JSONObject p){String number=PairedProtocol.number(p);if(number.isEmpty())return;String name=PairedProtocol.name(p);
-        menuSheet(name,java.util.Arrays.asList("Message","Call","Copy number","Set a nickname…"),java.util.Arrays.<Runnable>asList(()->startChat(number),
+        Runnable back=screen.equals("details")?this::details:(Runnable)()->thread(chatId);
+        menuSheet(name,java.util.Arrays.asList("Message","Call","Copy number","Set a nickname…","Notes about "+name),java.util.Arrays.<Runnable>asList(()->startChat(number),
             ()->{try{startActivity(new Intent(Intent.ACTION_DIAL,Uri.parse("tel:"+number)));}catch(Exception e){toast("No phone app is available.");}},
-            ()->getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Number",number)),()->setNickname(p)));}
+            ()->getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Number",number)),()->setNickname(p),()->notes(Notes.personKey(number),name,back)));}
     // ---- Attachments ----
     private static final int PICK_MEDIA=41,PICK_FILES=42;
     private static final long MAX_ATTACHMENT=100L<<20,MAX_VIDEO=4L<<30;

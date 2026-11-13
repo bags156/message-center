@@ -194,6 +194,36 @@ public final class OnDeviceSmoke extends Instrumentation {
         runOnMainSync(()->{java.util.List<android.widget.GridView> g=viewsOf(d[0].getWindow().getDecorView(),android.widget.GridView.class);recent[0]=g.isEmpty()?"":firstEmoji(g.get(0),3);d[0].dismiss();});
         check(recent[0].startsWith("🔥"),"Recent emoji didn't start with the one just picked: "+recent[0]);
         a.getSharedPreferences("emoji",android.content.Context.MODE_PRIVATE).edit().clear().commit();}
+    /**
+     * Notes: what's typed on the notes screen is saved for that person when you go back; the chat
+     * then shows a notes button; "Add to notes" puts a message on the end with its date; and inbox
+     * search finds the line in the notes.
+     */
+    private void checkNotes(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();String number="+15557770142",key=Notes.personKey(number);
+        Notes notes=new Notes(ctx);notes.set(key,"",0);JSONObject chat;
+        try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'notes-check',name:'Nora Check',type:'RCS',participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'nc',number:'"+number+"'},fullName:'Nora Check'}]}"));chat=store.chat("notes-check");}
+        java.lang.reflect.Method open=PairedActivity.class.getDeclaredMethod("notes",String.class,String.class,Runnable.class),thread=PairedActivity.class.getDeclaredMethod("thread",String.class),
+            inbox=PairedActivity.class.getDeclaredMethod("inbox"),add=PairedActivity.class.getDeclaredMethod("addToNotes",JSONObject.class,JSONObject.class,String.class);
+        for(java.lang.reflect.Method m:new java.lang.reflect.Method[]{open,thread,inbox,add})m.setAccessible(true);
+        java.lang.reflect.Field field=PairedActivity.class.getDeclaredField("notesField"),query=PairedActivity.class.getDeclaredField("query");field.setAccessible(true);query.setAccessible(true);
+        Runnable back=()->{try{thread.invoke(a,"notes-check");}catch(Exception x){throw new RuntimeException(x);}};
+        String typed="Birthday: May 3\nGift idea: blue scarf";
+        runOnMainSync(()->{try{open.invoke(a,key,"Nora Check",back);((android.widget.EditText)field.get(a)).setText(typed);}catch(Exception x){throw new RuntimeException(x);}});
+        waitForIdleSync();runOnMainSync(a::onBackPressed);waitForIdleSync();
+        check(typed.equals(notes.text(key)),"Notes weren't saved on leaving: "+notes.text(key).replace("\n"," / "));
+        int[] button={0};runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(found,"Your notes",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);button[0]=found.size();});
+        check(button[0]>0,"The chat has no notes button although there are notes");
+        JSONObject m=new JSONObject().put("messageID","notes-msg").put("conversationID","notes-check").put("participantID","nc").put("timestamp",System.currentTimeMillis()*1000)
+            .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","Starting the new job Monday"))));
+        runOnMainSync(()->{try{add.invoke(a,m,chat,"Starting the new job Monday");}catch(Exception x){throw new RuntimeException(x);}});
+        String after=notes.text(key);
+        check(after.startsWith(typed+"\n• ")&&after.endsWith(": Starting the new job Monday"),"Add to notes didn't add a dated line: "+after.replace("\n"," / "));
+        int[] hits={0};
+        runOnMainSync(()->{try{query.set(a,"scarf");inbox.invoke(a);}catch(Exception x){throw new RuntimeException(x);}});waitForIdleSync();
+        runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(found,"Gift idea: blue scarf",android.view.View.FIND_VIEWS_WITH_TEXT);hits[0]=found.size();});
+        runOnMainSync(()->{try{query.set(a,"");inbox.invoke(a);}catch(Exception x){throw new RuntimeException(x);}});waitForIdleSync();
+        notes.set(key,"",0);
+        check(hits[0]>0,"Searching the inbox for a word in your notes didn't find them");}
     /** The newest raw contact the shell just added: the highest "_id=12" it lists (arguments can't hold spaces, so no "DESC"). */
     private String newestRawContact()throws Exception{java.util.regex.Matcher m=java.util.regex.Pattern.compile("_id=(\\d+)").matcher(shell("content query --uri content://com.android.contacts/raw_contacts --projection _id"));
         long best=-1;while(m.find())best=Math.max(best,Long.parseLong(m.group(1)));return best<0?"":String.valueOf(best);}
@@ -1098,11 +1128,12 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkContactPickerDeduplicates();
         checkPinsAndWhoIsThis((PairedActivity)activity);
         checkEmojiPicker((PairedActivity)activity);
+        checkNotes((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();
         checkSentTextStays((PairedActivity)activity);
         checkBubbleStepsAside((PairedActivity)activity);
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, emoji picker tabs and search, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, emoji picker tabs and search, notes, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }
