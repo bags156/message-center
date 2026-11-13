@@ -3776,7 +3776,7 @@ public class PairedActivity extends Activity {
             int indexed;try(PhotoText index=new PhotoText(this)){indexed=index.count();}
             settingRow(get,R.drawable.ic_refresh,0xff14b8a6,"Scan downloaded pictures","Includes older pictures already downloaded here; does not download remote photos",indexed+" indexed",()->{PhotoText.indexDownloaded(this,true);toast("Indexing downloaded pictures. Search results update as they finish.");});
             break;}
-        case "notifications":{LinearLayout alerts=settingsGroup(content,"Notifications");
+        case "notifications":{LinearLayout alerts=settingsGroup(content,null);
             boolean allowed=checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED;
             settingRow(alerts,R.drawable.ic_bell,0xff8b5cf6,"Notifications",allowed?"Sound, vibration and per-chat options":"Turn on to hear about new messages",allowed?"On":"Off",()->{if(!allowed)requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},101);else startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()));});
             String shows=NotificationPrivacy.mode(this);
@@ -3876,7 +3876,10 @@ public class PairedActivity extends Activity {
         r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));lineOut[0]=line;return r;}
     /** A setting: a colored icon, its name, an optional line under it, and its current value with a › when tapping it changes it. Returns the line so it can update. */
     private TextView settingRow(LinearLayout group,int icon,int color,String title,String sub,String value,Runnable tap){TextView[] line=new TextView[1];LinearLayout r=settingLine(icon,color,title,sub,line);
-        String shown=(value==null?"":value)+(tap==null?"":(value==null||value.isEmpty()?"":"  ")+"›");
+        // A long value ("Name and message") goes under the name, so the name isn't squeezed onto two lines.
+        boolean below=value!=null&&value.length()>14;
+        if(below){TextView v=text(value,14,ink,true);v.setPadding(0,dp(2),0,0);v.setSingleLine(true);v.setEllipsize(TextUtils.TruncateAt.END);((LinearLayout)line[0].getParent()).addView(v,1);}
+        String shown=(value==null||below?"":value)+(tap==null?"":(value==null||value.isEmpty()||below?"":"  ")+"›");
         if(!shown.isEmpty()){TextView v=text(shown,14,muted,false);v.setPadding(dp(10),0,0,0);v.setMaxWidth(dp(160));v.setSingleLine(true);v.setEllipsize(TextUtils.TruncateAt.MIDDLE);r.addView(v);}
         if(tap!=null){pressable(r);r.setOnClickListener(x->tap.run());}
         r.setContentDescription(title+(value==null?"":", "+value)+(sub==null?"":". "+sub));
