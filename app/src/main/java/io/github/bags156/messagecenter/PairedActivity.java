@@ -163,9 +163,9 @@ public class PairedActivity extends Activity {
         // Android closed this screen in the background (or the theme changed): reopen the chat where you were reading.
         if(state!=null&&state.getString("spot")!=null&&!chatId.isEmpty()&&chatId.equals(state.getString("chat",""))){backChat=chatId;backSpot=new Spot(state.getString("spot"),state.getInt("spot_offset"));backFromSaved=true;}
         if(bubble()&&chatId.isEmpty()){finish();return;}
-        if(!chatId.isEmpty()){thread(chatId);showFromIntent(getIntent());}else if(state!=null&&"settings".equals(state.getString("screen"))&&!bubble()){pendingSettingsY=state.getInt("settings_y",0);settings();}else inbox();
+        if(!chatId.isEmpty()){thread(chatId);showFromIntent(getIntent());}else if(state!=null&&"settings".equals(state.getString("screen"))&&!bubble()){pendingSettingsY=state.getInt("settings_y",0);settingsPage=state.getString("settings_page","");keepSettingsPage=true;settings();}else inbox();
         if(state==null&&!bubble())receiveShare(getIntent());
-        if(state==null&&!bubble()&&"settings".equals(getIntent().getStringExtra("open")))settings();
+        if(state==null&&!bubble()&&"settings".equals(getIntent().getStringExtra("open")))openSettings();
         if(state==null&&MessagesWidget.NEW_CHAT.equals(getIntent().getAction()))newMessage();
         if(new SessionVault(this).exists() && getSharedPreferences("paired",MODE_PRIVATE).getBoolean("enabled",true))PairedService.start(this);
     }
@@ -192,8 +192,8 @@ public class PairedActivity extends Activity {
     /** Picks up a draft typed in the other window (bubble or full app) so you carry on where you left off. */
     private void refreshDraft(){if(composer==null||drafts==null||chatId.isEmpty()||!screen.equals("chat"))return;String stored=drafts.getOrDefault(chatId,"");
         if(stored.equals(composer.getText().toString()))return;composer.setText(stored);composer.setSelection(stored.length());}
-    @Override protected void onSaveInstanceState(Bundle out){remember();out.putString("screen",screen);if(screen.equals("settings")&&settingsScroll!=null)out.putInt("settings_y",settingsScroll.getScrollY());if(pendingCapture!=null)out.putString("capture",pendingCapture.getPath());out.putString("chat",chatId);if(screen.equals("chat")){Spot at=chatSpotNow();if(at!=null){out.putString("spot",at.id);out.putInt("spot_offset",at.offset);}}out.putString("reply",replyId);out.putString("draft",drafts.getOrDefault(chatId,""));super.onSaveInstanceState(out);}
-    @Override public void onBackPressed(){if(selecting){stopSelecting();return;}if(screen.equals("note")){leaveNote();return;}if(screen.equals("notes")){leaveNotes();return;}if(screen.equals("media")){details();return;}if(screen.equals("details")){thread(chatId);return;}if(bubble()){super.onBackPressed();return;}if(login!=null){destroyLogin();inbox();}else if(screen.equals("inbox")&&(folder!=1||unknownOnly||promoOnly||needsReplyOnly)){folder=1;unknownOnly=false;promoOnly=false;needsReplyOnly=false;inbox();}else if(!screen.equals("inbox")){remember();inbox();}else super.onBackPressed();}
+    @Override protected void onSaveInstanceState(Bundle out){remember();out.putString("screen",screen);if(screen.equals("settings")&&settingsScroll!=null){out.putInt("settings_y",settingsScroll.getScrollY());out.putString("settings_page",settingsPage);}if(pendingCapture!=null)out.putString("capture",pendingCapture.getPath());out.putString("chat",chatId);if(screen.equals("chat")){Spot at=chatSpotNow();if(at!=null){out.putString("spot",at.id);out.putInt("spot_offset",at.offset);}}out.putString("reply",replyId);out.putString("draft",drafts.getOrDefault(chatId,""));super.onSaveInstanceState(out);}
+    @Override public void onBackPressed(){if(selecting){stopSelecting();return;}if(screen.equals("note")){leaveNote();return;}if(screen.equals("settings")){settingsBack();return;}if(screen.equals("notes")){leaveNotes();return;}if(screen.equals("media")){details();return;}if(screen.equals("details")){thread(chatId);return;}if(bubble()){super.onBackPressed();return;}if(login!=null){destroyLogin();inbox();}else if(screen.equals("inbox")&&(folder!=1||unknownOnly||promoOnly||needsReplyOnly)){folder=1;unknownOnly=false;promoOnly=false;needsReplyOnly=false;inbox();}else if(!screen.equals("inbox")){remember();inbox();}else super.onBackPressed();}
 
     // ---- Shared building blocks ----
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
@@ -442,7 +442,7 @@ public class PairedActivity extends Activity {
         else{LinearLayout done=menuLine(R.drawable.ic_done_all,0xff3b82f6,"Mark all as read",false);TextView v=text("All read",14,muted,false);done.addView(v);done.setAlpha(0.55f);done.setContentDescription("Mark all as read: all read");addSettingRow(actions,done);}
         menuRow(actions,R.drawable.ic_refresh,0xff14b8a6,"Refresh from Google",null,false,closing.apply(()->{if(!screen.equals("inbox"))allChats.run();refreshInbox(true);}));
         gap(content,12);
-        LinearLayout more=menuGroup(content);menuRow(more,R.drawable.ic_settings,0xff64748b,"Settings","",false,closing.apply(this::settings));
+        LinearLayout more=menuGroup(content);menuRow(more,R.drawable.ic_settings,0xff64748b,"Settings","",false,closing.apply(this::openSettings));
         content.setPadding(dp(3),0,dp(3),dp(8));ScrollView sc=new ScrollView(this);sc.setVerticalScrollBarEnabled(false);sc.addView(content);
         View focused=getCurrentFocus();if(focused!=null)hideKeyboard(focused);
         d[0]=sheet(sc,WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING|WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);return d[0];}
@@ -3687,93 +3687,163 @@ public class PairedActivity extends Activity {
         JSONObject ready=LinkPreviews.peek(url);if(ready!=null){if(!ready.optString("title").isEmpty())fill.done(ready);}else LinkPreviews.load(this,url,fill);
         return line;}
     private ScrollView settingsScroll;private int pendingSettingsY;
-    private void settings(){int keep=screen.equals("settings")&&settingsScroll!=null?settingsScroll.getScrollY():pendingSettingsY;pendingSettingsY=0;
-        remember();base("settings");header("Settings",this::inbox);connection();ScrollView sc=new ScrollView(this);settingsScroll=sc;LinearLayout content=vertical();content.setPadding(0,0,0,dp(32));sc.addView(content);root.addView(sc,new LinearLayout.LayoutParams(-1,0,1));
+    /** Which settings page is showing: "" for the main page, else messages, media, notifications, automation, appearance, connection or data. */
+    private String settingsPage="",settingsQuery="",settingsShown=null;private boolean keepSettingsPage;
+    /** While searching settings: what was typed (rows that don't match aren't added), and the page being searched. */
+    private String settingsFilter,settingsFilterPage="";private final List<View[]> settingsGroups=new ArrayList<>();
+    private static final String[] SETTINGS_PAGES={"messages","media","notifications","automation","appearance","connection","data"};
+    private static String settingsTitle(String page){switch(page){case "messages":return "Messages";case "media":return "Photos & media";case "notifications":return "Notifications";
+        case "automation":return "Automation";case "appearance":return "Appearance";case "connection":return "Connection";case "data":return "Data & about";default:return "Settings";}}
+    /** Words people might search for that a setting's own words don't say. */
+    private static String settingKeywords(String title){switch(title){case "Theme":return "dark light black mode night colors";case "Text size":return "font bigger smaller larger";
+        case "Undo send":return "unsend delay take back cancel";case "Typing indicators":return "typing privacy";case "Read receipts":return "seen read privacy";case "Bubbles":return "floating chat heads";
+        case "Busy auto-reply":return "away driving automatic reply";case "Notifications":return "sound vibration alerts";case "Background activity":return "battery optimization";
+        case "Back up app data":return "backup export save";case "Restore from a backup":return "import backup";case "Photo quality":return "pictures compress size";
+        case "Video quality":return "compress size";case "What notifications show":return "privacy preview lock screen";default:return "";}}
+    /** Opens settings at the main page, from anywhere. */
+    private void openSettings(){settingsPage="";settingsQuery="";settings();}
+    private void openSettingsPage(String page){settingsPage=page;settingsQuery="";settings();}
+    /** Back from a settings page (or a search) to the main page; from the main page to the inbox. */
+    private void settingsBack(){if(!settingsPage.isEmpty()||!settingsQuery.isEmpty()){settingsPage="";settingsQuery="";settings();}else inbox();}
+    /** Draws the settings page that's showing (and keeps your place on it when it's redrawn after a change). */
+    private void settings(){if(!screen.equals("settings")&&!keepSettingsPage){settingsPage="";settingsQuery="";}keepSettingsPage=false;
+        String shown=settingsPage+"|"+(settingsQuery.isEmpty()?"":"search");
+        int keep=screen.equals("settings")&&settingsScroll!=null&&shown.equals(settingsShown)?settingsScroll.getScrollY():pendingSettingsY;pendingSettingsY=0;settingsShown=shown;
+        remember();base("settings");header(settingsTitle(settingsPage),this::settingsBack);
+        if(settingsPage.isEmpty()||settingsPage.equals("connection"))connection();
+        ScrollView sc=new ScrollView(this);settingsScroll=sc;LinearLayout content=vertical();content.setPadding(dp(4),0,dp(4),dp(32));sc.addView(content);root.addView(sc,new LinearLayout.LayoutParams(-1,0,1));
+        if(settingsPage.isEmpty()){EditText search=input("Search settings");search.setSingleLine(true);search.setText(settingsQuery);search.setSelection(search.length());search.setContentDescription("Search settings");
+            LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(-1,-2);sl.setMargins(0,dp(2),0,dp(6));content.addView(search,sl);
+            LinearLayout body=vertical();content.addView(body,new LinearLayout.LayoutParams(-1,-2));settingsHome(body);
+            search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int b,int c){}public void onTextChanged(CharSequence s,int a,int b,int c){}
+                public void afterTextChanged(Editable e){settingsQuery=e.toString();settingsShown=settingsPage+"|"+(settingsQuery.isEmpty()?"":"search");body.removeAllViews();settingsHome(body);}});}
+        else settingsPageRows(settingsPage,content);
+        restoreScroll(sc,keep);}
+    /** The main page: who you're connected as, then each page with what's set there; or, while searching, the settings that match. */
+    private void settingsHome(LinearLayout body){String q=settingsQuery.trim();
+        if(!q.isEmpty()){settingsFilter=q;int before=body.getChildCount();
+            for(String page:SETTINGS_PAGES){settingsFilterPage=settingsTitle(page);settingsGroups.clear();settingsPageRows(page,body);
+                for(View[] g:settingsGroups)if(((LinearLayout)g[1]).getChildCount()==0){body.removeView(g[0]);body.removeView(g[1]);}}
+            settingsFilter=null;settingsFilterPage="";settingsGroups.clear();
+            if(body.getChildCount()==before){TextView none=text("No settings match “"+q+"”.",15,muted,false);none.setGravity(Gravity.CENTER);none.setPadding(dp(24),dp(32),dp(24),dp(24));body.addView(none);}
+            return;}
         android.content.SharedPreferences prefs=getSharedPreferences("paired",MODE_PRIVATE);
-
-        LinearLayout chats=settingsGroup(content,"Chats");
-        settingRow(chats,"Photo quality","Photos prepare on this phone while you type",PhotoQuality.label(photoQuality()),this::choosePhotoQuality);
-        settingRow(chats,"Video quality",VideoPlan.describe(videoQuality()),PhotoQuality.label(videoQuality()),this::chooseVideoQuality);
-        int arrivals=Arrivals.all(this).size(),places=Arrivals.places(this).size();
-        settingRow(chats,"Text on arrival","Texts someone when you get to a place you pick (set it up from a chat's ⊕)",arrivals>0?arrivals+" on":places>0?places+(places==1?" place":" places"):"Off",this::arrivalSettings);
-        settingRow(chats,"Saved attachments","Queued photos and videos survive closing the app; unconfirmed sends wait for review",String.valueOf(new MediaOutbox(this).all().size()),this::savedAttachments);
-        settingSwitch(chats,"Search text in pictures","Reads printed English text in downloaded photos, on this phone (open-source Tesseract)",PhotoText.enabled(this),on->{prefs.edit().putBoolean("photo_text",on).apply();if(on)PhotoText.indexDownloaded(this,true);else PhotoText.clear(this);searchedFor="";});
-        int indexed;try(PhotoText index=new PhotoText(this)){indexed=index.count();}
-        settingRow(chats,"Scan downloaded pictures","Includes older pictures already downloaded here; does not download remote photos",indexed+" indexed",()->{PhotoText.indexDownloaded(this,true);toast("Indexing downloaded pictures. Search results update as they finish.");});
-        settingSwitch(chats,"Typing indicators","Let others see when you're typing",prefs.getBoolean("send_typing",true),on->prefs.edit().putBoolean("send_typing",on).apply());
-        settingRow(chats,"Undo send","How long you have to take a message back after tapping send",undoSendOn()?undoSendSeconds()+(undoSendSeconds()==1?" second":" seconds"):"Off",this::chooseUndoSend);
-        settingRow(chats,"Quick replies","Saved phrases above the message box",quickRepliesOn()?quickReplies().size()+" saved":"Off",this::editQuickReplies);
-        long arUntil=PairedService.autoReplyUntil(this);boolean arOn=arUntil>System.currentTimeMillis();
-        settingRow(chats,"Busy auto-reply",arOn?"“"+PairedService.autoReplyText(this)+"”":"Answers saved contacts once an hour while you're busy",arOn?(arUntil==Long.MAX_VALUE?"On":"Until "+timeOnly(arUntil)):"Off",this::autoReplyMenu);
-        settingRow(chats,"Busy tile","Turn busy auto-reply on or off from the pull-down shade",null,this::addBusyTile);
-        int phone=chatSettings.phoneReceipts();
-        settingRow(chats,"Read receipts","Chosen per chat: long-press a chat to turn them on",null,()->new AlertDialog.Builder(this).setTitle("Read receipts")
-            .setMessage("Off for every chat unless you turn them on for that chat (long-press it in the list, or tap its name at the top of the chat). When on, opening the chat here marks it read on your phone and Google Messages sends a receipt. When off, the chat isn't marked read, so it stays unread in Google Messages.\n\nGoogle Messages' own \"Send read receipts\" setting: "+(phone==1?"on.":phone==0?"off, so no receipts are sent for any chat.":"not reported yet.")+"\n\nPins and chat themes are kept in this app only; pinning here doesn't change Google Messages.").setPositiveButton("OK",null).show());
-        settingSwitch(chats,"Separate promotions","Texts from businesses and short codes go in Promotions",promotionsSeparate(),on->prefs.edit().putBoolean("promotions_separate",on).apply());
-        settingSwitch(chats,"Full-quality photos","Off shows previews only and uses less data",fullPhotos(),on->prefs.edit().putBoolean("full_photos",on).apply());
-        settingSwitch(chats,"Link previews","Only for contacts and chats you've written in",linkPreviewsOn(),on->prefs.edit().putBoolean("link_previews",on).apply());
-        settingSwitch(chats,"Message effects","Balloons, Slam, invisible ink and other effects iPhones send, and phrases like “Happy birthday”",effectsOn(),on->prefs.edit().putBoolean("message_effects",on).apply());
-        settingRow(chats,"Maps app for addresses",null,mapsAppLabel(),()->chooseMapsApp(pkg->{if(screen.equals("settings"))settings();}));
-        settingRow(chats,"Calendar app for dates","Tap a date or time in a message to add it",calendarAppLabel(),()->chooseCalendarApp(pkg->{if(screen.equals("settings"))settings();}));
-        if(!Avatars.canUsePhonePhotos(this))settingRow(chats,"Use names and photos from contacts","Full first names (like \"Hannah Kay\") and contact photos",null,()->{if(shouldShowRequestPermissionRationale(Manifest.permission.READ_CONTACTS)||!prefs.getBoolean("asked_contacts",false)){prefs.edit().putBoolean("asked_contacts",true).apply();requestPermissions(new String[]{Manifest.permission.READ_CONTACTS},CONTACTS_PERMISSION);}
-            else startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())));});
-
-        LinearLayout alerts=settingsGroup(content,"Notifications");
-        boolean allowed=checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED;
-        settingRow(alerts,"Notifications",allowed?"Sound, vibration and per-chat options":"Turn on to hear about new messages",allowed?"On":"Off",()->{if(!allowed)requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},101);else startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()));});
-        String shows=NotificationPrivacy.mode(this);
-        int ownChats=NotificationPrivacy.ownCount(this);String ownNote=ownChats==0?" Change it for one chat in its Details.":" "+ownChats+(ownChats==1?" chat has":" chats have")+" its own (in Details).";
-        settingRow(alerts,"What notifications show",(shows.equals(NotificationPrivacy.ALL)?"Who it's from and what they said.":shows.equals(NotificationPrivacy.NAME)?"Who it's from, not what they said.":"Just “New message”. Bubbles are off, since they show who it is.")+ownNote,NotificationPrivacy.label(shows),()->{
-            List<String> labels=java.util.Arrays.asList("Name and message","Name only","Nothing (just “New message”)");String[] values={NotificationPrivacy.ALL,NotificationPrivacy.NAME,NotificationPrivacy.NONE};List<Runnable> actions=new ArrayList<>();
-            for(String v:values)actions.add(()->{NotificationPrivacy.set(this,v);PairedService.refreshChatNotifications(this);if(screen.equals("settings"))settings();});
-            menuSheet("What notifications show",labels,actions);});
-        int nudge=Nudges.minutes(this);
-        TextView reminderLine=settingRow(alerts,"Unread reminders",nudge>0?"Checking…":"For pinned chats you haven't read",nudge<=0?"Off":nudge==60?"Every hour":"Every "+(nudge/60)+" hours",()->{
-            List<String> labels=java.util.Arrays.asList("Every hour","Every 2 hours","Every 4 hours","Off");int[] values={60,120,240,0};List<Runnable> actions=new ArrayList<>();
-            for(int v:values)actions.add(()->{decoder.execute(()->Nudges.setMinutes(this,v));ui.postDelayed(()->{if(screen.equals("settings"))settings();},150);});
-            menuSheet("Remind me about unread pinned chats",labels,actions);});
-        if(nudge>0){decoder.execute(()->{Nudges.reschedule(this);String line=Nudges.summary(this);ui.post(()->reminderLine.setText(line+"\nUp to 3 times, not 10 PM–8 AM, not for muted or snoozed chats."));});
-            settingRow(alerts,"Send a test reminder",null,null,()->{Nudges.test(this);toast("Sent. Check your notifications.");});}
-        String keywords=prefs.getString("alert_keywords","");
-        settingRow(alerts,"Keyword alerts","Notify for these words, even in muted chats",keywords.isEmpty()?"None":keywords,this::editKeywords);
-        String mentionNames=prefs.getString("mention_name","");
-        settingRow(alerts,"Mention alerts","Notify when someone @mentions you",mentionNames.isEmpty()?"Off":"@"+mentionNames,this::editMentionNames);
-        settingSwitch(alerts,"Auto-copy verification codes","New codes go straight to the clipboard",PairedService.autoCopyCodes(this),on->prefs.edit().putBoolean("auto_copy_codes",on).apply());
-        settingSwitch(alerts,"Delete codes after a day","Verification texts from businesses (not your contacts or group chats) are deleted, in Google Messages too",PairedService.autoDeleteCodes(this),on->prefs.edit().putBoolean("auto_delete_codes",on).apply());
-        settingRow(alerts,"Bubbles","Chats that float over other apps",null,()->startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName())));
-        settingRow(alerts,"Hide \"Message Center is running\"","Android requires it while connected. Turn it off and messages still arrive; you're told if the connection drops.",null,()->{try{startActivity(PairedService.channelSettings(this,PairedService.RUNNING));}catch(Exception e){openAppSettings();}});
-
-        LinearLayout looks=settingsGroup(content,"Appearance");
+        // Who this is connected as.
+        LinearLayout hero=row();hero.setPadding(dp(16),dp(16),dp(16),dp(16));hero.setBackground(shape(raised(),24));hero.setElevation(dp(2));pressDim(hero);
+        ImageView logo=menuChip(R.drawable.ic_chat,BLUE);logo.setPadding(dp(11),dp(11),dp(11),dp(11));logo.setBackground(shape(BLUE,16));hero.addView(logo,new LinearLayout.LayoutParams(dp(52),dp(52)));
+        LinearLayout who=vertical();who.setPadding(dp(14),0,dp(4),0);who.addView(text("Message Center",18,ink,true));
+        TextView state=text(PairedService.status(this),13,muted,false);state.setPadding(0,dp(2),0,0);who.addView(state);TextView version=text("Version "+BuildConfig.VERSION_NAME,12,muted,false);version.setPadding(0,dp(2),0,0);who.addView(version);
+        hero.addView(who,new LinearLayout.LayoutParams(0,-2,1));hero.addView(text("›",20,muted,false));hero.setContentDescription("Connection: "+PairedService.status(this));hero.setOnClickListener(v->openSettingsPage("connection"));
+        LinearLayout.LayoutParams hl=new LinearLayout.LayoutParams(-1,-2);hl.setMargins(dp(1),dp(8),dp(1),dp(6));body.addView(hero,hl);
+        // Each page, with a word on what's set there.
+        String typing=prefs.getBoolean("send_typing",true)?"Typing shown":"Typing hidden",undo=undoSendOn()?"undo send "+undoSendSeconds()+" s":"no undo send";
+        LinearLayout pages=settingsGroup(body,null);
+        settingRow(pages,R.drawable.ic_chat,0xff3b82f6,"Messages",typing+" · "+undo+" · quick replies, effects, previews",null,()->openSettingsPage("messages"));
+        settingRow(pages,R.drawable.ic_gallery,0xfff59e0b,"Photos & media","Photos "+PhotoQuality.label(photoQuality()).toLowerCase(Locale.ROOT)+" · videos "+PhotoQuality.label(videoQuality()).toLowerCase(Locale.ROOT)+" · text in pictures "+(PhotoText.enabled(this)?"on":"off"),null,()->openSettingsPage("media"));
+        boolean allowed=checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED;int nudge=Nudges.minutes(this);
+        settingRow(pages,R.drawable.ic_bell,0xff8b5cf6,"Notifications",(allowed?NotificationPrivacy.label(NotificationPrivacy.mode(this)):"Off")+" · "+(nudge<=0?"no reminders":"reminders every "+(nudge==60?"hour":(nudge/60)+" hours"))+" · alerts, bubbles",null,()->openSettingsPage("notifications"));
+        long arUntil=PairedService.autoReplyUntil(this);int arrivals=Arrivals.all(this).size();
+        settingRow(pages,R.drawable.ic_bolt,0xff14b8a6,"Automation",(arUntil>System.currentTimeMillis()?"Busy reply on":"Busy reply off")+" · "+(arrivals>0?arrivals+" arrival "+(arrivals==1?"text":"texts"):"arrival texts")+" · codes",null,()->openSettingsPage("automation"));
         String themeMode=prefs.getString("theme","system");
-        settingRow(looks,"Theme",themeMode.equals("black")?"True black for OLED screens: those pixels switch off":null,themeMode.equals("light")?"Light":themeMode.equals("dark")?"Dark":themeMode.equals("black")?"Black":"Match phone",
-            ()->menuSheet("Theme",java.util.Arrays.asList("Match phone","Light","Dark","Black (saves battery on OLED)"),java.util.Arrays.<Runnable>asList(()->{appTheme("system");settings();},()->{appTheme("light");settings();},()->{appTheme("dark");settings();},()->{appTheme("black");settings();})));
-        settingRow(looks,"Text size",null,scaleLabel(textScale),()->{float[] sizes={0.9f,1f,1.15f,1.3f};List<Runnable> actions=new ArrayList<>();
-            for(float f:sizes)actions.add(()->{prefs.edit().putFloat("text_scale",f).apply();settings();});
-            menuSheet("Text size",java.util.Arrays.asList("Small","Default","Large","Larger"),actions);});
-
-        LinearLayout link=settingsGroup(content,"Connection");
-        settingRow(link,"Reconnect","Restart the connection to Google Messages. It also does this on its own when it gets stuck.",null,()->{PairedService.restart(this);new android.os.Handler().postDelayed(()->{if(screen.equals("settings"))settings();},400);});
-        settingRow(link,"Sign in / pair again",null,null,this::signIn);
+        settingRow(pages,R.drawable.ic_palette,0xffec4899,"Appearance",(themeMode.equals("light")?"Light":themeMode.equals("dark")?"Dark":themeMode.equals("black")?"Black":"Matches phone")+" · text "+scaleLabel(textScale).toLowerCase(Locale.ROOT)+" · maps & calendar apps",null,()->openSettingsPage("appearance"));
         boolean restricted=batteryRestricted();
-        settingRow(link,"Background activity",restricted?"Battery optimization is on. Allow background activity so messages keep arriving.":"Battery optimization is off. On ColorOS, also allow auto-launch for Message Center and Google Messages.",restricted?"Fix":"OK",restricted?this::allowBackground:this::openAppSettings);
-        settingRow(link,"Open Google Messages","It must stay your default texting app",null,this::openGoogle);
-
-        LinearLayout data=settingsGroup(content,"Your data");
-        settingRow(data,"Back up app data","Starred messages, nicknames, reminders and settings, to Downloads",null,this::backupNow);
-        settingRow(data,"Restore from a backup",null,null,()->{try{startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*").putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/json","text/plain","application/octet-stream"}),RESTORE_BACKUP);}catch(Exception e){toast("No file picker is available.");}});
-        settingRow(data,"Delete old verification codes",null,null,this::clearOldCodes);
-
-        LinearLayout about=settingsGroup(content,"About");
-        settingRow(about,"Message Center","Connects this phone directly to Google. Older history loads in pages and may be incomplete.",BuildConfig.VERSION_NAME,null);
-        settingRow(about,"Report a problem","Makes a file with what went wrong for you to send",null,()->reportProblem(""));
-        settingRow(about,"Updates on GitHub",null,null,()->startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse("https://github.com/bags156/message-center/releases"))));
-
-        LinearLayout stop=settingsGroup(content,"Disconnect");
-        settingRow(stop,"Stop background connection","Messages stop arriving here until you reconnect",null,()->{PairedService.disconnect(this,false);settings();});
-        TextView forget=settingRow(stop,"Forget pairing and synced messages",null,null,()->new AlertDialog.Builder(this).setTitle("Forget this connection?").setMessage("Removes this app's pairing and synced cache from this phone. Your Google Messages chats stay in Google Messages. Remove Message Center in Google's Device pairing list to revoke it there too.").setNegativeButton("Cancel",null).setPositiveButton("Forget",(d,w)->{PairedService.disconnect(this,true);CookieManager.getInstance().removeAllCookies(null);inbox();}).show());
-        ((TextView)((LinearLayout)forget.getParent()).getChildAt(0)).setTextColor(danger);
-        restoreScroll(sc,keep);
-    }
+        settingRow(pages,R.drawable.ic_link,0xff22c55e,"Connection",restricted?"Background activity needs your OK":"Reconnect, pair again, background activity",null,()->openSettingsPage("connection"));
+        settingRow(pages,R.drawable.ic_backup,0xff64748b,"Data & about","Back up, restore, report a problem, updates",null,()->openSettingsPage("data"));}
+    /** One settings page's rows (also used, filtered, by search). */
+    private void settingsPageRows(String page,LinearLayout content){android.content.SharedPreferences prefs=getSharedPreferences("paired",MODE_PRIVATE);
+        switch(page){
+        case "messages":{LinearLayout g=settingsGroup(content,"While you chat");
+            settingSwitch(g,R.drawable.ic_keyboard,0xff3b82f6,"Typing indicators","Let others see when you're typing",prefs.getBoolean("send_typing",true),on->prefs.edit().putBoolean("send_typing",on).apply());
+            int phone=chatSettings.phoneReceipts();
+            settingRow(g,R.drawable.ic_eye,0xff6366f1,"Read receipts","Chosen per chat: long-press a chat to turn them on",null,()->new AlertDialog.Builder(this).setTitle("Read receipts")
+                .setMessage("Off for every chat unless you turn them on for that chat (long-press it in the list, or tap its name at the top of the chat). When on, opening the chat here marks it read on your phone and Google Messages sends a receipt. When off, the chat isn't marked read, so it stays unread in Google Messages.\n\nGoogle Messages' own \"Send read receipts\" setting: "+(phone==1?"on.":phone==0?"off, so no receipts are sent for any chat.":"not reported yet.")+"\n\nPins and chat themes are kept in this app only; pinning here doesn't change Google Messages.").setPositiveButton("OK",null).show());
+            settingRow(g,R.drawable.ic_undo,0xfff97316,"Undo send","How long you have to take a message back after tapping send",undoSendOn()?undoSendSeconds()+(undoSendSeconds()==1?" second":" seconds"):"Off",this::chooseUndoSend);
+            settingRow(g,R.drawable.ic_send,0xff0ea5e9,"Quick replies","Saved phrases above the message box",quickRepliesOn()?quickReplies().size()+" saved":"Off",this::editQuickReplies);
+            LinearLayout show=settingsGroup(content,"What chats show");
+            settingSwitch(show,R.drawable.ic_sparkle,0xffa855f7,"Message effects","Balloons, Slam, invisible ink and other effects iPhones send, and phrases like “Happy birthday”",effectsOn(),on->prefs.edit().putBoolean("message_effects",on).apply());
+            settingSwitch(show,R.drawable.ic_link,0xff14b8a6,"Link previews","Only for contacts and chats you've written in",linkPreviewsOn(),on->prefs.edit().putBoolean("link_previews",on).apply());
+            settingSwitch(show,R.drawable.ic_tag,0xfff59e0b,"Separate promotions","Texts from businesses and short codes go in Promotions",promotionsSeparate(),on->prefs.edit().putBoolean("promotions_separate",on).apply());
+            if(!Avatars.canUsePhonePhotos(this))settingRow(show,R.drawable.ic_contact,0xff22c55e,"Use names and photos from contacts","Full first names (like \"Hannah Kay\") and contact photos",null,()->{if(shouldShowRequestPermissionRationale(Manifest.permission.READ_CONTACTS)||!prefs.getBoolean("asked_contacts",false)){prefs.edit().putBoolean("asked_contacts",true).apply();requestPermissions(new String[]{Manifest.permission.READ_CONTACTS},CONTACTS_PERMISSION);}
+                else startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())));});
+            break;}
+        case "media":{LinearLayout send=settingsGroup(content,"What you send");
+            settingRow(send,R.drawable.ic_gallery,0xfff59e0b,"Photo quality","Photos prepare on this phone while you type",PhotoQuality.label(photoQuality()),this::choosePhotoQuality);
+            settingRow(send,R.drawable.ic_videocam,0xffef4444,"Video quality",VideoPlan.describe(videoQuality()),PhotoQuality.label(videoQuality()),this::chooseVideoQuality);
+            settingRow(send,R.drawable.ic_file,0xff64748b,"Saved attachments","Queued photos and videos survive closing the app; unconfirmed sends wait for review",String.valueOf(new MediaOutbox(this).all().size()),this::savedAttachments);
+            LinearLayout get=settingsGroup(content,"What you receive");
+            settingSwitch(get,R.drawable.ic_download,0xff3b82f6,"Download full-quality photos","Off shows previews only and uses less data",fullPhotos(),on->prefs.edit().putBoolean("full_photos",on).apply());
+            settingSwitch(get,R.drawable.ic_search,0xff8b5cf6,"Search text in pictures","Reads printed English text in downloaded photos, on this phone (open-source Tesseract)",PhotoText.enabled(this),on->{prefs.edit().putBoolean("photo_text",on).apply();if(on)PhotoText.indexDownloaded(this,true);else PhotoText.clear(this);searchedFor="";});
+            int indexed;try(PhotoText index=new PhotoText(this)){indexed=index.count();}
+            settingRow(get,R.drawable.ic_refresh,0xff14b8a6,"Scan downloaded pictures","Includes older pictures already downloaded here; does not download remote photos",indexed+" indexed",()->{PhotoText.indexDownloaded(this,true);toast("Indexing downloaded pictures. Search results update as they finish.");});
+            break;}
+        case "notifications":{LinearLayout alerts=settingsGroup(content,"Notifications");
+            boolean allowed=checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED;
+            settingRow(alerts,R.drawable.ic_bell,0xff8b5cf6,"Notifications",allowed?"Sound, vibration and per-chat options":"Turn on to hear about new messages",allowed?"On":"Off",()->{if(!allowed)requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},101);else startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()));});
+            String shows=NotificationPrivacy.mode(this);
+            int ownChats=NotificationPrivacy.ownCount(this);String ownNote=ownChats==0?" Change it for one chat in its Details.":" "+ownChats+(ownChats==1?" chat has":" chats have")+" its own (in Details).";
+            settingRow(alerts,R.drawable.ic_eye,0xff6366f1,"What notifications show",(shows.equals(NotificationPrivacy.ALL)?"Who it's from and what they said.":shows.equals(NotificationPrivacy.NAME)?"Who it's from, not what they said.":"Just “New message”. Bubbles are off, since they show who it is.")+ownNote,NotificationPrivacy.label(shows),()->{
+                List<String> labels=java.util.Arrays.asList("Name and message","Name only","Nothing (just “New message”)");String[] values={NotificationPrivacy.ALL,NotificationPrivacy.NAME,NotificationPrivacy.NONE};List<Runnable> actions=new ArrayList<>();
+                for(String v:values)actions.add(()->{NotificationPrivacy.set(this,v);PairedService.refreshChatNotifications(this);if(screen.equals("settings"))settings();});
+                menuSheet("What notifications show",labels,actions);});
+            settingRow(alerts,R.drawable.ic_chat,0xff14b8a6,"Bubbles","Chats that float over other apps",null,()->startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName())));
+            settingRow(alerts,R.drawable.ic_notification,0xff64748b,"Hide \"Message Center is running\"","Android requires it while connected. Turn it off and messages still arrive; you're told if the connection drops.",null,()->{try{startActivity(PairedService.channelSettings(this,PairedService.RUNNING));}catch(Exception e){openAppSettings();}});
+            LinearLayout words=settingsGroup(content,"Alerts that get through");
+            String keywords=prefs.getString("alert_keywords","");
+            settingRow(words,R.drawable.ic_search,0xfff59e0b,"Keyword alerts","Notify for these words, even in muted chats",keywords.isEmpty()?"None":keywords,this::editKeywords);
+            String mentionNames=prefs.getString("mention_name","");
+            settingRow(words,R.drawable.ic_at,0xff3b82f6,"Mention alerts","Notify when someone @mentions you",mentionNames.isEmpty()?"Off":"@"+mentionNames,this::editMentionNames);
+            LinearLayout remind=settingsGroup(content,"Reminders");
+            int nudge=Nudges.minutes(this);
+            TextView reminderLine=settingRow(remind,R.drawable.ic_clock,0xffef4444,"Unread reminders",nudge>0?"Checking…":"For pinned chats you haven't read",nudge<=0?"Off":nudge==60?"Every hour":"Every "+(nudge/60)+" hours",()->{
+                List<String> labels=java.util.Arrays.asList("Every hour","Every 2 hours","Every 4 hours","Off");int[] values={60,120,240,0};List<Runnable> actions=new ArrayList<>();
+                for(int v:values)actions.add(()->{decoder.execute(()->Nudges.setMinutes(this,v));ui.postDelayed(()->{if(screen.equals("settings"))settings();},150);});
+                menuSheet("Remind me about unread pinned chats",labels,actions);});
+            if(nudge>0){if(settingsFilter==null)decoder.execute(()->{Nudges.reschedule(this);String line=Nudges.summary(this);ui.post(()->reminderLine.setText(line+"\nUp to 3 times, not 10 PM–8 AM, not for muted or snoozed chats."));});
+                settingRow(remind,R.drawable.ic_send,0xff64748b,"Send a test reminder",null,null,()->{Nudges.test(this);toast("Sent. Check your notifications.");});}
+            break;}
+        case "automation":{LinearLayout busy=settingsGroup(content,"When you're busy");
+            long arUntil=PairedService.autoReplyUntil(this);boolean arOn=arUntil>System.currentTimeMillis();
+            settingRow(busy,R.drawable.ic_bolt,0xff14b8a6,"Busy auto-reply",arOn?"“"+PairedService.autoReplyText(this)+"”":"Answers saved contacts once an hour while you're busy",arOn?(arUntil==Long.MAX_VALUE?"On":"Until "+timeOnly(arUntil)):"Off",this::autoReplyMenu);
+            settingRow(busy,R.drawable.ic_add,0xff64748b,"Busy tile","Turn busy auto-reply on or off from the pull-down shade",null,this::addBusyTile);
+            LinearLayout places=settingsGroup(content,"Places");
+            int arrivals=Arrivals.all(this).size(),placeCount=Arrivals.places(this).size();
+            settingRow(places,R.drawable.ic_arrive,0xff22c55e,"Text on arrival","Texts someone when you get to a place you pick (set it up from a chat's ⊕)",arrivals>0?arrivals+" on":placeCount>0?placeCount+(placeCount==1?" place":" places"):"Off",this::arrivalSettings);
+            LinearLayout codes=settingsGroup(content,"Verification codes");
+            settingSwitch(codes,R.drawable.ic_copy,0xff3b82f6,"Auto-copy verification codes","New codes go straight to the clipboard",PairedService.autoCopyCodes(this),on->prefs.edit().putBoolean("auto_copy_codes",on).apply());
+            settingSwitch(codes,R.drawable.ic_key,0xfff59e0b,"Delete codes after a day","Verification texts from businesses (not your contacts or group chats) are deleted, in Google Messages too",PairedService.autoDeleteCodes(this),on->prefs.edit().putBoolean("auto_delete_codes",on).apply());
+            settingRow(codes,R.drawable.ic_delete,0xffef4444,"Delete old verification codes now",null,null,this::clearOldCodes);
+            break;}
+        case "appearance":{LinearLayout looks=settingsGroup(content,"Look");
+            String themeMode=prefs.getString("theme","system");
+            settingRow(looks,R.drawable.ic_palette,0xffec4899,"Theme",themeMode.equals("black")?"True black for OLED screens: those pixels switch off":null,themeMode.equals("light")?"Light":themeMode.equals("dark")?"Dark":themeMode.equals("black")?"Black":"Match phone",
+                ()->menuSheet("Theme",java.util.Arrays.asList("Match phone","Light","Dark","Black (saves battery on OLED)"),java.util.Arrays.<Runnable>asList(()->{appTheme("system");settings();},()->{appTheme("light");settings();},()->{appTheme("dark");settings();},()->{appTheme("black");settings();})));
+            settingRow(looks,R.drawable.ic_text_size,0xff8b5cf6,"Text size",null,scaleLabel(textScale),()->{float[] sizes={0.9f,1f,1.15f,1.3f};List<Runnable> actions=new ArrayList<>();
+                for(float f:sizes)actions.add(()->{prefs.edit().putFloat("text_scale",f).apply();settings();});
+                menuSheet("Text size",java.util.Arrays.asList("Small","Default","Large","Larger"),actions);});
+            LinearLayout apps=settingsGroup(content,"Apps for addresses and dates");
+            settingRow(apps,R.drawable.ic_place,0xffef4444,"Maps app for addresses","Tap an address in a message to open it",mapsAppLabel(),()->chooseMapsApp(pkg->{if(screen.equals("settings"))settings();}));
+            settingRow(apps,R.drawable.ic_event,0xff3b82f6,"Calendar app for dates","Tap a date or time in a message to add it",calendarAppLabel(),()->chooseCalendarApp(pkg->{if(screen.equals("settings"))settings();}));
+            break;}
+        case "connection":{LinearLayout link=settingsGroup(content,"Google Messages");
+            settingRow(link,R.drawable.ic_refresh,0xff22c55e,"Reconnect","Restart the connection to Google Messages. It also does this on its own when it gets stuck.",null,()->{PairedService.restart(this);new android.os.Handler().postDelayed(()->{if(screen.equals("settings"))settings();},400);});
+            boolean restricted=batteryRestricted();
+            settingRow(link,R.drawable.ic_battery,0xfff59e0b,"Background activity",restricted?"Battery optimization is on. Allow background activity so messages keep arriving.":"Battery optimization is off. On ColorOS, also allow auto-launch for Message Center and Google Messages.",restricted?"Fix":"OK",restricted?this::allowBackground:this::openAppSettings);
+            settingRow(link,R.drawable.ic_open,0xff3b82f6,"Open Google Messages","It must stay your default texting app",null,this::openGoogle);
+            settingRow(link,R.drawable.ic_link,0xff8b5cf6,"Sign in / pair again",null,null,this::signIn);
+            LinearLayout stop=settingsGroup(content,"Disconnect");
+            settingRow(stop,R.drawable.ic_stop,0xff64748b,"Stop background connection","Messages stop arriving here until you reconnect",null,()->{PairedService.disconnect(this,false);settings();});
+            TextView forget=settingRow(stop,R.drawable.ic_delete,0xffdc2626,"Forget pairing and synced messages",null,null,()->new AlertDialog.Builder(this).setTitle("Forget this connection?").setMessage("Removes this app's pairing and synced cache from this phone. Your Google Messages chats stay in Google Messages. Remove Message Center in Google's Device pairing list to revoke it there too.").setNegativeButton("Cancel",null).setPositiveButton("Forget",(d,w)->{PairedService.disconnect(this,true);CookieManager.getInstance().removeAllCookies(null);inbox();}).show());
+            ((TextView)((LinearLayout)forget.getParent()).getChildAt(0)).setTextColor(danger);
+            break;}
+        case "data":{LinearLayout data=settingsGroup(content,"Your data");
+            settingRow(data,R.drawable.ic_backup,0xff3b82f6,"Back up app data","Starred messages, nicknames, notes, reminders and settings, to Downloads",null,this::backupNow);
+            settingRow(data,R.drawable.ic_history,0xff14b8a6,"Restore from a backup",null,null,()->{try{startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*").putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/json","text/plain","application/octet-stream"}),RESTORE_BACKUP);}catch(Exception e){toast("No file picker is available.");}});
+            LinearLayout about=settingsGroup(content,"About");
+            settingRow(about,R.drawable.ic_info,0xff64748b,"Message Center","Connects this phone directly to Google. Older history loads in pages and may be incomplete.",BuildConfig.VERSION_NAME,null);
+            settingRow(about,R.drawable.ic_bug,0xffef4444,"Report a problem","Makes a file with what went wrong for you to send",null,()->reportProblem(""));
+            settingRow(about,R.drawable.ic_download,0xff22c55e,"Updates on GitHub",null,null,()->startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse("https://github.com/bags156/message-center/releases"))));
+            break;}
+        default:break;}}
     /** Asks what happened, then bundles diagnostics (no message text) into a file to send however you like. */
     private void reportProblem(String what){LinearLayout content=vertical();content.setPadding(dp(20),dp(8),dp(20),0);
         EditText e=input("What went wrong? (optional)");e.setSingleLine(false);e.setMinLines(2);e.setText(what);content.addView(e);
@@ -3787,31 +3857,37 @@ public class PairedActivity extends Activity {
                 ui.post(()->{Intent send=new Intent(Intent.ACTION_SEND).setType("application/zip").putExtra(Intent.EXTRA_STREAM,uri).putExtra(Intent.EXTRA_SUBJECT,"Message Center problem report").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
                     send.setClipData(ClipData.newRawUri(zip.getName(),uri));startActivity(Intent.createChooser(send,"Send the report"));});}
             catch(Exception x){ui.post(()->toast("Couldn't make the report: "+x.getMessage()));}});}).show();}
-    /** A titled group of settings on one rounded card. */
-    private LinearLayout settingsGroup(LinearLayout content,String title){TextView h=text(title,13,BLUE,true);h.setPadding(dp(20),dp(20),dp(20),dp(8));content.addView(h);
-        LinearLayout g=vertical();g.setBackground(shape(card,20));g.setClipToOutline(true);content.addView(g,new LinearLayout.LayoutParams(-1,-2));return g;}
-    private void addSettingRow(LinearLayout group,View row){if(group.getChildCount()>0){View line=new View(this);line.setBackgroundColor((ink&0x00ffffff)|0x14000000);LinearLayout.LayoutParams ll=new LinearLayout.LayoutParams(-1,Math.max(1,dp(1)/2));ll.setMarginStart(dp(16));group.addView(line,ll);}
+    /** A group of settings on one raised, rounded card, under a small label (none when title is null). While searching, labelled with the page it's on. */
+    private LinearLayout settingsGroup(LinearLayout content,String title){String label=settingsFilter!=null?settingsFilterPage+(title==null?"":" · "+title):title;
+        TextView h=null;if(label!=null){h=text(label,13,muted,true);h.setPadding(dp(16),dp(18),dp(16),dp(8));content.addView(h);}
+        LinearLayout g=vertical();g.setBackground(shape(raised(),22));g.setClipToOutline(true);g.setElevation(dp(2));
+        LinearLayout.LayoutParams gl=new LinearLayout.LayoutParams(-1,-2);gl.setMargins(dp(1),label==null?dp(8):0,dp(1),dp(2));content.addView(g,gl);
+        if(settingsFilter!=null)settingsGroups.add(new View[]{h==null?new View(this):h,g});return g;}
+    private void addSettingRow(LinearLayout group,View row){if(group.getChildCount()>0){View line=new View(this);line.setBackgroundColor((ink&0x00ffffff)|0x14000000);LinearLayout.LayoutParams ll=new LinearLayout.LayoutParams(-1,Math.max(1,dp(1)/2));ll.setMarginStart(dp(60));group.addView(line,ll);}
         group.addView(row,new LinearLayout.LayoutParams(-1,-2));}
-    /** A setting: title, an optional line under it, and an optional current value on the right. Returns the line so it can update. */
-    private TextView settingRow(LinearLayout group,String title,String sub,String value,Runnable tap){
-        LinearLayout r=row();r.setGravity(Gravity.CENTER_VERTICAL);r.setPadding(dp(16),dp(14),dp(16),dp(14));r.setMinimumHeight(dp(56));
-        LinearLayout texts=vertical();texts.addView(text(title,16,ink,false));
-        TextView line=text(sub==null?"":sub,13,muted,false);line.setPadding(0,dp(2),0,0);line.setVisibility(sub==null?View.GONE:View.VISIBLE);texts.addView(line);
-        r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));
-        if(value!=null){TextView v=text(value,14,tap==null?muted:BLUE,false);v.setPadding(dp(12),0,0,0);v.setMaxWidth(dp(150));v.setSingleLine(true);v.setEllipsize(TextUtils.TruncateAt.END);r.addView(v);}
+    /** Whether a setting is one of the search's results: every word typed is in its name, description, value or page (or words people use for it). */
+    private boolean settingShown(String title,String sub,String value){if(settingsFilter==null)return true;
+        String hay=ContactSearch.fold(title+" "+(sub==null?"":sub)+" "+(value==null?"":value)+" "+settingsFilterPage+" "+settingKeywords(title));
+        for(String w:settingsFilter.trim().split("\\s+")){String f=ContactSearch.fold(w);if(!f.isEmpty()&&!hay.contains(f))return false;}return true;}
+    private LinearLayout settingLine(int icon,int color,String title,String sub,TextView[] lineOut){LinearLayout r=row();r.setGravity(Gravity.CENTER_VERTICAL);r.setPadding(dp(14),dp(12),dp(14),dp(12));r.setMinimumHeight(dp(62));
+        if(icon!=0)r.addView(menuChip(icon,color),new LinearLayout.LayoutParams(dp(32),dp(32)));
+        LinearLayout texts=vertical();texts.setPadding(icon!=0?dp(14):dp(2),0,dp(4),0);texts.addView(text(title,16,ink,false));
+        TextView line=text(sub==null?"":sub,13,muted,false);line.setPadding(0,dp(2),0,0);line.setVisibility(sub==null?View.GONE:View.VISIBLE);line.setMaxLines(4);line.setEllipsize(TextUtils.TruncateAt.END);texts.addView(line);
+        r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));lineOut[0]=line;return r;}
+    /** A setting: a colored icon, its name, an optional line under it, and its current value with a › when tapping it changes it. Returns the line so it can update. */
+    private TextView settingRow(LinearLayout group,int icon,int color,String title,String sub,String value,Runnable tap){TextView[] line=new TextView[1];LinearLayout r=settingLine(icon,color,title,sub,line);
+        String shown=(value==null?"":value)+(tap==null?"":(value==null||value.isEmpty()?"":"  ")+"›");
+        if(!shown.isEmpty()){TextView v=text(shown,14,muted,false);v.setPadding(dp(10),0,0,0);v.setMaxWidth(dp(160));v.setSingleLine(true);v.setEllipsize(TextUtils.TruncateAt.MIDDLE);r.addView(v);}
         if(tap!=null){pressable(r);r.setOnClickListener(x->tap.run());}
         r.setContentDescription(title+(value==null?"":", "+value)+(sub==null?"":". "+sub));
-        addSettingRow(group,r);return line;}
+        if(settingShown(title,sub,value))addSettingRow(group,r);return line[0];}
     /** An on/off setting with a switch; changing it saves at once and leaves the screen where it is. */
-    private void settingSwitch(LinearLayout group,String title,String sub,boolean on,java.util.function.Consumer<Boolean> change){
-        LinearLayout r=row();r.setGravity(Gravity.CENTER_VERTICAL);r.setPadding(dp(16),dp(12),dp(12),dp(12));r.setMinimumHeight(dp(56));pressable(r);
-        LinearLayout texts=vertical();texts.addView(text(title,16,ink,false));if(sub!=null){TextView line=text(sub,13,muted,false);line.setPadding(0,dp(2),0,0);texts.addView(line);}
-        r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));
+    private void settingSwitch(LinearLayout group,int icon,int color,String title,String sub,boolean on,java.util.function.Consumer<Boolean> change){TextView[] line=new TextView[1];LinearLayout r=settingLine(icon,color,title,sub,line);pressable(r);
         android.widget.Switch sw=new android.widget.Switch(this);sw.setChecked(on);sw.setContentDescription(title);
         int[][] states={{android.R.attr.state_checked},{}};
         sw.setThumbTintList(new ColorStateList(states,new int[]{BLUE,dark?0xffb8bcc6:0xfff4f5f8}));sw.setTrackTintList(new ColorStateList(states,new int[]{(BLUE&0x00ffffff)|0x80000000,(muted&0x00ffffff)|0x60000000}));
         sw.setOnCheckedChangeListener((b,checked)->change.accept(checked));r.setOnClickListener(x->sw.toggle());r.addView(sw);
-        addSettingRow(group,r);}
+        if(settingShown(title,sub,on?"on":"off"))addSettingRow(group,r);}
     /** Scrolls to y once the content has been laid out (scrolling before that is ignored). */
     private void restoreScroll(ScrollView s,int y){if(y<=0)return;s.getViewTreeObserver().addOnGlobalLayoutListener(new android.view.ViewTreeObserver.OnGlobalLayoutListener(){int tries;
         @Override public void onGlobalLayout(){View c=s.getChildAt(0);if(c!=null&&c.getHeight()>0){s.scrollTo(0,y);s.getViewTreeObserver().removeOnGlobalLayoutListener(this);}else if(++tries>5)s.getViewTreeObserver().removeOnGlobalLayoutListener(this);}});}

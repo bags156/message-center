@@ -354,6 +354,41 @@ public final class OnDeviceSmoke extends Instrumentation {
         Thread.sleep(600);android.graphics.Bitmap darkShot=getUiAutomation().takeScreenshot();
         if(darkShot!=null)try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(ctx.getCacheDir(),"dialog-dark.png"))){darkShot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
         runOnMainSync(()->d[0].dismiss());}
+    private int viewsWithDescription(PairedActivity a,String label){int[] n={0};runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();
+        a.getWindow().getDecorView().findViewsWithText(found,label,android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);n[0]=found.size();});return n[0];}
+    private void shoot(String name)throws Exception{Thread.sleep(500);android.graphics.Bitmap shot=getUiAutomation().takeScreenshot();
+        if(shot!=null)try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getCacheDir(),name+".png"))){shot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}}
+    /**
+     * Settings: a short main page of pages (Messages, Photos & media, Notifications, Automation,
+     * Appearance, Connection, Data & about); each page opens with its settings and Back returns
+     * to the main page; searching finds a setting by name or by a word people use for it.
+     */
+    private void checkSettingsPages(PairedActivity a)throws Exception{java.lang.reflect.Method open=method("openSettings"),page=method("openSettingsPage",String.class),inbox=method("inbox");
+        java.lang.reflect.Field current=field("settingsPage"),screen=field("screen");
+        onMainCall(()->open.invoke(a));waitForIdleSync();
+        StringBuilder missing=new StringBuilder();
+        for(String p:new String[]{"Messages","Photos & media","Notifications","Automation","Appearance","Connection","Data & about","Search settings"})if(viewsWithDescription(a,p)==0)missing.append(p).append(", ");
+        check(missing.length()==0,"The settings main page is missing: "+missing);
+        check(viewsWithDescription(a,"Unread reminders")==0,"The settings main page still lists every setting");
+        shoot("settings-home");
+        onMainCall(()->page.invoke(a,"notifications"));waitForIdleSync();
+        check(viewsWithDescription(a,"Unread reminders")>0&&viewsWithDescription(a,"Keyword alerts")>0&&viewsWithDescription(a,"Typing indicators")==0,"The Notifications page doesn't hold the notification settings");
+        shoot("settings-notifications");
+        runOnMainSync(a::onBackPressed);waitForIdleSync();
+        String[] where={"",""};onMainCall(()->{where[0]=(String)screen.get(a);where[1]=(String)current.get(a);return null;});
+        check("settings".equals(where[0])&&where[1].isEmpty(),"Back from a settings page didn't return to the main settings page ("+where[0]+", "+where[1]+")");
+        android.widget.EditText[] search={null};
+        runOnMainSync(()->{for(android.widget.EditText e:viewsOf(a.getWindow().getDecorView(),android.widget.EditText.class))if("Search settings".contentEquals(e.getContentDescription()==null?"":e.getContentDescription()))search[0]=e;});
+        check(search[0]!=null,"Settings has no search box");
+        runOnMainSync(()->search[0].setText("dark"));waitForIdleSync();
+        check(viewsWithDescription(a,"Theme")>0,"Searching settings for \"dark\" didn't find Theme");
+        runOnMainSync(()->search[0].setText("undo"));waitForIdleSync();
+        check(viewsWithDescription(a,"Undo send")>0&&viewsWithDescription(a,"Theme")==0,"Searching settings for \"undo\" didn't narrow to Undo send");
+        shoot("settings-search");
+        runOnMainSync(()->search[0].setText(""));waitForIdleSync();
+        check(viewsWithDescription(a,"Data & about")>0,"Clearing the settings search didn't bring the pages back");
+        runOnMainSync(a::onBackPressed);waitForIdleSync();onMainCall(()->{where[0]=(String)screen.get(a);return null;});
+        check("inbox".equals(where[0]),"Back from the main settings page didn't go to the inbox ("+where[0]+")");}
     /** The newest raw contact the shell just added: the highest "_id=12" it lists (arguments can't hold spaces, so no "DESC"). */
     private String newestRawContact()throws Exception{java.util.regex.Matcher m=java.util.regex.Pattern.compile("_id=(\\d+)").matcher(shell("content query --uri content://com.android.contacts/raw_contacts --projection _id"));
         long best=-1;while(m.find())best=Math.max(best,Long.parseLong(m.group(1)));return best<0?"":String.valueOf(best);}
@@ -1262,11 +1297,12 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkChatMenu((PairedActivity)activity);
         checkInboxMenu((PairedActivity)activity);
         checkDialogLook((PairedActivity)activity);
+        checkSettingsPages((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();
         checkSentTextStays((PairedActivity)activity);
         checkBubbleStepsAside((PairedActivity)activity);
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, emoji picker tabs and search, notes, chat menu sheet, inbox menu sheet, dialog look, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, emoji picker tabs and search, notes, chat menu sheet, inbox menu sheet, dialog look, settings pages, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }
