@@ -774,14 +774,17 @@ public class PairedActivity extends Activity {
         if(!bubble()){gap(content,12);LinearLayout risky=menuGroup(content);
             menuRow(risky,R.drawable.ic_block,0xffef4444,blocked?"Unblock":"Block\u2026",null,!blocked,closing.apply(()->block(store.chat(id))));
             menuRow(risky,R.drawable.ic_delete,0xffdc2626,"Delete conversation\u2026",null,true,closing.apply(()->deleteChat(store.chat(id))));}
-        ScrollView sc=new ScrollView(this);sc.setVerticalScrollBarEnabled(false);sc.setClipToPadding(false);sc.setPadding(0,0,0,dp(2));sc.addView(content);d[0]=sheet(sc);return d[0];}
+        content.setPadding(dp(3),0,dp(3),dp(8));ScrollView sc=new ScrollView(this);sc.setVerticalScrollBarEnabled(false);sc.addView(content);d[0]=sheet(sc);return d[0];}
+    /** Cards in the chat menu: a step lighter than the sheet in dark themes (where shadows don't show), the usual card tint in light. */
+    private int raised(){if(!dark)return surface;int r=Color.red(surface),g=Color.green(surface),b=Color.blue(surface);
+        return Color.rgb(r+Math.round((Color.red(ink)-r)*0.07f),g+Math.round((Color.green(ink)-g)*0.07f),b+Math.round((Color.blue(ink)-b)*0.07f));}
     /** A tile at the top of the chat menu: a round icon over its name, on a raised card. */
     private void menuTile(LinearLayout tiles,int icon,String label,Runnable action){LinearLayout t=vertical();t.setGravity(Gravity.CENTER_HORIZONTAL);t.setPadding(dp(4),dp(14),dp(4),dp(12));
-        t.setBackground(shape(surface,20));t.setElevation(dp(2));pressDim(t);t.setContentDescription(label);t.setOnClickListener(v->action.run());
+        t.setBackground(shape(raised(),20));t.setElevation(dp(2));pressDim(t);t.setContentDescription(label);t.setOnClickListener(v->action.run());
         t.addView(roundIcon(icon,fab,onFab,44));TextView name=text(label,13,ink,true);name.setGravity(Gravity.CENTER);name.setSingleLine(true);name.setEllipsize(TextUtils.TruncateAt.END);name.setPadding(0,dp(8),0,0);t.addView(name);
         LinearLayout.LayoutParams tl=new LinearLayout.LayoutParams(0,-2,1);if(tiles.getChildCount()>0)tl.setMarginStart(dp(8));tiles.addView(t,tl);}
     /** A raised, rounded card holding a few rows of the chat menu. */
-    private LinearLayout menuGroup(LinearLayout content){LinearLayout g=vertical();g.setBackground(shape(surface,20));g.setClipToOutline(true);g.setElevation(dp(2));
+    private LinearLayout menuGroup(LinearLayout content){LinearLayout g=vertical();g.setBackground(shape(raised(),20));g.setClipToOutline(true);g.setElevation(dp(2));
         LinearLayout.LayoutParams gl=new LinearLayout.LayoutParams(-1,-2);gl.setMargins(dp(1),0,dp(1),0);content.addView(g,gl);return g;}
     /** A colored icon chip, like the ones in Android's Settings, so rows are told apart at a glance. */
     private ImageView menuChip(int icon,int color){ImageView i=new ImageView(this);i.setImageResource(icon);i.setImageTintList(ColorStateList.valueOf(Color.WHITE));i.setBackground(shape(color,10));i.setPadding(dp(6),dp(6),dp(6),dp(6));return i;}

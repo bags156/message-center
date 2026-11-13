@@ -292,7 +292,14 @@ public final class OnDeviceSmoke extends Instrumentation {
             for(android.view.View v:found)if(v.isClickable()){v.performClick();break;}return null;});waitForIdleSync();
         String[] now={""};onMainCall(()->{now[0]=(String)screen.get(a);return null;});
         check("notes".equals(now[0])&&!d[0].isShowing(),"The Notes tile didn't open the notes ("+now[0]+")");
-        runOnMainSync(a::onBackPressed);waitForIdleSync();}
+        runOnMainSync(a::onBackPressed);waitForIdleSync();
+        // The same sheet in the black theme, pictured for the CI log (the colors are set directly; the next screen resets them).
+        onMainCall(()->{thread.invoke(a,"menu-check");int[] colors=PairedActivity.palette(true,true);String[] names={"bg","card","surface","ink","muted"};
+            for(int i=0;i<names.length;i++)field(names[i]).setInt(a,colors[i]);field("fab").setInt(a,0xff3b4766);field("onFab").setInt(a,0xffd8e2ff);field("danger").setInt(a,0xfff2b8b5);field("dark").setBoolean(a,true);
+            d[0]=(android.app.Dialog)menu.invoke(a,(android.view.View)null);return null;});
+        Thread.sleep(700);android.graphics.Bitmap darkShot=getUiAutomation().takeScreenshot();
+        if(darkShot!=null)try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(ctx.getCacheDir(),"chat-menu-dark.png"))){darkShot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
+        onMainCall(()->{d[0].dismiss();return thread.invoke(a,"menu-check");});waitForIdleSync();}
     /** The newest raw contact the shell just added: the highest "_id=12" it lists (arguments can't hold spaces, so no "DESC"). */
     private String newestRawContact()throws Exception{java.util.regex.Matcher m=java.util.regex.Pattern.compile("_id=(\\d+)").matcher(shell("content query --uri content://com.android.contacts/raw_contacts --projection _id"));
         long best=-1;while(m.find())best=Math.max(best,Long.parseLong(m.group(1)));return best<0?"":String.valueOf(best);}
