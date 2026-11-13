@@ -34,7 +34,8 @@ public class ReconnectPlanTest {
         assertEquals(10_000, ReconnectPlan.quietLeft(1_000_000, 1_010_000));
         assertEquals(0, ReconnectPlan.quietLeft(1_000_000, 1_030_000));
         assertTrue(ReconnectPlan.recovering("Connection ended • reconnecting on its own"));
-        assertTrue(ReconnectPlan.recovering("Waiting for Google Messages • reconnecting on its own"));
+        assertTrue(ReconnectPlan.recovering("Waiting for Google Messages on your phone • reconnecting on its own"));
+        assertTrue(ReconnectPlan.recovering("Weak connection • reconnecting on its own"));
         assertTrue(ReconnectPlan.recovering("Connecting to Google Messages…"));
         assertFalse(ReconnectPlan.recovering("Google session expired. Sign in again."));
         assertFalse(ReconnectPlan.recovering(null));

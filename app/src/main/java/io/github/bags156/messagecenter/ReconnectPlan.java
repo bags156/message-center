@@ -34,7 +34,7 @@ final class ReconnectPlan {
 
     /** The status lines that mean "on its way back", as opposed to something you need to do. */
     static boolean recovering(String status) {
-        return status != null && (status.startsWith("Connection ended") || status.startsWith("Waiting for Google Messages")
+        return status != null && (status.startsWith("Connection ended") || status.startsWith("Waiting for Google Messages") || status.startsWith("Weak connection")
             || status.startsWith("Connecting to Google Messages") || status.startsWith("Reconnecting"));
     }
 }

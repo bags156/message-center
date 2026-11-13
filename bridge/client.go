@@ -123,7 +123,12 @@ func (c *Client) handle(evt any) {
 		c.emit("AUTH_REQUIRED", "{}")
 	case *events.ListenFatalError:
 		c.emit("DISCONNECTED", "{}")
-	case *events.ListenTemporaryError, *events.PhoneNotResponding, *events.PingFailed:
+	case *events.ListenTemporaryError, *events.PingFailed:
+		// This phone can't reach Google right now (weak signal, a network change, a captive Wi-Fi):
+		// the app should try a fresh connection as soon as the network looks better.
+		c.emit("TROUBLE", "{}")
+	case *events.PhoneNotResponding:
+		// Google is reachable but Google Messages on the phone hasn't answered for a while.
 		c.emit("RECONNECTING", "{}")
 	case *events.ListenRecovered, *events.PhoneRespondingAgain:
 		c.emit("RECOVERED", "{}")

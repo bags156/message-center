@@ -203,8 +203,9 @@ public final class PairedService extends Service {
     private void reconnectSoon(String why){
         if(ready||inactive||!vault.exists()||!getSharedPreferences("paired",MODE_PRIVATE).getBoolean("enabled",false))return;
         if(opening||System.currentTimeMillis()-lastOpenAt<10_000)return;
-        // Google Messages on the phone not answering: the connection's still up and asking by itself; a fresh one wouldn't help.
-        if(status!=null&&status.startsWith("Waiting for Google Messages"))return;
+        // Google Messages on the phone not answering: the connection's still up and asking by itself; a fresh one
+        // wouldn't help, unless the network just changed or came good (the phone's on that network too).
+        if(!why.startsWith("network")&&status!=null&&status.startsWith("Waiting for Google Messages"))return;
         Diagnostics.note("Reconnecting now: "+why);main.removeCallbacks(autoReconnect);autoTries=0;autoWhy=why;main.post(autoReconnect);}
     private void autoReconnectNow(){
         if(ready||inactive||!vault.exists()||!getSharedPreferences("paired",MODE_PRIVATE).getBoolean("enabled",false))return;
@@ -261,8 +262,11 @@ public final class PairedService extends Service {
                 }
                 case "AUTH_REQUIRED" -> {ready=false;stopAutoReconnect();getSharedPreferences("paired",MODE_PRIVATE).edit().putBoolean("enabled",false).apply();update("Google session expired. Sign in again.");}
                 case "DISCONNECTED" -> {ready=false;update("Connection ended • reconnecting on its own");main.post(()->scheduleAutoReconnect("connection ended"));}
+                // This phone can't reach Google (weak signal, a network change): a fresh connection is tried soon, and
+                // again as soon as the network looks better (see the network watcher).
+                case "TROUBLE" -> {ready=false;update("Weak connection • reconnecting on its own");main.post(()->scheduleAutoReconnect("weak connection"));}
                 // Google Messages on the phone isn't answering: the connection keeps asking by itself, so a fresh one waits a little longer.
-                case "RECONNECTING" -> {ready=false;update("Waiting for Google Messages • reconnecting on its own");main.post(()->scheduleAutoReconnect("waiting for Google Messages",2));}
+                case "RECONNECTING" -> {ready=false;update("Waiting for Google Messages on your phone • reconnecting on its own");main.post(()->scheduleAutoReconnect("waiting for Google Messages",2));}
                 case "RECOVERED" -> {ready=true;stopAutoReconnect();update("Connected to Google Messages");scheduleCodeSweep();main.post(this::flushOutbox);main.post(this::flushReadReceipts);main.post(this::flushMediaOutbox);main.post(()->requestSync(false));}
                 case "STALE" -> main.post(()->requestSync(true));
                 case "INACTIVE" -> {inactive=true;stopAutoReconnect();update("Google Messages for web is open somewhere else. Open Message Center to switch back.");}
@@ -380,7 +384,13 @@ public final class PairedService extends Service {
         networkCallback=new android.net.ConnectivityManager.NetworkCallback(){
             // Give the connection a few seconds to come back on the new network before checking.
             // Down: reconnect as soon as the network's settled (2 s), rather than waiting out the next try.
-            @Override public void onAvailable(android.net.Network n){main.postDelayed(()->{if(ready)requestSync(true);else reconnectSoon("network back");},ready?4000:2000);}};
+            @Override public void onAvailable(android.net.Network n){main.postDelayed(()->{if(ready)requestSync(true);else reconnectSoon("network back");},ready?4000:2000);}
+            // A network that starts working (weak signal getting through again, Wi-Fi signed in past its welcome page):
+            // while not connected, try again right then rather than waiting out the next scheduled try.
+            private android.net.Network lastNetwork;private boolean lastWorking;
+            @Override public void onCapabilitiesChanged(android.net.Network n,android.net.NetworkCapabilities caps){
+                boolean working=caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED);boolean better=working&&(!n.equals(lastNetwork)||!lastWorking);
+                lastNetwork=n;lastWorking=working;if(better)main.postDelayed(()->{if(!ready)reconnectSoon("network working again");},1500);}};
         try{getSystemService(android.net.ConnectivityManager.class).registerDefaultNetworkCallback(networkCallback);}catch(Exception e){networkCallback=null;}
     }
     static void loadChats(String cursor,int folder,Result done) {
