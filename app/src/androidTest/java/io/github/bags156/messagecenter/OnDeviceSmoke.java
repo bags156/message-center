@@ -434,7 +434,9 @@ public final class OnDeviceSmoke extends Instrumentation {
             if(root!=null&&!root.findAccessibilityNodeInfosByText(text).isEmpty())return true;Thread.sleep(200);}return false;}
     /** Presses and holds a point on the screen for a long press, then lifts. */
     private void hold(float x,float y)throws Exception{long t=android.os.SystemClock.uptimeMillis();
-        sendPointerSync(android.view.MotionEvent.obtain(t,t,android.view.MotionEvent.ACTION_DOWN,x,y,0));Thread.sleep(android.view.ViewConfiguration.getLongPressTimeout()+400);
+        try{sendPointerSync(android.view.MotionEvent.obtain(t,t,android.view.MotionEvent.ACTION_DOWN,x,y,0));}
+        catch(IllegalArgumentException covered){StringBuilder on=new StringBuilder();for(android.view.accessibility.AccessibilityWindowInfo w:getUiAutomation().getWindows())on.append(w.getTitle()).append(" / ");
+            note("something else's window was over the point held: "+on);shoot("shot-blocked");throw covered;}Thread.sleep(android.view.ViewConfiguration.getLongPressTimeout()+400);
         long u=android.os.SystemClock.uptimeMillis();sendPointerSync(android.view.MotionEvent.obtain(t,u,android.view.MotionEvent.ACTION_UP,x,y,0));waitForIdleSync();}
     /**
      * A link inside a message with other words: holding the link offers it (Open, Copy, Share)
