@@ -3743,7 +3743,7 @@ public class PairedActivity extends Activity {
         case "Video quality":return "compress size";case "What notifications show":return "privacy preview";case "On the lock screen":return "lock screen locked preview privacy hide unlock";default:return "";}}
     /** Opens settings at the main page, from anywhere. */
     private void openSettings(){settingsPage="";settingsQuery="";settings();}
-    private void openSettingsPage(String page){settingsPage=page;settingsQuery="";settings();}
+    private void openSettingsPage(String page){settingsPage=page;settingsQuery="";keepSettingsPage=true;settings();}
     /** Back from a settings page (or a search) to the main page; from the main page to the inbox. */
     private void settingsBack(){if(!settingsPage.isEmpty()||!settingsQuery.isEmpty()){settingsPage="";settingsQuery="";settings();}else inbox();}
     /** Draws the settings page that's showing (and keeps your place on it when it's redrawn after a change). */
