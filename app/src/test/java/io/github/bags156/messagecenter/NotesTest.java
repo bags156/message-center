@@ -115,4 +115,9 @@ public class NotesTest {
         assertEquals(null, Notes.dir(files, ""));
         assertEquals(null, Notes.dir(files, "ABC"));
     }
+    @Test public void addingToANoteGoesOnANewLine() {
+        assertEquals("Gift: scarf", Notes.appended("", "Gift: scarf"));
+        assertEquals("Birthday May 3\nGift: scarf", Notes.appended("Birthday May 3\n\n  ", " Gift: scarf "));
+        assertEquals("Birthday May 3", Notes.appended("Birthday May 3", "   "));
+    }
 }

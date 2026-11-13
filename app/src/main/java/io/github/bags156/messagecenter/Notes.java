@@ -247,6 +247,14 @@ final class Notes {
         return true;
     }
 
+    /** The note's words with more added on a new line (a message added to an existing note). */
+    static String appended(String notes, String line) {
+        String n = notes == null ? "" : notes.replaceAll("\\s+$", "");
+        String l = line == null ? "" : line.trim();
+        if (l.isEmpty()) return n;
+        return n.isEmpty() ? l : n + "\n" + l;
+    }
+
     /** A new note's id: when it was made, plus a little randomness so two in the same moment differ. */
     static String newId(long now) { return Long.toString(now, 36) + Integer.toString((int) (Math.random() * 1296), 36); }
 
