@@ -243,7 +243,7 @@ public final class PairedService extends Service {
                 case "CONVERSATION" -> {if(applyChat(new JSONObject(payload)))changed(kind);}
                 case "MESSAGE" -> {
                     JSONObject envelope=new JSONObject(payload),message=envelope.getJSONObject("message");
-                    boolean existed=store.message(message,0,true);touch(message);fullArrived(message);
+                    boolean existed=store.message(message,0,true);touch(message);fullArrived(message);prefetchPhotos(message);
                     if(attachmentOutbox.reconcile(message)){keepSentCopy(this,attachmentOutbox,message);attachmentOutbox.retireCompleted();changed("MEDIA_OUTBOX");main.post(this::flushMediaOutbox);}
                     if(outbox.arrived(message))changed("OUTBOX");
                     if(!PairedProtocol.outgoing(message) && typing.remove(message.optString("conversationID"))!=null)changed("TYPING");
@@ -451,6 +451,20 @@ public final class PairedService extends Service {
             Diagnostics.note(fe.isEmpty()?"Asked phone for attachment "+shortId(key)+(asked!=null?" (again)":""):"Phone refused attachment "+shortId(key)+": "+fe);
             s.main.post(()->done.done("",fe));});
     }
+    /**
+     * Photos start downloading the moment they arrive, so they're ready when you open the chat rather than
+     * starting then. One that came without download details (common on linked devices) is asked of the
+     * phone right away; when its copy arrives (the message updates), this runs again and downloads it.
+     */
+    private void prefetchPhotos(JSONObject message){
+        boolean full=getSharedPreferences("paired",MODE_PRIVATE).getBoolean("full_photos",true);long now=System.currentTimeMillis();boolean saver=dataSaverOn();
+        for(JSONObject media:PairedProtocol.media(message)){
+            if(!PhotoPrefetch.wanted(message,media,now,full,saver)||MediaCache.file(this,media,false).isFile())continue;
+            if(MediaCache.hasFull(media)){Diagnostics.note("Fetching an arriving photo");MediaCache.fetch(this,media,false,(file,error)->{});}
+            else if(ready)requestFullMedia(media,false,(v,e)->{});}}
+    /** Android's Data Saver is on and this connection is metered: don't download what wasn't asked for. */
+    private boolean dataSaverOn(){try{android.net.ConnectivityManager cm=getSystemService(android.net.ConnectivityManager.class);
+        return cm.isActiveNetworkMetered()&&cm.getRestrictBackgroundStatus()==android.net.ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED;}catch(Exception e){return false;}}
     /** Notes in the problem report when an attachment the phone was asked for shows up (IDs only, never content). */
     private void fullArrived(JSONObject message){
         for(JSONObject media:PairedProtocol.media(message)){if(!MediaCache.hasFull(media))continue;String key=media.optString("_message")+":"+media.optString("_part");
