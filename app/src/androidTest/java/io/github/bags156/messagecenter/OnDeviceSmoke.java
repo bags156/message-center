@@ -435,7 +435,7 @@ public final class OnDeviceSmoke extends Instrumentation {
     /** Presses and holds a point on the screen for a long press, then lifts. */
     private void hold(float x,float y)throws Exception{long t=android.os.SystemClock.uptimeMillis();
         try{sendPointerSync(android.view.MotionEvent.obtain(t,t,android.view.MotionEvent.ACTION_DOWN,x,y,0));}
-        catch(IllegalArgumentException covered){StringBuilder on=new StringBuilder();for(android.view.accessibility.AccessibilityWindowInfo w:getUiAutomation().getWindows())on.append(w.getTitle()).append(" / ");
+        catch(IllegalArgumentException covered){if(dismissSystemDialogs()){Thread.sleep(800);hold(x,y);return;}StringBuilder on=new StringBuilder();for(android.view.accessibility.AccessibilityWindowInfo w:getUiAutomation().getWindows())on.append(w.getTitle()).append(" / ");
             note("something else's window was over the point held: "+on);shoot("shot-blocked");throw covered;}Thread.sleep(android.view.ViewConfiguration.getLongPressTimeout()+400);
         long u=android.os.SystemClock.uptimeMillis();sendPointerSync(android.view.MotionEvent.obtain(t,u,android.view.MotionEvent.ACTION_UP,x,y,0));waitForIdleSync();}
     /**
@@ -495,9 +495,24 @@ public final class OnDeviceSmoke extends Instrumentation {
         onMainCall(()->method("inbox").invoke(a));waitForIdleSync();
         // The inbox list isn't moved by a chat's slide (it settles after you've left).
         Object inboxList=field("items").get(a);check(inboxList==null||((android.view.View)inboxList).getTranslationX()==0,"Leaving a chat left the inbox slid over");}
+    // ---- The emulator's own hiccups ----
+    private volatile boolean watching;
+    /**
+     * A slow CI emulator sometimes puts up "Pixel Launcher isn't responding" over the app being tested,
+     * which steals touches and focus. A watcher answers Wait whenever one shows.
+     */
+    private void watchForSystemDialogs(){android.accessibilityservice.AccessibilityServiceInfo info=getUiAutomation().getServiceInfo();
+        info.flags|=android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;getUiAutomation().setServiceInfo(info);
+        watching=true;Thread t=new Thread(()->{while(watching){try{Thread.sleep(600);dismissSystemDialogs();}catch(Throwable ignored){}}},"system-dialog-watch");t.setDaemon(true);t.start();}
+    private boolean dismissSystemDialogs(){boolean any=false;
+        for(android.view.accessibility.AccessibilityWindowInfo w:getUiAutomation().getWindows()){android.view.accessibility.AccessibilityNodeInfo r=w.getRoot();
+            if(r==null||r.findAccessibilityNodeInfosByText("isn't responding").isEmpty())continue;
+            for(android.view.accessibility.AccessibilityNodeInfo n:r.findAccessibilityNodeInfosByText("Wait")){if(n.getText()==null||!"Wait".contentEquals(n.getText()))continue;
+                android.view.accessibility.AccessibilityNodeInfo c=n;while(c!=null&&!c.isClickable())c=c.getParent();if(c!=null){c.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK);any=true;}}}
+        if(any)note("answered Wait on a system \"isn't responding\" dialog");return any;}
     // ---- Real touches, as a finger would make them (through the system, so status bar and back gestures apply) ----
     private final StringBuilder probe=new StringBuilder();
-    private void note(String line){probe.append(line).append('\n');try{java.nio.file.Files.write(new java.io.File(getTargetContext().getCacheDir(),"probe.txt").toPath(),probe.toString().getBytes());}catch(Exception ignored){}}
+    private synchronized void note(String line){probe.append(line).append('\n');try{java.nio.file.Files.write(new java.io.File(getTargetContext().getCacheDir(),"probe.txt").toPath(),probe.toString().getBytes());}catch(Exception ignored){}}
     private void inject(long down,int action,float x,float y){android.view.MotionEvent e=android.view.MotionEvent.obtain(down,android.os.SystemClock.uptimeMillis(),action,x,y,0);
         e.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);getUiAutomation().injectInputEvent(e,true);e.recycle();}
     /** A finger tap at a point on the screen. */
@@ -1337,6 +1352,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         android.view.MotionEvent event=android.view.MotionEvent.obtain(down,android.os.SystemClock.uptimeMillis(),action,x,y,0);
         try{box.dispatchTouchEvent(event);}finally{event.recycle();}});}
     @Override public void onStart(){Bundle result=new Bundle();try {
+        watchForSystemDialogs();
         // Real JNI load on Android, not a mocked Java bridge.
         new MediaOutbox(getTargetContext()).clear();PhotoText.clear(getTargetContext());
         Client client=Bridge.newClient("",(kind,payload)->{});
