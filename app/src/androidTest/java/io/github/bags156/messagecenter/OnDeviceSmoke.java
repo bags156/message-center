@@ -194,38 +194,73 @@ public final class OnDeviceSmoke extends Instrumentation {
         runOnMainSync(()->{java.util.List<android.widget.GridView> g=viewsOf(d[0].getWindow().getDecorView(),android.widget.GridView.class);recent[0]=g.isEmpty()?"":firstEmoji(g.get(0),3);d[0].dismiss();});
         check(recent[0].startsWith("🔥"),"Recent emoji didn't start with the one just picked: "+recent[0]);
         a.getSharedPreferences("emoji",android.content.Context.MODE_PRIVATE).edit().clear().commit();}
+    private static java.lang.reflect.Method method(String name,Class<?>... types)throws Exception{java.lang.reflect.Method m=PairedActivity.class.getDeclaredMethod(name,types);m.setAccessible(true);return m;}
+    private static java.lang.reflect.Field field(String name)throws Exception{java.lang.reflect.Field f=PairedActivity.class.getDeclaredField(name);f.setAccessible(true);return f;}
+    private void onMainCall(java.util.concurrent.Callable<?> work){runOnMainSync(()->{try{work.call();}catch(Exception x){throw new RuntimeException(x);}});}
+    /** The note cards on screen, in order, by note id. */
+    private java.util.List<String> noteCards(PairedActivity a){java.util.List<String> ids=new java.util.ArrayList<>();
+        runOnMainSync(()->{for(android.view.View v:viewsOf(a.getWindow().getDecorView(),android.view.View.class))if(v.getTag() instanceof String&&((String)v.getTag()).startsWith("note:"))ids.add(((String)v.getTag()).substring(5));});return ids;}
     /**
-     * Notes: what's typed on the notes screen is saved for that person when you go back; the chat
-     * then shows a notes button; "Add to notes" puts a message on the end with its date; and inbox
-     * search finds the line in the notes.
+     * Notes: a new note written in the editor is kept with its tags, pin and an attached picture
+     * (in its own folder, readable through the app's link); notes list pinned first, then newest;
+     * searching by word or #tag narrows the list; a message saved as a note says where it came
+     * from; the chat shows a notes button; inbox search finds notes; deleting removes the files.
      */
     private void checkNotes(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();String number="+15557770142",key=Notes.personKey(number);
-        Notes notes=new Notes(ctx);notes.set(key,"",0);JSONObject chat;
+        Notes notes=new Notes(ctx);for(Notes.Note n:notes.list(key))notes.delete(key,n.id);JSONObject chat;
         try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'notes-check',name:'Nora Check',type:'RCS',participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'nc',number:'"+number+"'},fullName:'Nora Check'}]}"));chat=store.chat("notes-check");}
-        java.lang.reflect.Method open=PairedActivity.class.getDeclaredMethod("notes",String.class,String.class,Runnable.class),thread=PairedActivity.class.getDeclaredMethod("thread",String.class),
-            inbox=PairedActivity.class.getDeclaredMethod("inbox"),add=PairedActivity.class.getDeclaredMethod("addToNotes",JSONObject.class,JSONObject.class,String.class);
-        for(java.lang.reflect.Method m:new java.lang.reflect.Method[]{open,thread,inbox,add})m.setAccessible(true);
-        java.lang.reflect.Field field=PairedActivity.class.getDeclaredField("notesField"),query=PairedActivity.class.getDeclaredField("query");field.setAccessible(true);query.setAccessible(true);
+        java.lang.reflect.Method list=method("notesList",String.class,String.class,Runnable.class),thread=method("thread",String.class),inbox=method("inbox"),toNote=method("messageToNote",JSONObject.class,JSONObject.class,boolean.class),
+            addTags=method("addNoteTags",String.class),pin=method("toggleNotePin"),attach=method("addNoteFiles",java.util.List.class),hits=method("renderNoteHits");
+        java.lang.reflect.Field noteField=field("noteField"),editing=field("editing"),query=field("query"),items=field("items");
         Runnable back=()->{try{thread.invoke(a,"notes-check");}catch(Exception x){throw new RuntimeException(x);}};
-        String typed="Birthday: May 3\nGift idea: blue scarf";
-        runOnMainSync(()->{try{open.invoke(a,key,"Nora Check",back);((android.widget.EditText)field.get(a)).setText(typed);}catch(Exception x){throw new RuntimeException(x);}});
+        // A new note: words, two tags, pinned, and a picture.
+        onMainCall(()->list.invoke(a,key,"Nora Check",back));waitForIdleSync();
+        onMainCall(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(found,"New note",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);
+            if(found.isEmpty())throw new AssertionError("The notes list has no New note button");return found.get(0).performClick();});waitForIdleSync();
+        java.io.File pic=new java.io.File(ctx.getCacheDir(),"note-test.png");android.graphics.Bitmap red=android.graphics.Bitmap.createBitmap(40,40,android.graphics.Bitmap.Config.ARGB_8888);red.eraseColor(0xffcc2222);
+        try(java.io.FileOutputStream out=new java.io.FileOutputStream(pic)){red.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
+        onMainCall(()->{((android.widget.EditText)noteField.get(a)).setText("Gift idea: blue scarf");addTags.invoke(a,"Gift, birthday");pin.invoke(a);return attach.invoke(a,java.util.Collections.singletonList(android.net.Uri.fromFile(pic)));});
+        int[] attached={0};for(int wait=0;wait<50&&attached[0]==0;wait++){Thread.sleep(100);onMainCall(()->{Notes.Note e=(Notes.Note)editing.get(a);attached[0]=e==null?-1:e.attachments.size();return null;});}
+        check(attached[0]==1,"A picture attached to a note wasn't kept ("+attached[0]+")");
+        runOnMainSync(a::onBackPressed);waitForIdleSync();
+        java.util.List<Notes.Note> saved=notes.list(key);
+        check(saved.size()==1,"The new note wasn't saved ("+saved.size()+")");Notes.Note first=saved.get(0);
+        check(first.text.equals("Gift idea: blue scarf")&&first.tags.equals(java.util.Arrays.asList("Gift","birthday"))&&first.pinned&&first.attachments.size()==1,
+            "The note lost something: "+first.text+" "+first.tags+" pinned "+first.pinned+" "+first.attachments.size());
+        java.io.File kept=notes.file(first,first.attachments.get(0));
+        check(kept!=null&&kept.isFile()&&kept.length()==pic.length(),"The note's picture isn't in its folder");
+        try(java.io.InputStream in=ctx.getContentResolver().openInputStream(MediaProvider.noteUri(kept,"note-test.png"))){check(in!=null&&in.read()>=0,"The note's picture can't be opened through the app's link");}
+        // Two more: pinned first, then newest, then older.
+        long now=System.currentTimeMillis();
+        Notes.Note older=new Notes.Note("t1older","Ask how the new job is going",now-86_400_000L);older.tags=Notes.withTag(older.tags,"work");notes.save(key,"Nora Check",older);
+        Notes.Note newer=new Notes.Note("t2newer","Coffee order: oat latte",now+60_000);notes.save(key,"Nora Check",newer);
+        onMainCall(()->list.invoke(a,key,"Nora Check",back));waitForIdleSync();
+        java.util.List<String> order=noteCards(a);
+        check(order.equals(java.util.Arrays.asList(first.id,"t2newer","t1older")),"Notes aren't pinned first, then newest: "+order);
+        android.widget.EditText[] search={null};
+        runOnMainSync(()->{for(android.widget.EditText e:viewsOf(a.getWindow().getDecorView(),android.widget.EditText.class))if("Search notes".contentEquals(e.getContentDescription()==null?"":e.getContentDescription()))search[0]=e;});
+        check(search[0]!=null,"The notes list has no search box");
+        runOnMainSync(()->search[0].setText("#work"));check(noteCards(a).equals(java.util.Arrays.asList("t1older")),"Searching notes for #work showed "+noteCards(a));
+        runOnMainSync(()->search[0].setText("latte"));check(noteCards(a).equals(java.util.Arrays.asList("t2newer")),"Searching notes for latte showed "+noteCards(a));
+        runOnMainSync(()->search[0].setText("#gift"));check(noteCards(a).equals(java.util.Arrays.asList(first.id)),"Searching notes for #gift showed "+noteCards(a));
+        runOnMainSync(()->search[0].setText(""));check(noteCards(a).size()==3,"Clearing the notes search didn't show them all: "+noteCards(a));
+        // Hold a message: a new note from it, saying where it came from.
+        JSONObject m=new JSONObject().put("messageID","notes-msg").put("conversationID","notes-check").put("participantID","nc").put("timestamp",now*1000)
+            .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","Starting the new job Monday"))));
+        onMainCall(()->{thread.invoke(a,"notes-check");return toNote.invoke(a,m,chat,false);});
+        Notes.Note fromMessage=null;for(int wait=0;wait<50&&fromMessage==null;wait++){Thread.sleep(100);for(Notes.Note n:notes.list(key))if(n.text.equals("Starting the new job Monday"))fromMessage=n;}
+        check(fromMessage!=null&&fromMessage.source.startsWith("Nora Check's message, "),"A message saved as a note: "+(fromMessage==null?"missing":fromMessage.source));
         waitForIdleSync();runOnMainSync(a::onBackPressed);waitForIdleSync();
-        check(typed.equals(notes.text(key)),"Notes weren't saved on leaving: "+notes.text(key).replace("\n"," / "));
         int[] button={0};runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(found,"Your notes",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);button[0]=found.size();});
         check(button[0]>0,"The chat has no notes button although there are notes");
-        JSONObject m=new JSONObject().put("messageID","notes-msg").put("conversationID","notes-check").put("participantID","nc").put("timestamp",System.currentTimeMillis()*1000)
-            .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","Starting the new job Monday"))));
-        runOnMainSync(()->{try{add.invoke(a,m,chat,"Starting the new job Monday");}catch(Exception x){throw new RuntimeException(x);}});
-        String after=notes.text(key);
-        check(after.startsWith(typed+"\n• ")&&after.endsWith(": Starting the new job Monday"),"Add to notes didn't add a dated line: "+after.replace("\n"," / "));
         // Inbox search's notes section (the unpaired test inbox has no list, so it's drawn into one here).
-        java.lang.reflect.Method noteHits=PairedActivity.class.getDeclaredMethod("renderNoteHits");noteHits.setAccessible(true);
-        java.lang.reflect.Field items=PairedActivity.class.getDeclaredField("items");items.setAccessible(true);int[] hits={0};
-        runOnMainSync(()->{try{inbox.invoke(a);android.widget.LinearLayout list=new android.widget.LinearLayout(a);list.setOrientation(android.widget.LinearLayout.VERTICAL);
-            items.set(a,list);query.set(a,"scarf");noteHits.invoke(a);java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();list.findViewsWithText(found,"Gift idea: blue scarf",android.view.View.FIND_VIEWS_WITH_TEXT);hits[0]=found.size();
-            items.set(a,null);query.set(a,"");inbox.invoke(a);}catch(Exception x){throw new RuntimeException(x);}});waitForIdleSync();
-        notes.set(key,"",0);
-        check(hits[0]>0,"Searching the inbox for a word in your notes didn't find them");}
+        int[] found={0};
+        onMainCall(()->{inbox.invoke(a);android.widget.LinearLayout into=new android.widget.LinearLayout(a);into.setOrientation(android.widget.LinearLayout.VERTICAL);
+            items.set(a,into);query.set(a,"latte");hits.invoke(a);java.util.ArrayList<android.view.View> got=new java.util.ArrayList<>();into.findViewsWithText(got,"oat latte",android.view.View.FIND_VIEWS_WITH_TEXT);found[0]=got.size();
+            items.set(a,null);query.set(a,"");return inbox.invoke(a);});waitForIdleSync();
+        check(found[0]>0,"Searching the inbox for a word in a note didn't find it");
+        java.io.File folder=kept.getParentFile();for(Notes.Note n:notes.list(key))notes.delete(key,n.id);pic.delete();
+        check(!folder.exists()&&!notes.has(key),"Deleting a note left its files behind");}
     /** The newest raw contact the shell just added: the highest "_id=12" it lists (arguments can't hold spaces, so no "DESC"). */
     private String newestRawContact()throws Exception{java.util.regex.Matcher m=java.util.regex.Pattern.compile("_id=(\\d+)").matcher(shell("content query --uri content://com.android.contacts/raw_contacts --projection _id"));
         long best=-1;while(m.find())best=Math.max(best,Long.parseLong(m.group(1)));return best<0?"":String.valueOf(best);}

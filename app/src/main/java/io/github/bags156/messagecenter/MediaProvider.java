@@ -26,6 +26,25 @@ public final class MediaProvider extends ContentProvider {
             .appendQueryParameter("name", displayName == null || displayName.isEmpty() ? file.getName() : displayName).build();
     }
 
+    /** A read-only link for a photo or file kept with one of your notes. */
+    static Uri noteUri(File file, String displayName) {
+        return new Uri.Builder().scheme("content").authority(AUTHORITY).appendPath("note").appendPath(file.getParentFile().getName()).appendPath(file.getName())
+            .appendQueryParameter("name", displayName == null || displayName.isEmpty() ? file.getName() : displayName).build();
+    }
+
+    /** Only a plain file name directly inside one note's folder. */
+    private File resolveNote(Uri uri) throws FileNotFoundException {
+        Context context = getContext();
+        java.util.List<String> parts = uri.getPathSegments();
+        if (context == null || parts.size() != 3 || !"note".equals(parts.get(0))) throw new FileNotFoundException();
+        String name = parts.get(2);
+        File dir = Notes.dir(context.getFilesDir(), parts.get(1));
+        if (dir == null || name.contains("/") || name.contains("..")) throw new FileNotFoundException();
+        File file = new File(dir, name);
+        if (!file.isFile()) throw new FileNotFoundException();
+        return file;
+    }
+
     /** A writable link for one camera photo; only files in the app's outgoing folder can be written. */
     static Uri outgoingUri(File file) {
         return new Uri.Builder().scheme("content").authority(AUTHORITY).appendPath("out").appendPath(file.getName()).build();
@@ -60,6 +79,7 @@ public final class MediaProvider extends ContentProvider {
             return ParcelFileDescriptor.open(resolveOutgoing(uri), ParcelFileDescriptor.parseMode(mode) | ParcelFileDescriptor.MODE_CREATE);
         }
         if (!"r".equals(mode)) throw new FileNotFoundException("read-only");
+        if (uri.getPathSegments().size() == 3) return ParcelFileDescriptor.open(resolveNote(uri), ParcelFileDescriptor.MODE_READ_ONLY);
         return ParcelFileDescriptor.open(resolve(uri), ParcelFileDescriptor.MODE_READ_ONLY);
     }
 
@@ -73,7 +93,7 @@ public final class MediaProvider extends ContentProvider {
 
     @Override public Cursor query(Uri uri, String[] projection, String selection, String[] args, String sort) {
         File file;
-        try { file = resolve(uri); } catch (FileNotFoundException e) { return null; }
+        try { file = uri.getPathSegments().size() == 3 ? resolveNote(uri) : resolve(uri); } catch (FileNotFoundException e) { return null; }
         String display = uri.getQueryParameter("name");
         MatrixCursor cursor = new MatrixCursor(new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE});
         cursor.addRow(new Object[]{display == null ? file.getName() : display, file.length()});

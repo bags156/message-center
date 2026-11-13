@@ -34,7 +34,11 @@ For Obtainium, use `https://github.com/bags156/message-center`. Regular releases
 
 ## Notes
 
-Each person (and each group) has a private notepad for gift ideas, birthdays, and things to follow up on. Open it from a chat's ⋮ › Notes or from Details. Notes save as you type, stay on this phone (and in your Message Center backups), and are never sent. A person's notes go with their number, so they're the same in your chat with them and from any group they're in (Group details › tap a member › Notes about…). Once you've written notes about someone, their chat shows a notes button up top. Long-press a message › Add to notes saves it as a dated line, and in a group it goes to whoever sent it. Inbox search looks through notes too.
+Each person (and each group) has private notes for gift ideas, birthdays, and things to follow up on. Open them from a chat's ⋮ › Notes or from Details. Each note is dated, can have several tags of your own (tags you've used before are suggested), can be pinned, and can hold photos, videos or files. Pinned notes stay on top; the rest are newest first. Search a person's notes by words or #tag, or tap a tag to filter by it. Inbox search looks through all your notes too.
+
+Hold a message, photo or file in a chat to start a new note with it or add it to one you have. In a group, it goes to the notes about whoever sent it. A note made from a message says whose message it was and when.
+
+Notes save as you go, stay on this phone, and are never sent. A person's notes go with their number, so they're the same in your chat with them and from any group they're in (Group details › tap a member › Notes about…). Message Center backups include the notes' words and tags, not their attached files. Once you've written notes about someone, their chat shows a notes button up top.
 
 ## Arrival texts
 

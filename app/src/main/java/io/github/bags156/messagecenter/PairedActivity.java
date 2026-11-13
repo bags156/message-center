@@ -177,7 +177,7 @@ public class PairedActivity extends Activity {
     @Override protected void onStart(){super.onStart();started=true;reportChatOnScreen();}
     @Override protected void onStop(){started=false;reportChatOnScreen();super.onStop();}
     /** Tells ChatBubbles which chat you're in (its Details and Shared count), so that chat's bubble steps aside. */
-    private void reportChatOnScreen(){if(bubble())return;boolean inChat=screen.equals("chat")||screen.equals("details")||screen.equals("media")||screen.equals("notes");
+    private void reportChatOnScreen(){if(bubble())return;boolean inChat=screen.equals("chat")||screen.equals("details")||screen.equals("media")||screen.equals("notes")||screen.equals("note");
         ChatBubbles.showing(this,started&&inChat?chatId:"");}
     @Override protected void onResume(){super.onResume();resumed=true;timeFormat=null;dateFormat=null;PairedService.screenVisible(true);refreshDraft();if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
         PhotoText.indexDownloaded(this,false);
@@ -188,18 +188,18 @@ public class PairedActivity extends Activity {
             if(screen.equals("chat")){renderMessages(false);if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();if(!bubble())PairedService.clearNotification(this,chatId);}
             else if(screen.equals("inbox")){if(batteryCard!=null&&!showBatteryCard()){root.removeView(batteryCard);batteryCard=null;}renderInbox();refreshInbox(false);
                 if(!bubble()&&PairedService.ready()&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED)askContactPhotos();}}}
-    @Override protected void onPause(){saveNotes();if(resumed)PairedService.screenVisible(false);resumed=false;if(dictation!=null)stopDictation();remember();if(inline!=null)inline.pause();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&!playingId.isEmpty())pauseVoice();if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
+    @Override protected void onPause(){saveNote();if(resumed)PairedService.screenVisible(false);resumed=false;if(dictation!=null)stopDictation();remember();if(inline!=null)inline.pause();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&!playingId.isEmpty())pauseVoice();if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
     @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);if(focused)refreshDraft();if(focused&&store!=null){markReadIfAllowed();updateReceiptStatus();}}
     /** Picks up a draft typed in the other window (bubble or full app) so you carry on where you left off. */
     private void refreshDraft(){if(composer==null||drafts==null||chatId.isEmpty()||!screen.equals("chat"))return;String stored=drafts.getOrDefault(chatId,"");
         if(stored.equals(composer.getText().toString()))return;composer.setText(stored);composer.setSelection(stored.length());}
     @Override protected void onSaveInstanceState(Bundle out){remember();out.putString("screen",screen);if(screen.equals("settings")&&settingsScroll!=null)out.putInt("settings_y",settingsScroll.getScrollY());if(pendingCapture!=null)out.putString("capture",pendingCapture.getPath());out.putString("chat",chatId);if(screen.equals("chat")){Spot at=chatSpotNow();if(at!=null){out.putString("spot",at.id);out.putInt("spot_offset",at.offset);}}out.putString("reply",replyId);out.putString("draft",drafts.getOrDefault(chatId,""));super.onSaveInstanceState(out);}
-    @Override public void onBackPressed(){if(selecting){stopSelecting();return;}if(screen.equals("notes")){leaveNotes();return;}if(screen.equals("media")){details();return;}if(screen.equals("details")){thread(chatId);return;}if(bubble()){super.onBackPressed();return;}if(login!=null){destroyLogin();inbox();}else if(screen.equals("inbox")&&(folder!=1||unknownOnly||promoOnly||needsReplyOnly)){folder=1;unknownOnly=false;promoOnly=false;needsReplyOnly=false;inbox();}else if(!screen.equals("inbox")){remember();inbox();}else super.onBackPressed();}
+    @Override public void onBackPressed(){if(selecting){stopSelecting();return;}if(screen.equals("note")){leaveNote();return;}if(screen.equals("notes")){leaveNotes();return;}if(screen.equals("media")){details();return;}if(screen.equals("details")){thread(chatId);return;}if(bubble()){super.onBackPressed();return;}if(login!=null){destroyLogin();inbox();}else if(screen.equals("inbox")&&(folder!=1||unknownOnly||promoOnly||needsReplyOnly)){folder=1;unknownOnly=false;promoOnly=false;needsReplyOnly=false;inbox();}else if(!screen.equals("inbox")){remember();inbox();}else super.onBackPressed();}
 
     // ---- Shared building blocks ----
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
     private void base(String name){
-        if(screen.equals("notes"))saveNotes();notesField=null;notesKey="";
+        if(screen.equals("note"))saveNote();noteField=null;noteTags=null;noteFiles=null;notePin=null;editing=null;
         if(!name.equals("chat"))stopInline();
         if(screen.equals("inbox")&&!name.equals("inbox")&&scroll!=null){inboxScrollY=scroll.getScrollY();inboxBack=inboxSpotNow();inboxKey=inboxKey();repliedSinceInbox=false;}
         inboxPlacing=null;inboxSpots=null;keepSpot=null;
@@ -654,7 +654,7 @@ public class PairedActivity extends Activity {
     // ---- Conversation ----
     private void thread(String id){long perfAll=Perf.start(),perf=perfAll;
         if(!id.equals(chatId))stopInline();
-        Spot back=(screen.equals("details")||screen.equals("notes")||backFromSaved)&&id.equals(backChat)?backSpot:null;backChat="";backSpot=null;backFromSaved=false;
+        Spot back=(screen.equals("details")||screen.equals("notes")||screen.equals("note")||backFromSaved)&&id.equals(backChat)?backSpot:null;backChat="";backSpot=null;backFromSaved=false;
         // Opening a chat with unread messages: remember where they start, for the "New messages" line.
         if(!id.equals(chatId)||!screen.equals("chat")){JSONObject before=store.chat(id);unreadSince=before!=null&&chatSettings.unread(before)?chatSettings.seen(id):-1;unreadJump=unreadSince>0;}
         remember();chatId=id;if(back==null)limit=firstWindow(id);replyId="";base("chat");JSONObject c=store.chat(id);ChatTheme theme=chatSettings.theme(id);
@@ -1295,8 +1295,11 @@ public class PairedActivity extends Activity {
         String typed=PairedProtocol.text(m),plain=ChatText.replyFallbackBody(typed)!=null?ChatText.replyFallbackBody(typed):typed;
         if(!plain.isEmpty())sheetAction(content,"Copy text",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Message",plain));});
         if(!plain.isEmpty())sheetAction(content,"Select text…",()->{d[0].dismiss();selectText(plain);});
-        String[] noteTo=c==null||plain.isEmpty()?null:noteTarget(m,c);
-        if(noteTo!=null&&!noteTo[0].isEmpty())sheetAction(content,noteTo[3],()->{d[0].dismiss();addToNotes(m,c,plain);});
+        // Keep a message, photo or file in your notes about them: as a new note, or added to one you have.
+        String[] noteTo=c==null?null:noteTarget(m,c);
+        if(noteTo!=null&&!noteTo[0].isEmpty()&&(!plain.isEmpty()||!PairedProtocol.media(m).isEmpty())){String what=noteWhat(m),these=what.endsWith("s")?"these ":"this ";
+            sheetAction(content,"New note about "+noteTo[1]+" with "+these+what,()->{d[0].dismiss();messageToNote(m,c,false);});
+            if(new Notes(this).has(noteTo[0]))sheetAction(content,"Add "+these+what+" to a note…",()->{d[0].dismiss();messageToNote(m,c,true);});}
         for(JSONObject media:PairedProtocol.media(m)){String transcript=Transcriber.saved(this,PairedProtocol.string(media,"mediaID"));
             if(transcript!=null){sheetAction(content,"Copy transcript",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Transcript",transcript));});
                 sheetAction(content,"Transcribe again",()->{d[0].dismiss();Transcriber.forget(this,PairedProtocol.string(media,"mediaID"));transcribe(media);});}
@@ -1542,76 +1545,237 @@ public class PairedActivity extends Activity {
         card.addView(save,new LinearLayout.LayoutParams(-2,-2));
         FrameLayout wrap=new FrameLayout(this);FrameLayout.LayoutParams cl=new FrameLayout.LayoutParams(-1,-2);cl.setMargins(dp(8),dp(2),dp(8),dp(4));wrap.addView(card,cl);holder[0]=wrap;return wrap;}
     // ---- Notes: private notes about a person or group, kept on this phone ----
-    private String notesKey="";private Runnable notesBack;private EditText notesField;
-    private final Runnable notesSaver=()->saveNotes();
+    private String notesKey="",notesWho="",notesQuery="";private Runnable notesBack;
+    private Notes.Note editing;private String editingKey="",editingWho="",editingSnapshot="";private Runnable noteBack;
+    private EditText noteField;private LinearLayout noteTags,noteFiles;private ImageView notePin;
+    private final Runnable noteSaver=()->saveNote();
+    private static final int PICK_NOTE_FILES=91,PICK_NOTE_PHOTOS=92;
+    private final android.util.LruCache<String,Bitmap> noteThumbs=new android.util.LruCache<String,Bitmap>(8*1024*1024){@Override protected int sizeOf(String k,Bitmap v){return v.getByteCount();}};
     /** Whose notes a chat opens: the person's in a one-to-one chat, the group's in a group. */
     private String notesKeyFor(JSONObject chat){if(chat==null)return "";JSONObject other=PairedProtocol.other(chat);
         return other!=null?Notes.personKey(PairedProtocol.number(other)):Notes.groupKey(chat.optString("conversationID"));}
-    private void openNotes(JSONObject chat,Runnable back){if(chat!=null)notes(notesKeyFor(chat),PairedProtocol.title(chat),back);}
+    private void openNotes(JSONObject chat,Runnable back){if(chat!=null)notesList(notesKeyFor(chat),PairedProtocol.title(chat),back);}
+    /** "Nov 12" this year, "Nov 12, 2025" before. */
+    private String noteDate(long when){return android.text.format.DateUtils.formatDateTime(this,when,android.text.format.DateUtils.FORMAT_SHOW_DATE|android.text.format.DateUtils.FORMAT_ABBREV_MONTH);}
+    private TextView tagChip(String label,boolean on){TextView t=text(label,13,on?onFab:ink,false);t.setPadding(dp(12),dp(6),dp(12),dp(6));t.setBackground(shape(on?fab:surface,14));return t;}
     /**
-     * Your notes about someone (or a group): gift ideas, birthdays, things to follow up on. Saved
-     * as you type, kept on this phone only, never sent. back is where the back arrow goes.
+     * Your notes about someone (or a group): pinned first, then newest. Search by words or #tag
+     * (tap a tag to filter by it), tap a note to read or edit it, hold one to pin or delete it.
      */
-    private void notes(String key,String who,Runnable back){if(key==null||key.isEmpty()){toast("Notes need a phone number to go with.");return;}
-        base("notes");notesKey=key;notesBack=back;Notes saved=new Notes(this);
+    private void notesList(String key,String who,Runnable back){if(key==null||key.isEmpty()){toast("Notes need a phone number to go with.");return;}
+        if(!key.equals(notesKey))notesQuery="";base("notes");notesKey=key;notesWho=who;notesBack=back;
         header("Notes",this::leaveNotes);
-        TextView about=text(who+" \u00b7 only on this phone, never sent",13,muted,false);about.setPadding(dp(16),0,dp(16),dp(10));root.addView(about);
-        EditText field=input("Gift ideas, birthdays, kids' names, things to follow up on…");field.setSingleLine(false);field.setGravity(Gravity.TOP|Gravity.START);
-        field.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES|InputType.TYPE_TEXT_FLAG_AUTO_CORRECT);
-        field.setTextSize(17);field.setLineSpacing(0,1.15f);field.setContentDescription("Notes about "+who);
-        String text=saved.text(key);field.setText(text);field.setSelection(field.length());
-        LinearLayout.LayoutParams fl=new LinearLayout.LayoutParams(-1,0,1);fl.setMargins(dp(8),0,dp(8),0);root.addView(field,fl);
-        long when=saved.updated(key);TextView edited=text(when>0?"Edited "+android.text.format.DateUtils.getRelativeTimeSpanString(when,System.currentTimeMillis(),android.text.format.DateUtils.MINUTE_IN_MILLIS):"",12,muted,false);
-        edited.setPadding(dp(16),dp(6),dp(16),0);root.addView(edited);
-        field.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int b,int c){}public void onTextChanged(CharSequence s,int a,int b,int c){}
-            public void afterTextChanged(Editable e){ui.removeCallbacks(notesSaver);ui.postDelayed(notesSaver,600);edited.setText("Saved as you type");}});
-        notesField=field;
-        // New notes open ready to type; existing ones open for reading, keyboard down.
-        if(text.trim().isEmpty()){field.requestFocus();field.post(()->getSystemService(InputMethodManager.class).showSoftInput(field,0));}}
-    private void saveNotes(){ui.removeCallbacks(notesSaver);if(notesField==null||notesKey.isEmpty())return;new Notes(this).set(notesKey,notesField.getText().toString(),System.currentTimeMillis());}
-    private void leaveNotes(){saveNotes();if(notesField!=null)hideKeyboard(notesField);Runnable back=notesBack;notesBack=null;if(back!=null)back.run();else inbox();}
-    /** Details' notes card: the start of your notes, or what they're for. Tap to open them. */
-    private void notesCard(LinearLayout content,String key,String who,Runnable back){if(key.isEmpty())return;Notes saved=new Notes(this);String text=saved.text(key).trim();
-        content.addView(text("Notes",14,muted,true));gap(content,6);
-        LinearLayout box=vertical();box.setPadding(dp(16),dp(12),dp(16),dp(12));box.setBackground(shape(surface,18));pressDim(box);box.setContentDescription("Notes about "+who);
-        TextView body=text(text.isEmpty()?"Add gift ideas, birthdays, things to follow up on. Only on this phone, never sent.":text,15,text.isEmpty()?muted:ink,false);
-        body.setMaxLines(6);body.setEllipsize(TextUtils.TruncateAt.END);box.addView(body);
-        if(!text.isEmpty()){TextView when=text("Edited "+android.text.format.DateUtils.getRelativeTimeSpanString(saved.updated(key),System.currentTimeMillis(),android.text.format.DateUtils.MINUTE_IN_MILLIS),12,muted,false);when.setPadding(0,dp(6),0,0);box.addView(when);}
-        box.setOnClickListener(v->notes(key,who,back));LinearLayout.LayoutParams bl=new LinearLayout.LayoutParams(-1,-2);bl.setMargins(dp(4),0,dp(4),0);content.addView(box,bl);}
+        TextView about=text(who+" · only on this phone, never sent",13,muted,false);about.setPadding(dp(16),0,dp(16),dp(10));root.addView(about);
+        List<Notes.Note> all=new Notes(this).list(key);LinearLayout list=vertical();list.setPadding(0,dp(4),0,dp(96));
+        LinearLayout chips=row();
+        if(!all.isEmpty()){EditText search=input("Search notes or #tags");search.setSingleLine(true);search.setText(notesQuery);search.setContentDescription("Search notes");
+            LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(-1,-2);sl.setMargins(dp(4),0,dp(4),dp(8));root.addView(search,sl);
+            List<String> tags=Notes.tagsOf(all);
+            if(!tags.isEmpty()){HorizontalScrollView hs=new HorizontalScrollView(this);hs.setHorizontalScrollBarEnabled(false);hs.addView(chips);hs.setPadding(dp(4),0,dp(4),dp(8));root.addView(hs);}
+            Runnable[] draw=new Runnable[1];
+            draw[0]=()->{chips.removeAllViews();for(String t:tags){boolean on=hasTagWord(notesQuery,t);TextView chip=tagChip("#"+t,on);chip.setContentDescription((on?"Stop filtering by ":"Filter by ")+t);
+                    chip.setOnClickListener(v->{String next=on?withoutTagWord(notesQuery,t):(notesQuery.trim()+" #"+t.replace(' ','_')).trim();search.setText(next);search.setSelection(next.length());});
+                    LinearLayout.LayoutParams cl=new LinearLayout.LayoutParams(-2,-2);cl.setMarginEnd(dp(8));chips.addView(chip,cl);}
+                renderNoteCards(list,all,key,who);};
+            search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int b,int c){}public void onTextChanged(CharSequence s,int a,int b,int c){}
+                public void afterTextChanged(Editable e){notesQuery=e.toString();draw[0].run();}});
+            draw[0].run();}
+        else renderNoteCards(list,all,key,who);
+        ScrollView sc=new ScrollView(this);sc.setVerticalScrollBarEnabled(false);sc.addView(list);root.addView(sc,new LinearLayout.LayoutParams(-1,0,1));
+        TextView add=new TextView(this);add.setText("New note");add.setTextSize(16);add.setTextColor(onFab);add.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));
+        add.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_add,0,0,0);add.setCompoundDrawableTintList(ColorStateList.valueOf(onFab));add.setCompoundDrawablePadding(dp(10));
+        add.setGravity(Gravity.CENTER_VERTICAL);add.setPadding(dp(18),0,dp(22),0);add.setBackground(shape(fab,18));add.setElevation(dp(3));add.setContentDescription("New note");
+        add.setOnClickListener(v->noteEditor(key,who,null,()->notesList(key,who,back)));
+        FrameLayout.LayoutParams fl=new FrameLayout.LayoutParams(-2,dp(56),Gravity.BOTTOM|Gravity.END);fl.setMargins(0,0,dp(16),dp(16));frame.addView(add,fl);}
+    /** "#gift" typed in the search (tags with spaces are typed with _ for them). */
+    private static boolean hasTagWord(String query,String tag){for(String w:query.trim().split("\\s+"))if(w.startsWith("#")&&Notes.tag(w).replace('_',' ').equalsIgnoreCase(tag))return true;return false;}
+    private static String withoutTagWord(String query,String tag){StringBuilder b=new StringBuilder();for(String w:query.trim().split("\\s+")){if(w.isEmpty()||(w.startsWith("#")&&Notes.tag(w).replace('_',' ').equalsIgnoreCase(tag)))continue;b.append(w).append(' ');}return b.toString().trim();}
+    private void renderNoteCards(LinearLayout list,List<Notes.Note> all,String key,String who){list.removeAllViews();
+        String q=notesQuery.trim().replace('_',' ');List<Notes.Note> shown=new ArrayList<>();for(Notes.Note n:all)if(Notes.matches(n,q))shown.add(n);
+        if(shown.isEmpty()){TextView empty=text(all.isEmpty()?"No notes yet. Tap New note for gift ideas, birthdays, things to follow up on.\n\nYou can also hold a message or photo in the chat and save it as a note.":"No notes match.",15,muted,false);
+            empty.setGravity(Gravity.CENTER);empty.setPadding(dp(24),dp(40),dp(24),dp(24));list.addView(empty);return;}
+        for(Notes.Note n:shown){View card=noteCard(n,key,who,()->notesList(key,who,notesBack));LinearLayout.LayoutParams cl=new LinearLayout.LayoutParams(-1,-2);cl.setMargins(dp(4),0,dp(4),dp(10));list.addView(card,cl);}}
+    /** A note in the list: pin, date, the start of its words, its tags, and a picture or file count. */
+    private View noteCard(Notes.Note n,String key,String who,Runnable reopen){LinearLayout view=row();view.setGravity(Gravity.TOP);view.setPadding(dp(16),dp(12),dp(12),dp(12));view.setBackground(shape(surface,18));pressDim(view);view.setTag("note:"+n.id);
+        LinearLayout texts=vertical();LinearLayout top=row();
+        if(n.pinned){ImageView pin=new ImageView(this);pin.setImageResource(R.drawable.ic_pin);pin.setImageTintList(ColorStateList.valueOf(muted));LinearLayout.LayoutParams pl=new LinearLayout.LayoutParams(dp(14),dp(14));pl.setMarginEnd(dp(6));top.addView(pin,pl);}
+        top.addView(text(noteDate(n.created)+(n.attachments.isEmpty()?"":"  ·  "+n.attachments.size()+(n.attachments.size()==1?" attachment":" attachments")),12,muted,false));texts.addView(top);
+        String words=n.text.trim();if(!words.isEmpty()){TextView body=text(words,16,ink,false);body.setMaxLines(4);body.setEllipsize(TextUtils.TruncateAt.END);body.setPadding(0,dp(4),0,0);texts.addView(body);}
+        if(!n.tags.isEmpty()){TextView tags=text("#"+String.join("  #",n.tags),13,BLUE,false);tags.setPadding(0,dp(6),0,0);texts.addView(tags);}
+        view.addView(texts,new LinearLayout.LayoutParams(0,-2,1));
+        Notes.Attachment first=null;for(Notes.Attachment a:n.attachments)if(a.image()||a.video()){first=a;break;}
+        if(first!=null){File f=new Notes(this).file(n,first);if(f!=null&&f.isFile()){ImageView thumb=new ImageView(this);thumb.setScaleType(ImageView.ScaleType.CENTER_CROP);thumb.setClipToOutline(true);thumb.setBackground(shape(card,12));
+            LinearLayout.LayoutParams tl=new LinearLayout.LayoutParams(dp(56),dp(56));tl.setMarginStart(dp(10));view.addView(thumb,tl);noteThumb(thumb,f,first.video(),dp(56));}}
+        view.setContentDescription((n.pinned?"Pinned note, ":"Note, ")+noteDate(n.created)+": "+words+(n.tags.isEmpty()?"":", tagged "+String.join(", ",n.tags)));
+        view.setOnClickListener(v->noteEditor(key,who,n,reopen));
+        view.setOnLongClickListener(v->{menuSheet(words.isEmpty()?"Note":words,java.util.Arrays.asList(n.pinned?"Unpin":"Pin to top","Delete note…"),java.util.Arrays.<Runnable>asList(
+            ()->{Notes.Note p=n.copy();p.pinned=!p.pinned;new Notes(this).save(key,who,p);reopen.run();},()->deleteNote(key,n.id,reopen)));return true;});
+        return view;}
+    private void deleteNote(String key,String id,Runnable after){new AlertDialog.Builder(this).setMessage("Delete this note? Its photos and files go with it.").setNegativeButton("Cancel",null)
+        .setPositiveButton("Delete",(d,w)->{new Notes(this).delete(key,id);after.run();}).show();}
+    /** A small square picture of a note's photo or video, made off the main thread. */
+    private void noteThumb(ImageView view,File file,boolean video,int px){String k=file.getPath()+"|"+file.lastModified()+"|"+px;Bitmap hit=noteThumbs.get(k);view.setTag(k);if(hit!=null){view.setImageBitmap(hit);return;}
+        decoder.execute(()->{Bitmap b=null;try{if(video)b=android.media.ThumbnailUtils.createVideoThumbnail(file,new android.util.Size(px,px),null);
+                else b=android.graphics.ImageDecoder.decodeBitmap(android.graphics.ImageDecoder.createSource(file),(dec,info,src)->{int w=info.getSize().getWidth(),h=info.getSize().getHeight(),s=1;
+                    while(w/(s*2)>=px&&h/(s*2)>=px)s*=2;dec.setTargetSampleSize(s);dec.setAllocator(android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE);});}catch(Exception ignored){}
+            if(b==null)return;Bitmap square=Avatars.scaleSquare(b,px);noteThumbs.put(k,square);ui.post(()->{if(k.equals(view.getTag()))view.setImageBitmap(square);});});}
+    private void leaveNotes(){Runnable back=notesBack;notesBack=null;notesKey="";notesQuery="";if(back!=null)back.run();else inbox();}
     /**
-     * Where "Add to notes" puts a message: {key, whose notes, how the line says whose it was, the
-     * menu label}. A person's notes in a one-to-one chat; in a group, the sender's (or the group's
-     * for your own messages).
+     * One note: its words, tags, and photos or files, saved as you go. n is null for a new note,
+     * which is only kept once it has something in it. back is where the back arrow goes.
      */
-    private String[] noteTarget(JSONObject m,JSONObject c){boolean mine=PairedProtocol.outgoing(m,c);JSONObject other=PairedProtocol.other(c);
-        if(other!=null){String who=PairedProtocol.title(c);return new String[]{Notes.personKey(PairedProtocol.number(other)),who,mine?"(you)":"","Add to notes about "+who};}
+    private void noteEditor(String key,String who,Notes.Note n,Runnable back){long now=System.currentTimeMillis();Notes.Note note=n==null?new Notes.Note(Notes.newId(now),"",now):n.copy();
+        base("note");editing=note;editingKey=key;editingWho=who;noteBack=back;editingSnapshot=n==null?noteState(new Notes.Note(note.id,"",now)):noteState(note);
+        LinearLayout bar=row();bar.addView(icon(R.drawable.ic_back,ink,"Back",this::leaveNote));
+        TextView title=text(n==null?"New note":"Note",24,ink,false);title.setPadding(dp(8),0,dp(8),0);bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+        notePin=icon(R.drawable.ic_pin,note.pinned?BLUE:muted,note.pinned?"Unpin note":"Pin note",this::toggleNotePin);bar.addView(notePin);
+        ImageView more=icon(R.drawable.ic_more,ink,"More options",null);pressable(more);more.setOnClickListener(v->{PopupMenu menu=new PopupMenu(this,v);menu.getMenu().add(0,1,0,"Delete note…");
+            menu.setOnMenuItemClickListener(item->{saveNote();Notes.Note e=editing;if(e!=null)deleteNote(key,e.id,()->{editing=null;Runnable b=noteBack;if(b!=null)b.run();else inbox();});return true;});menu.show();});bar.addView(more);
+        root.addView(bar,new LinearLayout.LayoutParams(-1,dp(56)));
+        String dated=who+" · "+android.text.format.DateUtils.formatDateTime(this,note.created,android.text.format.DateUtils.FORMAT_SHOW_DATE|android.text.format.DateUtils.FORMAT_SHOW_TIME|android.text.format.DateUtils.FORMAT_ABBREV_MONTH)
+            +(note.updated-note.created>60_000?" · edited "+android.text.format.DateUtils.getRelativeTimeSpanString(note.updated,now,android.text.format.DateUtils.MINUTE_IN_MILLIS):"");
+        TextView sub=text(dated,13,muted,false);sub.setPadding(dp(16),0,dp(16),dp(8));root.addView(sub);
+        if(!note.source.isEmpty()){TextView from=text("From "+note.source,13,muted,false);from.setPadding(dp(16),0,dp(16),dp(8));root.addView(from);}
+        EditText field=input("Write a note…");field.setSingleLine(false);field.setGravity(Gravity.TOP|Gravity.START);field.setContentDescription("Note");
+        field.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES|InputType.TYPE_TEXT_FLAG_AUTO_CORRECT);
+        field.setTextSize(17);field.setLineSpacing(0,1.15f);field.setText(note.text);field.setSelection(field.length());
+        LinearLayout.LayoutParams fl=new LinearLayout.LayoutParams(-1,0,1);fl.setMargins(dp(4),0,dp(4),dp(8));root.addView(field,fl);
+        field.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int b,int c){}public void onTextChanged(CharSequence s,int a,int b,int c){}
+            public void afterTextChanged(Editable e){ui.removeCallbacks(noteSaver);ui.postDelayed(noteSaver,600);}});
+        noteField=field;
+        noteTags=row();HorizontalScrollView ts=new HorizontalScrollView(this);ts.setHorizontalScrollBarEnabled(false);ts.addView(noteTags);ts.setPadding(dp(4),0,dp(4),dp(8));root.addView(ts);renderNoteTags();
+        noteFiles=row();HorizontalScrollView fs=new HorizontalScrollView(this);fs.setHorizontalScrollBarEnabled(false);fs.addView(noteFiles);fs.setPadding(dp(4),0,dp(4),dp(4));root.addView(fs);renderNoteFiles();
+        if(note.text.trim().isEmpty()&&note.attachments.isEmpty()){field.requestFocus();field.post(()->getSystemService(InputMethodManager.class).showSoftInput(field,0));}}
+    /** What a note holds, to tell whether it changed (and only then call it edited). */
+    private static String noteState(Notes.Note n){StringBuilder b=new StringBuilder(n.text).append('\u0000').append(n.pinned).append('\u0000').append(String.join("\u0001",n.tags)).append('\u0000');
+        for(Notes.Attachment a:n.attachments)b.append(a.file).append('\u0001');return b.toString();}
+    private void saveNote(){ui.removeCallbacks(noteSaver);if(editing==null||editingKey.isEmpty())return;if(noteField!=null)editing.text=noteField.getText().toString();
+        String state=noteState(editing);if(state.equals(editingSnapshot))return;editing.updated=System.currentTimeMillis();new Notes(this).save(editingKey,editingWho,editing.copy());editingSnapshot=state;}
+    private void leaveNote(){saveNote();if(noteField!=null)hideKeyboard(noteField);editing=null;Runnable back=noteBack;noteBack=null;if(back!=null)back.run();else inbox();}
+    private void toggleNotePin(){if(editing==null)return;editing.pinned=!editing.pinned;saveNote();if(notePin!=null){notePin.setImageTintList(ColorStateList.valueOf(editing.pinned?BLUE:muted));notePin.setContentDescription(editing.pinned?"Unpin note":"Pin note");}
+        toast(editing.pinned?"Pinned to the top of the notes.":"Unpinned.");}
+    /** The note's tags (tap one to take it off) and "+ Tag". */
+    private void renderNoteTags(){if(noteTags==null||editing==null)return;noteTags.removeAllViews();
+        for(String t:editing.tags){TextView chip=tagChip("#"+t+"  ✕",true);chip.setContentDescription("Remove tag "+t);chip.setOnClickListener(v->{editing.tags.removeIf(x->x.equals(t));saveNote();renderNoteTags();});
+            LinearLayout.LayoutParams cl=new LinearLayout.LayoutParams(-2,-2);cl.setMarginEnd(dp(8));noteTags.addView(chip,cl);}
+        TextView add=tagChip("+ Tag",false);add.setContentDescription("Add tags");add.setOnClickListener(v->askNoteTags());noteTags.addView(add);}
+    /** Adds tags: type them (commas between several), or tap ones you've used before. */
+    private void askNoteTags(){if(editing==null)return;LinearLayout box=vertical();box.setPadding(dp(20),dp(8),dp(20),0);
+        EditText in=input("gift ideas, birthday");in.setSingleLine(true);in.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);box.addView(in,new LinearLayout.LayoutParams(-1,-2));
+        List<String> used=new ArrayList<>();for(String t:new Notes(this).allTags())if(!Notes.hasTag(editing,t))used.add(t);
+        AlertDialog[] d=new AlertDialog[1];
+        if(!used.isEmpty()){gap(box,10);box.addView(text("Tags you've used",13,muted,false));gap(box,6);LinearLayout wrap=vertical();LinearLayout line=null;int across=0;
+            for(String t:used.subList(0,Math.min(24,used.size()))){if(line==null||across>=3){line=row();wrap.addView(line);gap(wrap,6);across=0;}
+                TextView chip=tagChip("#"+t,false);chip.setOnClickListener(v->{addNoteTags(t);if(d[0]!=null)d[0].dismiss();});LinearLayout.LayoutParams cl=new LinearLayout.LayoutParams(-2,-2);cl.setMarginEnd(dp(8));line.addView(chip,cl);across++;}
+            ScrollView sc=new ScrollView(this);sc.addView(wrap);box.addView(sc,new LinearLayout.LayoutParams(-1,-2));}
+        d[0]=new AlertDialog.Builder(this).setTitle("Add tags").setView(box).setNegativeButton("Cancel",null).setPositiveButton("Add",(x,w)->addNoteTags(in.getText().toString())).create();
+        in.setOnEditorActionListener((v,a,e)->{addNoteTags(in.getText().toString());d[0].dismiss();return true;});
+        d[0].setOnShowListener(x->{in.requestFocus();Window w=d[0].getWindow();if(w!=null)w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);});d[0].show();}
+    private void addNoteTags(String typed){if(editing==null)return;List<String> tags=editing.tags;for(String t:Notes.splitTags(typed))tags=Notes.withTag(tags,t);editing.tags=tags;saveNote();renderNoteTags();}
+    /** The note's photos and files (tap to open, hold to share or remove) and "Attach". */
+    private void renderNoteFiles(){if(noteFiles==null||editing==null)return;noteFiles.removeAllViews();Notes kept=new Notes(this);Notes.Note note=editing;
+        for(Notes.Attachment a:note.attachments){File f=kept.file(note,a);FrameLayout tile=new FrameLayout(this);tile.setBackground(shape(surface,14));tile.setClipToOutline(true);pressDim(tile);
+            if((a.image()||a.video())&&f!=null&&f.isFile()){ImageView img=new ImageView(this);img.setScaleType(ImageView.ScaleType.CENTER_CROP);tile.addView(img,new FrameLayout.LayoutParams(-1,-1));noteThumb(img,f,a.video(),dp(84));
+                if(a.video()){ImageView play=new ImageView(this);play.setImageResource(R.drawable.ic_play);play.setPadding(dp(8),dp(8),dp(7),dp(8));play.setBackground(oval(0x8C000000));tile.addView(play,new FrameLayout.LayoutParams(dp(32),dp(32),Gravity.CENTER));}}
+            else{LinearLayout inner=vertical();inner.setGravity(Gravity.CENTER);inner.setPadding(dp(6),dp(6),dp(6),dp(6));ImageView ic=new ImageView(this);ic.setImageResource(R.drawable.ic_file);ic.setImageTintList(ColorStateList.valueOf(muted));inner.addView(ic,new LinearLayout.LayoutParams(dp(24),dp(24)));
+                TextView name=text(a.name,11,ink,false);name.setMaxLines(2);name.setEllipsize(TextUtils.TruncateAt.MIDDLE);name.setGravity(Gravity.CENTER);inner.addView(name);tile.addView(inner,new FrameLayout.LayoutParams(-1,-1));}
+            tile.setContentDescription(a.name);tile.setOnClickListener(v->openNoteFile(f,a));
+            tile.setOnLongClickListener(v->{menuSheet(a.name,java.util.Arrays.asList("Share","Remove from note"),java.util.Arrays.<Runnable>asList(()->shareNoteFile(f,a),()->{note.attachments.remove(a);saveNote();if(f!=null)f.delete();renderNoteFiles();}));return true;});
+            LinearLayout.LayoutParams tl=new LinearLayout.LayoutParams(dp(84),dp(84));tl.setMarginEnd(dp(8));noteFiles.addView(tile,tl);}
+        LinearLayout attach=vertical();attach.setGravity(Gravity.CENTER);attach.setBackground(shape(surface,14));pressDim(attach);attach.setContentDescription("Attach a photo or file");
+        ImageView plus=new ImageView(this);plus.setImageResource(R.drawable.ic_add);plus.setImageTintList(ColorStateList.valueOf(ink));attach.addView(plus,new LinearLayout.LayoutParams(dp(24),dp(24)));
+        TextView label=text("Attach",12,muted,false);label.setPadding(0,dp(4),0,0);attach.addView(label);
+        attach.setOnClickListener(v->menuSheet("Attach to this note",java.util.Arrays.asList("Photos & videos","Files"),java.util.Arrays.<Runnable>asList(
+            ()->{Intent pick=new Intent(MediaStore.ACTION_PICK_IMAGES).putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX,Math.min(10,MediaStore.getPickImagesMaxLimit()));try{startActivityForResult(pick,PICK_NOTE_PHOTOS);}catch(Exception e){toast("No photo picker on this phone.");}},
+            ()->startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true),PICK_NOTE_FILES))));
+        noteFiles.addView(attach,new LinearLayout.LayoutParams(dp(84),dp(84)));}
+    private void openNoteFile(File f,Notes.Attachment a){if(f==null||!f.isFile()){toast("This file is missing from the note.");return;}
+        Intent view=new Intent(Intent.ACTION_VIEW).setDataAndType(MediaProvider.noteUri(f,a.name),a.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        if(bubble())view.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);try{startActivity(view);}catch(Exception e){toast("No app on this phone can open this kind of file. Hold it to share it instead.");}}
+    private void shareNoteFile(File f,Notes.Attachment a){if(f==null||!f.isFile()){toast("This file is missing from the note.");return;}Uri uri=MediaProvider.noteUri(f,a.name);
+        Intent send=new Intent(Intent.ACTION_SEND).setType(a.mime).putExtra(Intent.EXTRA_STREAM,uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);send.setClipData(ClipData.newRawUri(a.name,uri));startActivity(Intent.createChooser(send,"Share"));}
+    /** Keeps picked photos or files with the note being edited (copied into the note's own folder). */
+    private void addNoteFiles(List<Uri> uris){Notes.Note note=editing;String key=editingKey;if(note==null)return;File dir=Notes.dir(getFilesDir(),note.id);if(dir==null)return;
+        decoder.execute(()->{List<Notes.Attachment> added=new ArrayList<>();int failed=0;dir.mkdirs();
+            for(Uri uri:uris){String name="file";try(android.database.Cursor q=getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null)){if(q!=null&&q.moveToFirst()&&!q.isNull(0))name=q.getString(0);}catch(Exception ignored){}
+                if("file".equals(name)&&uri.getLastPathSegment()!=null)name=uri.getLastPathSegment();
+                String mime=getContentResolver().getType(uri);if(mime==null){int dot=name.lastIndexOf('.');mime=dot<0?null:android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substring(dot+1).toLowerCase(Locale.ROOT));}
+                File to=noteFileFor(dir,name,note.attachments.size()+added.size()+1);
+                try(java.io.InputStream in=getContentResolver().openInputStream(uri)){if(in==null)throw new java.io.IOException("unreadable");java.nio.file.Files.copy(in,to.toPath());added.add(new Notes.Attachment(to.getName(),name,mime));}
+                catch(Exception e){to.delete();failed++;}}
+            int lost=failed;ui.post(()->{if(editing==note&&key.equals(editingKey)){note.attachments.addAll(added);saveNote();renderNoteFiles();}
+                else{Notes.Note saved=null;for(Notes.Note x:new Notes(this).list(key))if(x.id.equals(note.id))saved=x;if(saved!=null){saved.attachments.addAll(added);new Notes(this).save(key,editingWho,saved);}}
+                if(lost>0)toast(lost==1?"One file couldn't be added.":lost+" files couldn't be added.");});});}
+    private static File noteFileFor(File dir,String name,int number){File f;int n=number;do{f=new File(dir,Notes.fileName(name,n++));}while(f.exists());return f;}
+    /**
+     * Who a message goes to in notes: {key, whose notes, how a note says where it came from}. The
+     * person's in a one-to-one chat; in a group, the sender's (or the group's, for your own).
+     */
+    private String[] noteTarget(JSONObject m,JSONObject c){boolean mine=PairedProtocol.outgoing(m,c);JSONObject other=PairedProtocol.other(c);String date=noteDate(PairedProtocol.time(m));
+        if(other!=null){String who=PairedProtocol.title(c);return new String[]{Notes.personKey(PairedProtocol.number(other)),who,Notes.source(mine?"Your message":who+"'s message",date)};}
         String group=PairedProtocol.title(c);
-        if(mine)return new String[]{Notes.groupKey(c.optString("conversationID")),group,"(you)","Add to the group's notes"};
+        if(mine)return new String[]{Notes.groupKey(c.optString("conversationID")),group,Notes.source("Your message",date)};
         JSONObject sender=PairedProtocol.participant(c,m.optString("participantID"));String who=senderName(m,c);
-        return new String[]{Notes.personKey(sender==null?"":PairedProtocol.number(sender)),who,"in "+group,"Add to notes about "+who};}
-    /** Saves a message to notes as a dated line, like "• Nov 12: Starting the new job Monday". */
-    private void addToNotes(JSONObject m,JSONObject c,String words){String[] to=noteTarget(m,c);if(to[0].isEmpty())return;
-        String date=new java.text.SimpleDateFormat(android.text.format.DateFormat.getBestDateTimePattern(Locale.getDefault(),"MMMd"),Locale.getDefault()).format(new Date(PairedProtocol.time(m)));
-        new Notes(this).add(to[0],Notes.clip(date,to[2],words),System.currentTimeMillis());toast("Added to notes about "+to[1]+".");}
-    /** Inbox search looks through your notes too: each chat whose notes match, with the line that does. */
-    private void renderNoteHits(){if(items==null)return;SmartText.Search f=SmartText.parseSearch(query);if(SmartText.hasFilters(f)||f.text.trim().length()<2)return;
-        Map<String,String> all=new Notes(this).all();if(all.isEmpty())return;String q=f.text.trim();List<JSONObject> chats=null;boolean labeled=false;
-        for(Map.Entry<String,String> e:all.entrySet()){if(!Notes.matches(e.getValue(),q))continue;String key=e.getKey();JSONObject chat=null;
-            if(key.startsWith("g:"))chat=store.chat(key.substring(2));
-            else{if(chats==null)chats=allChats();for(JSONObject c:chats){JSONObject o=PairedProtocol.other(c);if(o!=null&&key.equals(Notes.personKey(PairedProtocol.number(o)))){chat=c;break;}}}
-            if(chat==null)continue;
-            if(!labeled){items.addView(sectionLabel("Notes"));labeled=true;}
-            items.addView(noteResult(chat,key,Notes.snippet(e.getValue(),q)));}}
-    private View noteResult(JSONObject chat,String key,String line){String id=chat.optString("conversationID"),title=PairedProtocol.title(chat);
-        LinearLayout r=row();r.setPadding(dp(8),dp(10),dp(8),dp(10));pressable(r);r.addView(avatar(chat,44));
-        LinearLayout texts=vertical();texts.setPadding(dp(14),0,dp(8),0);texts.addView(text(title,17,ink,false));
-        TextView l=text(line,14,muted,false);l.setMaxLines(2);l.setEllipsize(TextUtils.TruncateAt.END);texts.addView(l);r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));
-        r.setContentDescription("Notes about "+title+": "+line);r.setOnClickListener(v->{chatId=id;notes(key,title,()->thread(id));});return r;}
+        return new String[]{Notes.personKey(sender==null?"":PairedProtocol.number(sender)),who,Notes.source(who+"'s message in "+group,date)};}
+    /** "photo", "photos", "video", "file" or "message": what holding a message offers to save. */
+    private static String noteWhat(JSONObject m){List<JSONObject> media=PairedProtocol.media(m);if(media.isEmpty())return "message";String k=PairedProtocol.mediaKind(media.get(0));
+        String one=k.equals("image")?"photo":k.equals("video")?"video":"file";return media.size()>1?one+"s":one;}
+    /** Saves a message (its words and any photos or files) as a new note, or into one you pick, then opens that note. */
+    private void messageToNote(JSONObject m,JSONObject c,boolean pick){String[] to=noteTarget(m,c);if(to[0].isEmpty())return;
+        if(!pick){saveMessageInto(m,c,to,null);return;}
+        List<Notes.Note> notes=new Notes(this).list(to[0]);if(notes.isEmpty()){saveMessageInto(m,c,to,null);return;}
+        List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
+        for(Notes.Note n:notes.subList(0,Math.min(15,notes.size()))){String first=n.text.trim().split("\n")[0];if(first.length()>40)first=first.substring(0,40).trim()+"…";
+            if(first.isEmpty())first=n.tags.isEmpty()?n.attachments.size()+" attachments":"#"+String.join(" #",n.tags);
+            labels.add((n.pinned?"📌 ":"")+noteDate(n.created)+" · "+first);actions.add(()->saveMessageInto(m,c,to,n));}
+        menuSheet("Add to which note about "+to[1]+"?",labels,actions);}
+    private void saveMessageInto(JSONObject m,JSONObject c,String[] to,Notes.Note into){String typed=PairedProtocol.text(m),words=ChatText.replyFallbackBody(typed)!=null?ChatText.replyFallbackBody(typed):typed;
+        List<JSONObject> media=PairedProtocol.media(m);String chat=chatId;
+        noteDownloads(media,0,new ArrayList<>(),files->{long now=System.currentTimeMillis();Notes.Note n=into==null?new Notes.Note(Notes.newId(now),words.trim(),now):into.copy();
+            if(into==null)n.source=to[2];else if(!words.trim().isEmpty())n.text=Notes.appended(n.text,words);
+            File dir=Notes.dir(getFilesDir(),n.id);
+            decoder.execute(()->{List<Notes.Attachment> added=new ArrayList<>();if(dir!=null){dir.mkdirs();
+                    for(int i=0;i<files.size();i++){JSONObject media0=media.get(i);File from=files.get(i);String name=displayName(media0);File copy=noteFileFor(dir,name,n.attachments.size()+added.size()+1);
+                        try{try{android.system.Os.link(from.getPath(),copy.getPath());}catch(Exception linkFailed){java.nio.file.Files.copy(from.toPath(),copy.toPath());}added.add(new Notes.Attachment(copy.getName(),name,MediaCache.mime(media0)));}catch(Exception e){copy.delete();}}}
+                ui.post(()->{n.attachments.addAll(added);n.updated=now;new Notes(this).save(to[0],to[1],n);
+                    toast(into==null?"Saved as a note about "+to[1]+".":"Added to the note.");noteEditor(to[0],to[1],n,()->thread(chat));});});});}
+    /** Downloads (or reuses) each of a message's attachments in turn, then hands over the files. */
+    private void noteDownloads(List<JSONObject> media,int i,List<File> got,java.util.function.Consumer<List<File>> done){if(i>=media.size()){done.accept(got);return;}
+        withFile(media.get(i),"Downloading…",file->{got.add(file);noteDownloads(media,i+1,got,done);});}
+    /** Details' notes card: how many, and the top note (pinned, or newest). Tap to see them all. */
+    private void notesCard(LinearLayout content,String key,String who,Runnable back){if(key.isEmpty())return;List<Notes.Note> all=new Notes(this).list(key);
+        content.addView(text("Notes",14,muted,true));gap(content,6);
+        LinearLayout box=vertical();box.setPadding(dp(16),dp(12),dp(16),dp(12));box.setBackground(shape(surface,18));pressDim(box);
+        if(all.isEmpty()){box.addView(text("Add gift ideas, birthdays, things to follow up on. Only on this phone, never sent.",15,muted,false));box.setContentDescription("Notes about "+who);}
+        else{Notes.Note top=all.get(0);box.addView(text(all.size()+(all.size()==1?" note":" notes")+"  ·  "+(top.pinned?"pinned":"newest")+" from "+noteDate(top.created),12,muted,false));
+            String words=top.text.trim();if(!words.isEmpty()){TextView body=text(words,15,ink,false);body.setMaxLines(4);body.setEllipsize(TextUtils.TruncateAt.END);body.setPadding(0,dp(4),0,0);box.addView(body);}
+            if(!top.tags.isEmpty()){TextView tags=text("#"+String.join("  #",top.tags),13,BLUE,false);tags.setPadding(0,dp(4),0,0);box.addView(tags);}
+            box.setContentDescription(all.size()+" notes about "+who);}
+        box.setOnClickListener(v->notesList(key,who,back));LinearLayout.LayoutParams bl=new LinearLayout.LayoutParams(-1,-2);bl.setMargins(dp(4),0,dp(4),0);content.addView(box,bl);}
+    /** Inbox search looks through your notes too (words and #tags): each matching note, newest first, with whose it is. */
+    private void renderNoteHits(){if(items==null)return;SmartText.Search f=SmartText.parseSearch(query);String q=query.trim();
+        if(q.length()<2||(SmartText.hasFilters(f)&&!q.startsWith("#")))return;
+        List<Object[]> hits=new ArrayList<>();for(Map.Entry<String,List<Notes.Note>> e:new Notes(this).all().entrySet())for(Notes.Note n:e.getValue())if(Notes.matches(n,q.replace('_',' ')))hits.add(new Object[]{e.getKey(),n});
+        if(hits.isEmpty())return;hits.sort((a,b)->Long.compare(((Notes.Note)b[1]).created,((Notes.Note)a[1]).created));
+        List<JSONObject> chats=null;Map<String,JSONObject> chatFor=new HashMap<>();items.addView(sectionLabel("Notes"));
+        for(Object[] h:hits.subList(0,Math.min(20,hits.size()))){String key=(String)h[0];Notes.Note n=(Notes.Note)h[1];
+            if(!chatFor.containsKey(key)){JSONObject chat=null;if(key.startsWith("g:"))chat=store.chat(key.substring(2));
+                else{if(chats==null)chats=allChats();for(JSONObject c:chats){JSONObject o=PairedProtocol.other(c);if(o!=null&&key.equals(Notes.personKey(PairedProtocol.number(o)))){chat=c;break;}}}
+                chatFor.put(key,chat);}
+            items.addView(noteResult(chatFor.get(key),key,n,q));}}
+    private View noteResult(JSONObject chat,String key,Notes.Note n,String q){String saved=new Notes(this).name(key),title=chat!=null?PairedProtocol.title(chat):saved.isEmpty()?"Notes":saved;
+        LinearLayout r=row();r.setPadding(dp(8),dp(10),dp(8),dp(10));pressable(r);r.addView(chat!=null?avatar(chat,44):personAvatar(null,title,44));
+        LinearLayout texts=vertical();texts.setPadding(dp(14),0,dp(8),0);texts.addView(text(title+"  ·  "+noteDate(n.created),15,ink,false));
+        String line=Notes.snippet(n.text,q);if(line.isEmpty())line=n.attachments.isEmpty()?"":n.attachments.size()+(n.attachments.size()==1?" attachment":" attachments");
+        if(!line.isEmpty()){TextView l=text(line,14,muted,false);l.setMaxLines(2);l.setEllipsize(TextUtils.TruncateAt.END);texts.addView(l);}
+        if(!n.tags.isEmpty()){TextView tags=text("#"+String.join("  #",n.tags),13,BLUE,false);texts.addView(tags);}
+        r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));r.setContentDescription("Note about "+title+": "+line);
+        r.setOnClickListener(v->noteEditor(key,title,n,this::inbox));return r;}
     private void memberActions(JSONObject p){String number=PairedProtocol.number(p);if(number.isEmpty())return;String name=PairedProtocol.name(p);
         Runnable back=screen.equals("details")?this::details:(Runnable)()->thread(chatId);
         menuSheet(name,java.util.Arrays.asList("Message","Call","Copy number","Set a nickname…","Notes about "+name),java.util.Arrays.<Runnable>asList(()->startChat(number),
             ()->{try{startActivity(new Intent(Intent.ACTION_DIAL,Uri.parse("tel:"+number)));}catch(Exception e){toast("No phone app is available.");}},
-            ()->getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Number",number)),()->setNickname(p),()->notes(Notes.personKey(number),name,back)));}
+            ()->getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Number",number)),()->setNickname(p),()->notesList(Notes.personKey(number),name,back)));}
     // ---- Attachments ----
     private static final int PICK_MEDIA=41,PICK_FILES=42;
     private static final long MAX_ATTACHMENT=100L<<20,MAX_VIDEO=4L<<30;
@@ -2083,6 +2247,9 @@ public class PairedActivity extends Activity {
         shoot.setClipData(ClipData.newRawUri("Photo",uri));
         try{startActivityForResult(shoot,TAKE_PHOTO);}catch(Exception e){pendingCapture=null;toast("No camera app is available.");}}
     @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);
+        if(request==PICK_NOTE_FILES||request==PICK_NOTE_PHOTOS){if(result!=RESULT_OK||data==null)return;List<Uri> picked=new ArrayList<>();
+            if(data.getClipData()!=null)for(int i=0;i<data.getClipData().getItemCount();i++)picked.add(data.getClipData().getItemAt(i).getUri());else if(data.getData()!=null)picked.add(data.getData());
+            addNoteFiles(picked);return;}
         if(request==RESTORE_BACKUP){if(result==RESULT_OK&&data!=null&&data.getData()!=null)restoreBackup(data.getData());return;}
         if(request==PICK_BACKGROUND){if(result==RESULT_OK&&data!=null&&data.getData()!=null)saveBackgroundPhoto(data.getData());return;}
         if(request==PICK_GROUP_PHOTO){if(result==RESULT_OK&&data!=null&&data.getData()!=null)saveGroupPhoto(data.getData());return;}
