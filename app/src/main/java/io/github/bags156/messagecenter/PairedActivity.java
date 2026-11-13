@@ -741,7 +741,7 @@ public class PairedActivity extends Activity {
      * Delete set apart in red at the bottom.
      */
     private Dialog chatMenu(View anchor){JSONObject c=store.chat(chatId);if(c==null)return null;String id=chatId;boolean group=PairedProtocol.other(c)==null;
-        // The keyboard goes down first, so the sheet has the screen's height and isn't squeezed above it.
+        // The keyboard goes down, and the sheet takes no notice of it while it does, so it isn't laid out squeezed above it.
         View focused=getCurrentFocus();if(focused!=null)hideKeyboard(focused);
         LinearLayout content=vertical();Dialog[] d=new Dialog[1];
         java.util.function.Function<Runnable,Runnable> closing=r->()->{if(d[0]!=null)d[0].dismiss();r.run();};
@@ -776,7 +776,8 @@ public class PairedActivity extends Activity {
         if(!bubble()){gap(content,12);LinearLayout risky=menuGroup(content);
             menuRow(risky,R.drawable.ic_block,0xffef4444,blocked?"Unblock":"Block\u2026",null,!blocked,closing.apply(()->block(store.chat(id))));
             menuRow(risky,R.drawable.ic_delete,0xffdc2626,"Delete conversation\u2026",null,true,closing.apply(()->deleteChat(store.chat(id))));}
-        content.setPadding(dp(3),0,dp(3),dp(8));ScrollView sc=new ScrollView(this);sc.setVerticalScrollBarEnabled(false);sc.addView(content);d[0]=sheet(sc);return d[0];}
+        content.setPadding(dp(3),0,dp(3),dp(8));ScrollView sc=new ScrollView(this);sc.setVerticalScrollBarEnabled(false);sc.addView(content);
+        d[0]=sheet(sc,WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING|WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);return d[0];}
     /** Cards in the chat menu: a step lighter than the sheet in dark themes (where shadows don't show), the usual card tint in light. */
     private int raised(){if(!dark)return surface;int r=Color.red(surface),g=Color.green(surface),b=Color.blue(surface);
         return Color.rgb(r+Math.round((Color.red(ink)-r)*0.07f),g+Math.round((Color.green(ink)-g)*0.07f),b+Math.round((Color.blue(ink)-b)*0.07f));}
@@ -1199,8 +1200,10 @@ public class PairedActivity extends Activity {
         chip.setOnClickListener(v->reactionSheet(m,c));r.addView(chip);return r;
     }
     /** A sheet that slides up from the bottom of the screen. */
-    private Dialog sheet(View content){
-        Dialog d=new Dialog(this);d.requestWindowFeature(Window.FEATURE_NO_TITLE);
+    private Dialog sheet(View content){return sheet(content,-1);}
+    /** A sheet whose window handles the keyboard as softInput says (a WindowManager.LayoutParams SOFT_INPUT_ mode), set before it shows. */
+    private Dialog sheet(View content,int softInput){
+        Dialog d=new Dialog(this);d.requestWindowFeature(Window.FEATURE_NO_TITLE);if(softInput>=0&&d.getWindow()!=null)d.getWindow().setSoftInputMode(softInput);
         LinearLayout box=vertical();box.setPadding(dp(20),dp(10),dp(20),dp(28));GradientDrawable panel=new GradientDrawable();panel.setColor(card);float r=dp(28);panel.setCornerRadii(new float[]{r,r,r,r,0,0,0,0});box.setBackground(panel);
         View handle=new View(this);handle.setBackground(shape(muted,2));handle.setAlpha(0.45f);LinearLayout.LayoutParams hl=new LinearLayout.LayoutParams(dp(32),dp(4));hl.gravity=Gravity.CENTER_HORIZONTAL;hl.bottomMargin=dp(14);box.addView(handle,hl);
         box.addView(content,new LinearLayout.LayoutParams(-1,-2));d.setContentView(box);d.show();
