@@ -218,10 +218,12 @@ public final class OnDeviceSmoke extends Instrumentation {
         runOnMainSync(()->{try{add.invoke(a,m,chat,"Starting the new job Monday");}catch(Exception x){throw new RuntimeException(x);}});
         String after=notes.text(key);
         check(after.startsWith(typed+"\n• ")&&after.endsWith(": Starting the new job Monday"),"Add to notes didn't add a dated line: "+after.replace("\n"," / "));
-        int[] hits={0};
-        runOnMainSync(()->{try{query.set(a,"scarf");inbox.invoke(a);}catch(Exception x){throw new RuntimeException(x);}});waitForIdleSync();
-        runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(found,"Gift idea: blue scarf",android.view.View.FIND_VIEWS_WITH_TEXT);hits[0]=found.size();});
-        runOnMainSync(()->{try{query.set(a,"");inbox.invoke(a);}catch(Exception x){throw new RuntimeException(x);}});waitForIdleSync();
+        // Inbox search's notes section (the unpaired test inbox has no list, so it's drawn into one here).
+        java.lang.reflect.Method noteHits=PairedActivity.class.getDeclaredMethod("renderNoteHits");noteHits.setAccessible(true);
+        java.lang.reflect.Field items=PairedActivity.class.getDeclaredField("items");items.setAccessible(true);int[] hits={0};
+        runOnMainSync(()->{try{inbox.invoke(a);android.widget.LinearLayout list=new android.widget.LinearLayout(a);list.setOrientation(android.widget.LinearLayout.VERTICAL);
+            items.set(a,list);query.set(a,"scarf");noteHits.invoke(a);java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();list.findViewsWithText(found,"Gift idea: blue scarf",android.view.View.FIND_VIEWS_WITH_TEXT);hits[0]=found.size();
+            items.set(a,null);query.set(a,"");inbox.invoke(a);}catch(Exception x){throw new RuntimeException(x);}});waitForIdleSync();
         notes.set(key,"",0);
         check(hits[0]>0,"Searching the inbox for a word in your notes didn't find them");}
     /** The newest raw contact the shell just added: the highest "_id=12" it lists (arguments can't hold spaces, so no "DESC"). */
