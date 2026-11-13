@@ -60,7 +60,9 @@ public final class PairedService extends Service {
     private volatile Client client;
     private volatile boolean ready;
     private volatile String status="Disconnected",emoji="";
-    private PairedStore store; private SessionVault vault; private Outbox outbox; private boolean flushing,syncing,inactive;
+    private PairedStore store; private SessionVault vault; private Outbox outbox; private AutoResend autoResend; private boolean flushing,syncing,inactive;
+    /** When mobile data last started working again (0 if not seen): a text the phone couldn't send then goes again. */
+    private volatile long cellBackAt;
     private ReadReceiptQueue receipts;private boolean readingReceipt;
     private MediaOutbox attachmentOutbox;private boolean flushingMedia;
     private final java.util.Set<String> mediaRefreshes=new java.util.HashSet<>();
@@ -86,7 +88,7 @@ public final class PairedService extends Service {
     static long quietFor(){PairedService s=current;if(s==null||s.ready||!ReconnectPlan.recovering(s.status))return 0;return ReconnectPlan.quietLeft(s.problemSince,System.currentTimeMillis());}
     static String backgroundSummary(){long hours=Math.max(1,(System.currentTimeMillis()-startedAt)/3_600_000);
         return "Background: "+syncs.get()+" catch-up checks and "+chatWrites.get()+" chat saves in about "+hours+" h; checking every "+(visibleScreens>0?"minute (app open)":"5 min (screen on) / 15 min (screen off)");}
-    private android.content.BroadcastReceiver screenReceiver;private android.net.ConnectivityManager.NetworkCallback networkCallback;
+    private android.content.BroadcastReceiver screenReceiver;private android.net.ConnectivityManager.NetworkCallback networkCallback,cellCallback;
     static final String KEY_REPLY="reply";
     /** Shortcut category matched by res/xml/shortcuts.xml, so recent chats appear in Android's share sheet. */
     static final String SHARE_CATEGORY="io.github.bags156.messagecenter.SHARE_TARGET";
@@ -130,7 +132,7 @@ public final class PairedService extends Service {
         context.stopService(new Intent(context,PairedService.class));
     }
     @Override public void onCreate() {
-        super.onCreate();current=this;Diagnostics.init(this);HevcSandbox.init(this);GivenNames.init(this);Nicknames.load(this);store=new PairedStore(this);vault=new SessionVault(this);outbox=new Outbox(this);receipts=new ReadReceiptQueue(this);attachmentOutbox=new MediaOutbox(this);attachmentOutbox.recover();outbox.recover();watchWakeAndNetwork();main.postDelayed(stuckCheck,30_000);Arrivals.registerAll(this);
+        super.onCreate();current=this;Diagnostics.init(this);HevcSandbox.init(this);GivenNames.init(this);Nicknames.load(this);store=new PairedStore(this);vault=new SessionVault(this);outbox=new Outbox(this);autoResend=new AutoResend(this);receipts=new ReadReceiptQueue(this);attachmentOutbox=new MediaOutbox(this);attachmentOutbox.recover();outbox.recover();watchWakeAndNetwork();main.postDelayed(stuckCheck,30_000);Arrivals.registerAll(this);
         NotificationManager manager=getSystemService(NotificationManager.class);
         try{manager.deleteNotificationChannel(OLD_CONNECTION);}catch(Exception ignored){}
         NotificationChannel running=new NotificationChannel(RUNNING,"Running in background",NotificationManager.IMPORTANCE_MIN);
@@ -193,6 +195,20 @@ public final class PairedService extends Service {
      */
     private int autoTries;private String autoWhy="";private volatile long lastOpenAt;private long lastWatchdog;private int syncFailures;
     private final Runnable autoReconnect=this::autoReconnectNow;
+    /** A send that couldn't reach Google is due to go again. */
+    private final Runnable retryDue=()->{flushOutbox();flushMediaOutbox();scheduleRetries();};
+    private final Runnable autoResendCheck=()->runAutoResend("waited long enough");
+    /** Wakes up for the next send that's waiting to go again (texts and attachments). */
+    private void scheduleRetries(){long a=outbox.nextRetryAt(),b=attachmentOutbox.nextRetryAt(),at=a==0?b:b==0?a:Math.min(a,b);main.removeCallbacks(retryDue);
+        if(at>0)main.postDelayed(retryDue,Math.max(500,at-System.currentTimeMillis()+200));}
+    /** The connection looks better (or is back): sends waiting to go again go now, and texts the phone couldn't send may go again. */
+    private void retryWaiting(String why){if(!ready)return;boolean texts=outbox.retryNow(),files=attachmentOutbox.retryNow();
+        if(texts)changed("OUTBOX");if(files)changed("MEDIA_OUTBOX");if(texts||files)Diagnostics.note("Sending what was waiting ("+why+")");
+        flushOutbox();flushMediaOutbox();scheduleRetries();runAutoResend(why);}
+    /** Texts sent from here that the phone couldn't send, whose time to go again has come (see AutoResend): each goes once. */
+    private void runAutoResend(String why){if(!ready)return;long now=System.currentTimeMillis();
+        for(JSONObject d:autoResend.due(now,cellBackAt)){Diagnostics.note("Sending a text the phone couldn't send again ("+why+")");outbox.addReplacing(d.optString("chat"),d.optString("text"),d.optString("id"));changed("OUTBOX");}
+        flushOutbox();long next=autoResend.nextFallbackAt();main.removeCallbacks(autoResendCheck);if(next>0)main.postDelayed(autoResendCheck,Math.max(1000,next-now+500));}
     private void scheduleAutoReconnect(String why){scheduleAutoReconnect(why,0);}
     /** first: the earliest step of ReconnectPlan to start from. */
     private void scheduleAutoReconnect(String why,int first){
@@ -245,7 +261,12 @@ public final class PairedService extends Service {
                     JSONObject envelope=new JSONObject(payload),message=envelope.getJSONObject("message");
                     boolean existed=store.message(message,0,true);touch(message);fullArrived(message);prefetchPhotos(message);
                     if(attachmentOutbox.reconcile(message)){keepSentCopy(this,attachmentOutbox,message);attachmentOutbox.retireCompleted();changed("MEDIA_OUTBOX");main.post(this::flushMediaOutbox);}
+                    long arrivedAt=System.currentTimeMillis();
+                    if(PairedProtocol.outgoing(message)&&outbox.copyOfSent(message))autoResend.sentHere(message.optString("messageID"),arrivedAt);
                     if(outbox.arrived(message))changed("OUTBOX");
+                    // Sent from here but the phone couldn't send it (no cell signal, usually): it goes again once, when the signal's back.
+                    if(PairedProtocol.outgoing(message)&&PairedProtocol.failed(message)&&autoResend.failed(message,arrivedAt)){Diagnostics.note("The phone couldn't send a text; it'll go again when the signal's back");
+                        main.post(()->{main.removeCallbacks(autoResendCheck);main.postDelayed(autoResendCheck,AutoResend.FALLBACK_MS+1000);});}
                     if(!PairedProtocol.outgoing(message) && typing.remove(message.optString("conversationID"))!=null)changed("TYPING");
                     // Answered on the phone: this chat's notification here is no longer needed.
                     if(PairedProtocol.outgoing(message)&&!envelope.optBoolean("old",true))dismiss(message.optString("conversationID"));
@@ -267,7 +288,7 @@ public final class PairedService extends Service {
                 case "TROUBLE" -> {ready=false;update("Weak connection • reconnecting on its own");main.post(()->scheduleAutoReconnect("weak connection"));}
                 // Google Messages on the phone isn't answering: the connection keeps asking by itself, so a fresh one waits a little longer.
                 case "RECONNECTING" -> {ready=false;update("Waiting for Google Messages on your phone • reconnecting on its own");main.post(()->scheduleAutoReconnect("waiting for Google Messages",2));}
-                case "RECOVERED" -> {ready=true;stopAutoReconnect();update("Connected to Google Messages");scheduleCodeSweep();main.post(this::flushOutbox);main.post(this::flushReadReceipts);main.post(this::flushMediaOutbox);main.post(()->requestSync(false));}
+                case "RECOVERED" -> {ready=true;stopAutoReconnect();update("Connected to Google Messages");scheduleCodeSweep();main.post(()->retryWaiting("connection back"));main.post(this::flushReadReceipts);main.post(this::flushMediaOutbox);main.post(()->requestSync(false));}
                 case "STALE" -> main.post(()->requestSync(true));
                 case "INACTIVE" -> {inactive=true;stopAutoReconnect();update("Google Messages for web is open somewhere else. Open Message Center to switch back.");}
                 default -> { }
@@ -384,13 +405,20 @@ public final class PairedService extends Service {
         networkCallback=new android.net.ConnectivityManager.NetworkCallback(){
             // Give the connection a few seconds to come back on the new network before checking.
             // Down: reconnect as soon as the network's settled (2 s), rather than waiting out the next try.
-            @Override public void onAvailable(android.net.Network n){main.postDelayed(()->{if(ready)requestSync(true);else reconnectSoon("network back");},ready?4000:2000);}
+            @Override public void onAvailable(android.net.Network n){main.postDelayed(()->{if(ready){requestSync(true);retryWaiting("network changed");}else reconnectSoon("network back");},ready?4000:2000);}
             // A network that starts working (weak signal getting through again, Wi-Fi signed in past its welcome page):
             // while not connected, try again right then rather than waiting out the next scheduled try.
             private android.net.Network lastNetwork;private boolean lastWorking;
             @Override public void onCapabilitiesChanged(android.net.Network n,android.net.NetworkCapabilities caps){
                 boolean working=caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED);boolean better=working&&(!n.equals(lastNetwork)||!lastWorking);
-                lastNetwork=n;lastWorking=working;if(better)main.postDelayed(()->{if(!ready)reconnectSoon("network working again");},1500);}};
+                lastNetwork=n;lastWorking=working;if(better)main.postDelayed(()->{if(!ready)reconnectSoon("network working again");else retryWaiting("network working again");},1500);}};
+        // Mobile data starting to work again is the best sign this phone has cell signal back (texts need it).
+        cellCallback=new android.net.ConnectivityManager.NetworkCallback(){private boolean seen,working;
+            @Override public void onCapabilitiesChanged(android.net.Network n,android.net.NetworkCapabilities caps){boolean now=caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+                if(seen&&now&&!working){cellBackAt=System.currentTimeMillis();main.postDelayed(()->runAutoResend("cell signal back"),3000);}seen=true;working=now;}
+            @Override public void onLost(android.net.Network n){working=false;seen=true;}};
+        try{getSystemService(android.net.ConnectivityManager.class).registerNetworkCallback(new android.net.NetworkRequest.Builder().addTransportType(android.net.NetworkCapabilities.TRANSPORT_CELLULAR)
+            .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET).build(),cellCallback);}catch(Exception e){cellCallback=null;}
         try{getSystemService(android.net.ConnectivityManager.class).registerDefaultNetworkCallback(networkCallback);}catch(Exception e){networkCallback=null;}
     }
     static void loadChats(String cursor,int folder,Result done) {
@@ -833,7 +861,8 @@ public final class PairedService extends Service {
         JSONObject c=s.store.chat(chat);
         execute(cl->cl.sendText(c.toString(),text,""),(v,e)->{
             if(e.isEmpty())s.showReply(chat,text,null);
-            else {Outbox box=new Outbox(context);JSONObject o=box.add(chat,text,"");box.setState(o.optString("id"),e.startsWith("Send outcome unknown")?Outbox.UNSURE:Outbox.FAILED,e);s.changed("OUTBOX");s.showReply(chat,text,"not sent, open the chat to retry");}
+            else if(e.startsWith("Not sent:")){Outbox box=new Outbox(context);JSONObject o=box.add(chat,text,"");box.retryLater(o.optString("id"),e);s.changed("OUTBOX");s.scheduleRetries();s.showReply(chat,text,"will send when the signal's back");}
+            else {Outbox box=new Outbox(context);JSONObject o=box.add(chat,text,"");box.setState(o.optString("id"),e.startsWith("Send outcome unknown")?Outbox.UNSURE:Outbox.FAILED,e);s.changed("OUTBOX");s.showReply(chat,text,e.startsWith("Send outcome unknown")?"sent to Google, waiting to confirm delivery":"not sent, open the chat to retry");}
             done.run();});
     }
     /** Adds your reply to the chat's notification (Android expects the notification to update after a reply). */
@@ -885,7 +914,7 @@ public final class PairedService extends Service {
                 }else prepared=PhotoPrep.prepare(original,job.optString("name"),job.optString("mime"),mms,job.optString("quality"));
                     if(!prepared.error.isEmpty())throw new java.io.IOException(prepared.error);attachmentOutbox.prepared(id,attempt,prepared);}
                 if(prepared.file.length()>PhotoQuality.bytes(PhotoQuality.FULL,mms))throw new java.io.IOException(mms?"This attachment is too large for MMS. Choose a smaller file or use an RCS chat.":"This attachment is over 100 MB.");
-                if(current!=this||generation.get()!=token||!ready)throw new java.io.IOException("The connection changed before submission. Retry when connected.");
+                if(current!=this||generation.get()!=token||!ready)throw new java.io.IOException("Not sent: the connection changed before it went. It goes automatically when the connection's back.");
                 // Persist this BEFORE entering JNI. A process death anywhere in upload/submission is reviewed, never blindly resent.
                 attachmentOutbox.bridgeStarting(id,attempt);attachmentOutbox.progress(id,attempt,MediaOutbox.UPLOADING,-1,"");changed("MEDIA_OUTBOX");
                 // The attachment goes alone; its text follows once your phone has sent it (MediaOutbox.captionReady).
@@ -899,7 +928,7 @@ public final class PairedService extends Service {
             for(JSONObject m:store.messages(chat,100))if(attachmentOutbox.reconcile(m))keepSentCopy(this,attachmentOutbox,m);
             attachmentOutbox.retireCompleted();
         }catch(Exception e){attachmentOutbox.failed(id,attempt,e.getMessage()==null?(captionOnly?"The text couldn't be sent.":"This attachment couldn't be sent."):e.getMessage(),captionOnly);}
-        finally{main.post(()->{flushingMedia=false;if(current==this){changed("MEDIA_OUTBOX");changed("MESSAGE");
+        finally{main.post(()->{flushingMedia=false;if(current==this){changed("MEDIA_OUTBOX");changed("MESSAGE");scheduleRetries();
             // History checks use the normal network lane, never hold the next attachment behind them.
             if(mediaRefreshes.add(chat))main.postDelayed(()->{mediaRefreshes.remove(chat);if(current==this&&ready)loadMessages(chat,"",(v,e)->{});},1000);
             flushMediaOutbox();}});}});
@@ -914,8 +943,15 @@ public final class PairedService extends Service {
         executeText(c->c.sendText(chat.toString(),o.optString("text"),o.optString("reply")),(v,e)->{flushing=false;
             // Accepted: it stays drawn until Google's copy is in the chat, so the message never vanishes for a moment.
             // Marked first, then checked, so a copy that arrives at any point in between still clears it.
-            if(e.isEmpty()){if(v==null||v.isEmpty())outbox.remove(id);else{outbox.sent(id,v);if(store.hasSent(chatId,v))outbox.remove(id);}}
+            if(e.isEmpty()){if(v==null||v.isEmpty())outbox.remove(id);else{outbox.sent(id,v);JSONObject copy=store.sentCopy(chatId,v);
+                    // Its copy beat the reply here: watch it now (the copy's arrival couldn't tell it was sent from here).
+                    if(copy!=null){outbox.remove(id);autoResend.sentHere(copy.optString("messageID"),System.currentTimeMillis());if(PairedProtocol.failed(copy)&&autoResend.failed(copy,System.currentTimeMillis()))main.postDelayed(autoResendCheck,AutoResend.FALLBACK_MS+1000);}}
+                // Sent again in place of one the phone couldn't send: the failed copy goes.
+                String replaced=o.optString("replaces");
+                if(!replaced.isEmpty())execute(c->{c.deleteMessage(replaced);return "";},(x,err)->{if(err.isEmpty()){store.deleteMessage(replaced);changed("MESSAGE");}});}
             else if(e.equals("Connect to Google Messages first.")){outbox.setState(id,Outbox.WAITING,"");changed("OUTBOX");return;}
+            // It never reached Google (weak or no connection): it goes again by itself, sooner if the connection improves.
+            else if(e.startsWith("Not sent:")){outbox.retryLater(id,e);scheduleRetries();}
             else outbox.setState(id,e.startsWith("Send outcome unknown")?Outbox.UNSURE:Outbox.FAILED,e);
             changed("OUTBOX");flushOutbox();});
     }
@@ -956,6 +992,7 @@ public final class PairedService extends Service {
         generation.incrementAndGet();ready=false;main.removeCallbacks(autoReconnect);main.removeCallbacks(syncTick);main.removeCallbacks(problemCheck);main.removeCallbacks(codeSweep);main.removeCallbacks(receiptRetry);main.removeCallbacks(stuckCheck);if(current==this)current=null;
         try{if(screenReceiver!=null)unregisterReceiver(screenReceiver);}catch(Exception ignored){}
         try{if(networkCallback!=null)getSystemService(android.net.ConnectivityManager.class).unregisterNetworkCallback(networkCallback);}catch(Exception ignored){}
+        try{if(cellCallback!=null)getSystemService(android.net.ConnectivityManager.class).unregisterNetworkCallback(cellCallback);}catch(Exception ignored){}
         Client old=client;client=null;network.shutdownNow();texts.shutdownNow();events.shutdownNow();media.shutdownNow();sending.shutdownNow();phoneRequests.shutdownNow();readRequests.shutdownNow();
         if(old!=null)new Thread(old::close,"paired-disconnect").start();
         // SQLiteOpenHelper stays alive until in-flight JNI calls return; the process

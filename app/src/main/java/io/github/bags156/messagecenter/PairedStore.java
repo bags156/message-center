@@ -103,6 +103,9 @@ final class PairedStore extends SQLiteOpenHelper {
     /** Whether Google's copy of a message sent under this temporary ID is saved in the chat yet. */
     synchronized boolean hasSent(String chat,String tmpID){if(tmpID==null||tmpID.isEmpty())return false;
         try(Cursor c=getReadableDatabase().rawQuery("SELECT 1 FROM items WHERE chat=? AND (id=? OR instr(data,?)>0) LIMIT 1",new String[]{chat,tmpID,"\"tmpID\":\""+tmpID+"\""})){return c.moveToFirst();}}
+    /** Google's copy of a text sent under this temporary ID, or null when it hasn't arrived. */
+    synchronized JSONObject sentCopy(String chat,String tmpID){if(tmpID==null||tmpID.isEmpty())return null;
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM items WHERE chat=? AND (id=? OR instr(data,?)>0) LIMIT 1",new String[]{chat,tmpID,"\"tmpID\":\""+tmpID+"\""})){return c.moveToFirst()?json(c.getString(0)):null;}}
     /** Messages in a chat that may hold a web link (the caller finds the links), newest first. */
     synchronized List<JSONObject> linkMessages(String chat,int max) {
         List<JSONObject> out=new ArrayList<>();

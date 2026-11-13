@@ -1,8 +1,17 @@
 package bridge
 
 import (
+	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"syscall"
+
+	"go.mau.fi/mautrix-gmessages/pkg/libgm"
+	"go.mau.fi/mautrix-gmessages/pkg/libgm/events"
 	"go.mau.fi/mautrix-gmessages/pkg/libgm/gmproto"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
@@ -290,5 +299,29 @@ func TestRenameRequestMatchesUpstreamEncoding(t *testing.T) {
 	}
 	if _, err := renameRequest("conv-1", "   "); err == nil {
 		t.Fatal("an empty name was accepted")
+	}
+}
+
+func TestNeverLeft(t *testing.T) {
+	dial := &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
+	read := &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}
+	cases := []struct {
+		err  error
+		want bool
+	}{
+		{nil, false},
+		{fmt.Errorf("post: %w", dial), true},
+		{fmt.Errorf("post: %w", &net.DNSError{Err: "no such host", Name: "instantmessaging-pa.googleapis.com"}), true},
+		{fmt.Errorf("post: %w", syscall.ENETUNREACH), true},
+		{fmt.Errorf("post: %w", x509.UnknownAuthorityError{}), true},
+		{events.RequestError{HTTP: &events.HTTPError{Resp: &http.Response{StatusCode: 503}}}, true},
+		{fmt.Errorf("post: %w", read), false},
+		{context.DeadlineExceeded, false},
+		{libgm.ErrPhoneNotResponding, false},
+	}
+	for i, c := range cases {
+		if got := neverLeft(c.err); got != c.want {
+			t.Errorf("case %d (%v): neverLeft = %v, want %v", i, c.err, got, c.want)
+		}
 	}
 }

@@ -4,13 +4,17 @@ package bridge
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -332,7 +336,8 @@ func (c *Client) SendMediaTracked(chatJSON, path, fileName, mime, caption, reply
 	c.mediaProgress(job, "uploading", "")
 	media, e := c.gm.UploadMedia(ctx, data, fileName, mime)
 	if e != nil {
-		return "", errors.New("The attachment could not be uploaded. Check your connection and try again.")
+		// Uploading only stores the file with Google; nothing has been sent to anyone yet.
+		return "", errors.New("Not sent: the attachment couldn't be uploaded. It goes automatically when the connection's back.")
 	}
 	result, e := sendMediaParts(media, caption, replyID, func(reply string, infos []*gmproto.MessageInfo) (string, error) {
 		image := len(infos) > 0 && infos[0].GetMediaContent() != nil
@@ -377,6 +382,40 @@ type mediaSubmission struct {
 
 var errSendOutcomeUnknown = errors.New("Send outcome unknown. Check the conversation in Google Messages before retrying.")
 
+// errSendNotSent: the request never reached Google, so sending it again can't make a duplicate.
+// The app sends it again by itself once the connection's back.
+var errSendNotSent = errors.New("Not sent: couldn't reach Google. It goes automatically when the connection's back.")
+
+// neverLeft reports whether a failed request surely didn't reach Google: the connection couldn't be
+// made (no network, DNS, refused, unreachable, a Wi-Fi sign-in page's certificate) or Google turned
+// the request away with an error status. A timeout after the request went out is not one of these:
+// Google may have it and pass it on later.
+func neverLeft(err error) bool {
+	if err == nil {
+		return false
+	}
+	var dnsErr *net.DNSError
+	var opErr *net.OpError
+	var httpErr events.HTTPError
+	var unknownCA x509.UnknownAuthorityError
+	var hostErr x509.HostnameError
+	var certErr *tls.CertificateVerificationError
+	switch {
+	case errors.As(err, &dnsErr), errors.As(err, &httpErr), errors.As(err, &unknownCA), errors.As(err, &hostErr), errors.As(err, &certErr):
+		return true
+	case errors.As(err, &opErr) && opErr.Op == "dial":
+		return true
+	case errors.Is(err, libgm.ErrClientIsNil):
+		return true
+	}
+	for _, e := range []error{syscall.ECONNREFUSED, syscall.ENETUNREACH, syscall.EHOSTUNREACH, syscall.ENETDOWN} {
+		if errors.Is(err, e) {
+			return true
+		}
+	}
+	return false
+}
+
 func sendMediaParts(media *gmproto.MediaContent, caption, replyID string, send func(string, []*gmproto.MessageInfo) (string, error)) (mediaSubmission, error) {
 	result := mediaSubmission{}
 	var err error
@@ -420,6 +459,9 @@ func (c *Client) sendTracked(chatJSON, replyID string, infos []*gmproto.MessageI
 	}
 	resp, e := c.gm.SendMessage(ctx, req)
 	if e != nil {
+		if neverLeft(e) {
+			return "", errSendNotSent
+		}
 		return "", errSendOutcomeUnknown
 	}
 	if resp.GetStatus() != gmproto.SendMessageResponse_SUCCESS {

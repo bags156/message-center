@@ -1411,7 +1411,8 @@ public class PairedActivity extends Activity {
         .setNegativeButton("OK",null).show();}
     private View statusRow(JSONObject m,ChatTheme theme){
         LinearLayout r=row();r.setGravity(Gravity.END|Gravity.CENTER_VERTICAL);r.setPadding(0,dp(4),dp(6),0);String s=PairedProtocol.status(m);
-        if(PairedProtocol.failed(m)){TextView t=text(s.equals("OUTGOING_FAILED_TOO_LARGE")?"Not sent: too large • Tap to send smaller":"Not sent • Tap to retry",12,danger,true);t.setOnClickListener(v->retryFailed(m));r.addView(t);return r;}
+        if(PairedProtocol.failed(m)){boolean again=new AutoResend(this).pending(m.optString("messageID"));
+            TextView t=text(s.equals("OUTGOING_FAILED_TOO_LARGE")?"Not sent: too large • Tap to send smaller":again?"Couldn't send • will retry when you have signal":"Not sent • Tap to retry",12,danger,!again);t.setOnClickListener(v->retryFailed(m));r.addView(t);return r;}
         switch(s){
             case "OUTGOING_DISPLAYED","OUTGOING_DELIVERED"->{ImageView ticks=new ImageView(this);ticks.setImageResource(R.drawable.ic_ticks);
                 boolean read=s.equals("OUTGOING_DISPLAYED");ticks.setImageTintList(ColorStateList.valueOf(read?theme.onAccent(dark):muted));if(read)ticks.setBackground(oval(theme.accent(dark)));
@@ -2624,11 +2625,12 @@ public class PairedActivity extends Activity {
             body.setOnClickListener(v->savedAttachmentOptions(p,true));state.setOnClickListener(v->savedAttachmentOptions(p,true));}
     }
     private void savedAttachmentOptions(PendingMedia p,boolean text){MediaOutbox box=new MediaOutbox(this);JSONObject j=box.get(p.queueId);if(j==null)return;
-        String state=j.optString(text?"captionState":"state"),problem=j.optString(text?"captionError":"error"),label=text?MediaOutbox.captionLabel(j):MediaOutbox.label(j,PairedService.ready());
+        String state=j.optString(text?"captionState":"state"),problem=j.optString(text?"captionError":"error"),label=text?MediaOutbox.captionLabel(j):MediaOutbox.label(j,PairedService.ready(),PairedService.status(this));
         // Text waiting on its attachment can be sent right away instead.
         boolean waitingText=text&&MediaOutbox.captionWaiting(j);
         boolean canRetry=state.equals(MediaOutbox.FAILED)||state.equals(MediaOutbox.UNSURE)||waitingText,canRemove=state.equals(MediaOutbox.FAILED)||state.equals(MediaOutbox.UNSURE)||state.equals(MediaOutbox.WAITING)||state.equals(MediaOutbox.ACCEPTED)||state.equals(MediaOutbox.SENT)||state.equals(MediaOutbox.DELIVERED);
-        String explanation=problem.isEmpty()?label:problem;if(state.equals(MediaOutbox.UNSURE))explanation+="\n\nIt may already have been sent. Check Google Messages before choosing to send again.";
+        String explanation=problem.isEmpty()?label:problem;if(state.equals(MediaOutbox.UNSURE))explanation="Google has this but hasn't confirmed it was delivered. That usually happens by itself once the signal's back. Send it again only if you're sure it didn't go, or they may get it twice.";
+        else if(state.equals(MediaOutbox.WAITING)&&j.optInt("tries")>0)explanation="It couldn't reach Google (weak or no signal), so it hasn't gone anywhere. It sends by itself when the connection's back.";
         if(waitingText)explanation="This text goes once your phone has sent the attachment above it, so it arrives after it."+(j.optString("state").equals(MediaOutbox.FAILED)||j.optString("state").equals(MediaOutbox.UNSURE)?" The attachment hasn't gone, so the text is waiting for you.":"");
         AlertDialog.Builder dialog=new AlertDialog.Builder(this).setTitle(text?"Text with attachment":"Saved attachment").setMessage(explanation).setNegativeButton("Close",null);
         if(canRetry)dialog.setPositiveButton(waitingText?"Send text now":text?"Retry text only":"Retry attachment only",(d,w)->{JSONObject current=box.get(p.queueId);if(current==null)return;
@@ -3401,12 +3403,15 @@ public class PairedActivity extends Activity {
             LinearLayout line=row();line.setGravity(Gravity.END);TextView b=text(o.optString("text"),17,theme.onBubble(dark),false);b.setPadding(dp(16),dp(11),dp(16),dp(11));
             b.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));b.setBackground(shape(theme.bubble(dark),22));b.setAlpha(0.7f);line.addView(b);items.addView(line);
             String oid=o.optString("id");motion(line,"o:"+oid,LIFT,motionOutbox.add(oid)&&motionReady);
-            String label=switch(state){case Outbox.HOLD->"Sending… • Tap to undo";case Outbox.SENDING,Outbox.SENT->"Sending…";case Outbox.UNSURE->"Not sure this sent • Tap for options";case Outbox.FAILED->"Not sent • Tap to retry";default->"Waiting for connection • will send automatically";};
-            TextView s=text(label,12,state.equals(Outbox.FAILED)||state.equals(Outbox.UNSURE)?danger:muted,state.equals(Outbox.FAILED));s.setGravity(Gravity.END);s.setPadding(0,dp(4),dp(6),0);items.addView(s,new LinearLayout.LayoutParams(-1,-2));
-            View.OnClickListener act=v->outboxOptions(o);b.setOnClickListener(act);s.setOnClickListener(act);}}
+            // What it's waiting for, in plain words: the signal (it couldn't reach Google), the reconnect, or Google confirming delivery.
+            String label=Outbox.label(o,PairedService.ready(),PairedService.status(this),System.currentTimeMillis());boolean act=state.equals(Outbox.FAILED)||label.startsWith("Not confirmed");
+            TextView s=text(label,12,act?danger:muted,state.equals(Outbox.FAILED));s.setGravity(Gravity.END);s.setPadding(0,dp(4),dp(6),0);items.addView(s,new LinearLayout.LayoutParams(-1,-2));
+            View.OnClickListener open=v->outboxOptions(o);b.setOnClickListener(open);s.setOnClickListener(open);}}
     private void outboxOptions(JSONObject o){String id=o.optString("id"),state=o.optString("state");if(state.equals(Outbox.SENDING)||state.equals(Outbox.SENT))return;
         if(state.equals(Outbox.HOLD)){undoSend(id);return;}
-        String msg=state.equals(Outbox.UNSURE)?"Google didn't confirm this message. It may already have been sent; check the chat in Google Messages before sending again.":o.optString("error");
+        String msg=state.equals(Outbox.UNSURE)?"Google has this message but hasn't confirmed it was delivered. That usually happens by itself once the signal's back. Send it again only if you're sure it didn't go, or they may get it twice."
+            :state.equals(Outbox.WAITING)&&o.optInt("tries")>0?"It couldn't reach Google (weak or no signal), so it hasn't gone anywhere. It sends by itself when the connection's back."
+            :state.equals(Outbox.WAITING)?"It sends by itself as soon as Message Center is connected.":o.optString("error");
         new AlertDialog.Builder(this).setMessage(msg.isEmpty()?"This message hasn't been sent yet.":msg).setPositiveButton(state.equals(Outbox.WAITING)?"Send now":"Send again",(d,w)->PairedService.retryOutbox(this,id))
             .setNegativeButton("Delete",(d,w)->{outbox.remove(id);renderMessages(false);}).setNeutralButton("Cancel",null).show();}
     /** A message Google reports as failed: send its text again, then remove the failed copy. */
@@ -3420,7 +3425,10 @@ public class PairedActivity extends Activity {
     private void retryFailed(JSONObject m){PendingMedia attached=echoFor(m.optString("messageID"));if(attached!=null){pendingOptions(attached);return;}
         String text=PairedProtocol.text(m);List<JSONObject> media=PairedProtocol.media(m);
         if(!media.isEmpty()){retryFailedMedia(m,media,text);return;}
-        new AlertDialog.Builder(this).setMessage("Send this message again?").setPositiveButton("Send again",(d,w)->{
+        boolean waiting=new AutoResend(this).pending(m.optString("messageID"));
+        new AlertDialog.Builder(this).setMessage(waiting?"Your phone couldn't send this (usually no cell signal). It goes again by itself once when the signal's back, or you can send it now.":"Send this message again?").setPositiveButton("Send again",(d,w)->{
+            // Handled by you now: it won't also go again by itself.
+            new AutoResend(this).cancel(m.optString("messageID"));
             PairedService.sendOrQueue(this,chatId,text,"",(v,e)->{if(!e.isEmpty()){error(e);return;}
                 String mid=m.optString("messageID");if(!mid.isEmpty()&&!"queued".equals(v))PairedService.execute(c->{c.deleteMessage(mid);return "";},(x,err)->{if(err.isEmpty())store.deleteMessage(mid);loadMessages(false);});
                 else loadMessages(false);});}).setNegativeButton("Cancel",null).show();}

@@ -63,7 +63,12 @@ final class MediaOutbox {
     boolean change(String id,long attempt,Consumer<JSONObject> action){synchronized(LOCK){List<JSONObject> items=read();for(JSONObject j:items)if(id.equals(j.optString("id"))){
         if(attempt>=0&&attempt!=j.optLong("attempt"))return false;action.accept(j);save(items);return true;}return false;}}
     JSONObject next(){return next(System.currentTimeMillis());}
-    JSONObject next(long now){synchronized(LOCK){for(JSONObject j:read())if(WAITING.equals(j.optString("state"))||captionReady(j,now))return j;return null;}}
+    JSONObject next(long now){synchronized(LOCK){for(JSONObject j:read())if((WAITING.equals(j.optString("state"))&&j.optLong("retryAt")<=now)||captionReady(j,now))return j;return null;}}
+    /** The connection looks better: what's waiting to go again goes now. True if anything was waiting. */
+    boolean retryNow(){synchronized(LOCK){List<JSONObject> items=read();boolean any=false;
+        for(JSONObject j:items){if(j.has("retryAt")){j.remove("retryAt");any=true;}if(j.has("captionRetryAt")){j.remove("captionRetryAt");any=true;}}if(any)save(items);return any;}}
+    /** When the next try that's waiting comes up, or 0 if none is waiting that way. */
+    long nextRetryAt(){long at=0;for(JSONObject j:all())for(String k:new String[]{"retryAt","captionRetryAt"}){long t=j.optLong(k);if(t>0&&(at==0||t<at))at=t;}return at;}
     /** The job's text (not its attachment) is what should go next. */
     static boolean captionNext(JSONObject j,long now){return !WAITING.equals(j.optString("state"))&&captionReady(j,now);}
     /**
@@ -71,7 +76,7 @@ final class MediaOutbox {
      * stays "sending" a long time, the text goes anyway rather than being stranded; if the attachment
      * failed, the text waits for you (Send text now).
      */
-    static boolean captionReady(JSONObject j,long now){String caption=j.optString("captionState");if(WAITING.equals(caption))return true;
+    static boolean captionReady(JSONObject j,long now){String caption=j.optString("captionState");if(WAITING.equals(caption))return j.optLong("captionRetryAt")<=now;
         if(!"pending".equals(caption)||j.optString("caption").isEmpty()||j.optString("mediaTmpID").isEmpty()||!ACCEPTED.equals(j.optString("state")))return false;
         long accepted=j.optLong("acceptedAt");if(accepted<=0)return false;
         return now-accepted>=(j.optString("mediaEcho").isEmpty()?CAPTION_UNTRACKED_MS:CAPTION_STILL_SENDING_MS);}
@@ -98,8 +103,13 @@ final class MediaOutbox {
     void captionAccepted(String id,long attempt,String tmp){change(id,attempt,j->{put(j,"finished",true);put(j,"captionTmpID",tmp);put(j,"captionState",ACCEPTED);put(j,"captionError","");});}
     void failed(String id,long attempt,String error){JSONObject j=get(id);failed(id,attempt,error,j!=null&&!j.optString("mediaTmpID").isEmpty());}
     /** caption: it was the text that failed (the attachment's own state is left alone). */
-    void failed(String id,long attempt,String error,boolean caption){change(id,attempt,j->{put(j,"finished",true);String state=error.startsWith("Send outcome unknown")?UNSURE:FAILED;
-        if(!caption){put(j,"state",state);put(j,"error",error);}else{put(j,"captionState",state);put(j,"captionError",error);}});}
+    void failed(String id,long attempt,String error,boolean caption){change(id,attempt,j->{put(j,"finished",true);long now=System.currentTimeMillis();put(j,"stateAt",now);String why=error;
+        // It never reached Google (no or weak connection): nothing was sent, so it goes again by itself, further apart each time.
+        if(why.startsWith("Not sent:")){String key=caption?"captionTries":"tries";int tries=j.optInt(key)+1;put(j,key,tries);
+            if(tries<Outbox.MAX_TRIES){long at=now+Outbox.retryDelay(tries);if(!caption){put(j,"state",WAITING);put(j,"error",why);put(j,"retryAt",at);}else{put(j,"captionState",WAITING);put(j,"captionError",why);put(j,"captionRetryAt",at);}return;}
+            why="Not sent: it couldn't reach Google after several tries.";}
+        String state=why.startsWith("Send outcome unknown")?UNSURE:FAILED;
+        if(!caption){put(j,"state",state);put(j,"error",why);}else{put(j,"captionState",state);put(j,"captionError",why);}});}
     /**
      * After the app was stopped. Something that was being submitted may have been sent, so it waits
      * for you (never an automatic duplicate). An upload that hadn't reached submission can't have
@@ -143,12 +153,16 @@ final class MediaOutbox {
     private static void erase(File file){File[] children=file.listFiles();if(children!=null)for(File f:children)erase(f);file.delete();}
     void retireCompleted(){for(JSONObject j:all())if(j.optBoolean("mediaPresent")&&(SENT.equals(j.optString("state"))||DELIVERED.equals(j.optString("state")))
         &&(j.optString("caption").isEmpty()||!j.optString("captionEcho").isEmpty()&&!FAILED.equals(j.optString("captionState"))&&!UNSURE.equals(j.optString("captionState"))))remove(j.optString("id"));}
-    static String label(JSONObject j,boolean online){String s=j.optString("state");return switch(s){
+    static String label(JSONObject j,boolean online){return label(j,online,"");}
+    /** status: the connection line (PairedService.status), so a wait says what it's waiting for. */
+    static String label(JSONObject j,boolean online,String status){String s=j.optString("state");return switch(s){
         case PREPARING->j.optString("mime").startsWith("video/")?"Preparing video • "+Math.max(0,j.optInt("progress"))+"%":"Preparing photo…";
-        case UPLOADING->"Uploading attachment…";case SUBMITTING->"Submitting to Google Messages…";case ACCEPTED->"Waiting for your phone to send…";
-        case SENT->"Sent from your phone";case DELIVERED->"Delivered";case FAILED->"Not sent • Tap for options";case UNSURE->"Send unconfirmed • Tap to check";
-        default->online?"Queued to send":"Saved • waiting for connection";};}
-    static String captionLabel(JSONObject j){String media=j.optString("state");return switch(j.optString("captionState")){case SUBMITTING->"Sending text…";case FAILED->"Text not sent • Tap to retry";case UNSURE->"Text unconfirmed • Tap to check";case ACCEPTED->"Text submitted • waiting for your phone";case WAITING->"Text queued";
+        case UPLOADING->"Uploading attachment…";case SUBMITTING->"Submitting to Google…";case ACCEPTED->"Sent to Google • waiting to confirm delivery";
+        case SENT->"Sent";case DELIVERED->"Delivered";case FAILED->"Not sent • Tap for options";case UNSURE->unconfirmed(j,online);
+        default->j.optInt("tries")>0?"Waiting for signal • sends automatically":online?"Queued to send":Outbox.waitingFor(status);};}
+    /** Google has it but hasn't confirmed delivery; after a while connected, it's worth deciding about. */
+    static String unconfirmed(JSONObject j,boolean online){return online&&j.optLong("stateAt")>0&&System.currentTimeMillis()-j.optLong("stateAt")>Outbox.CONFIRM_WAIT_MS?"Not confirmed • Tap to send again":"Sent to Google • waiting to confirm delivery";}
+    static String captionLabel(JSONObject j){String media=j.optString("state");return switch(j.optString("captionState")){case SUBMITTING->"Sending text…";case FAILED->"Text not sent • Tap to retry";case UNSURE->"Text sent to Google • waiting to confirm delivery";case ACCEPTED->"Text sent to Google • waiting to confirm delivery";case WAITING->j.optInt("captionTries")>0?"Text waiting for signal • sends automatically":"Text queued";
         default->media.equals(FAILED)||media.equals(UNSURE)?"Text waits for the attachment • Tap to send it now":"Text will follow the attachment";};}
     /** Text that hasn't been tried yet (it's waiting on its attachment). */
     static boolean captionWaiting(JSONObject j){return "pending".equals(j.optString("captionState"))&&!j.optString("caption").isEmpty();}
