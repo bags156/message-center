@@ -300,6 +300,34 @@ public final class OnDeviceSmoke extends Instrumentation {
         Thread.sleep(700);android.graphics.Bitmap darkShot=getUiAutomation().takeScreenshot();
         if(darkShot!=null)try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(ctx.getCacheDir(),"chat-menu-dark.png"))){darkShot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
         onMainCall(()->{d[0].dismiss();return thread.invoke(a,"menu-check");});waitForIdleSync();}
+    /**
+     * The inbox's ⋮ menu is a sheet: tiles for Archived, Starred, Unknown and Spam, Mark all as
+     * read, Refresh and Settings; no Needs a reply (it's on the inbox already). The Starred tile
+     * opens the starred messages.
+     */
+    private void checkInboxMenu(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();
+        java.lang.reflect.Method inbox=method("inbox"),menu=method("inboxMenu",android.view.View.class),thread=method("thread",String.class);java.lang.reflect.Field screen=field("screen");
+        android.app.Dialog[] d={null};onMainCall(()->{inbox.invoke(a);d[0]=(android.app.Dialog)menu.invoke(a,(android.view.View)null);return null;});waitForIdleSync();
+        check(d[0]!=null&&d[0].isShowing(),"The inbox menu didn't open");
+        Thread.sleep(700);android.graphics.Bitmap shot=getUiAutomation().takeScreenshot();
+        if(shot!=null)try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(ctx.getCacheDir(),"inbox-menu.png"))){shot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
+        StringBuilder missing=new StringBuilder();
+        for(String label:new String[]{"Archived","Starred","Unknown","Spam","Mark all as read","Refresh from Google","Settings"}){int[] n={0};
+            runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();d[0].getWindow().getDecorView().findViewsWithText(found,label,android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);n[0]=found.size();});
+            if(n[0]==0)missing.append(label).append(", ");}
+        int[] reply={0};runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();d[0].getWindow().getDecorView().findViewsWithText(found,"Needs a reply",android.view.View.FIND_VIEWS_WITH_TEXT|android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);reply[0]=found.size();});
+        check(missing.length()==0&&reply[0]==0,"The inbox menu is missing: "+missing+" (Needs a reply shown "+reply[0]+")");
+        onMainCall(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();d[0].getWindow().getDecorView().findViewsWithText(found,"Starred",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);
+            for(android.view.View v:found)if(v.isClickable()){v.performClick();break;}return null;});waitForIdleSync();
+        String[] now={""};onMainCall(()->{now[0]=(String)screen.get(a);return null;});
+        check("starred".equals(now[0])&&!d[0].isShowing(),"The Starred tile didn't open starred messages ("+now[0]+")");
+        // The same sheet in the black theme, pictured for the CI log.
+        onMainCall(()->{inbox.invoke(a);int[] colors=PairedActivity.palette(true,true);String[] names={"bg","card","surface","ink","muted"};
+            for(int i=0;i<names.length;i++)field(names[i]).setInt(a,colors[i]);field("fab").setInt(a,0xff3b4766);field("onFab").setInt(a,0xffd8e2ff);field("danger").setInt(a,0xfff2b8b5);field("dark").setBoolean(a,true);
+            d[0]=(android.app.Dialog)menu.invoke(a,(android.view.View)null);return null;});
+        Thread.sleep(700);android.graphics.Bitmap darkShot=getUiAutomation().takeScreenshot();
+        if(darkShot!=null)try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(ctx.getCacheDir(),"inbox-menu-dark.png"))){darkShot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
+        onMainCall(()->{d[0].dismiss();return inbox.invoke(a);});waitForIdleSync();}
     /** The newest raw contact the shell just added: the highest "_id=12" it lists (arguments can't hold spaces, so no "DESC"). */
     private String newestRawContact()throws Exception{java.util.regex.Matcher m=java.util.regex.Pattern.compile("_id=(\\d+)").matcher(shell("content query --uri content://com.android.contacts/raw_contacts --projection _id"));
         long best=-1;while(m.find())best=Math.max(best,Long.parseLong(m.group(1)));return best<0?"":String.valueOf(best);}
@@ -1206,11 +1234,12 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkEmojiPicker((PairedActivity)activity);
         checkNotes((PairedActivity)activity);
         checkChatMenu((PairedActivity)activity);
+        checkInboxMenu((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();
         checkSentTextStays((PairedActivity)activity);
         checkBubbleStepsAside((PairedActivity)activity);
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, emoji picker tabs and search, notes, chat menu sheet, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, emoji picker tabs and search, notes, chat menu sheet, inbox menu sheet, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }

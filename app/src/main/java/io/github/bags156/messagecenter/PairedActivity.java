@@ -415,9 +415,36 @@ public class PairedActivity extends Activity {
             if(screen.equals("inbox"))renderInbox();else if(screen.equals("details"))details();}).setNegativeButton("Close",null).show();}
     private void toggleSearch(){if(searchRow==null)return;boolean show=searchRow.getVisibility()!=View.VISIBLE;searchRow.setVisibility(show?View.VISIBLE:View.GONE);
         EditText field=(EditText)searchRow.getChildAt(0);if(show){field.requestFocus();getSystemService(InputMethodManager.class).showSoftInput(field,0);}else{field.setText("");hideKeyboard(field);}}
-    private void inboxMenu(View anchor){PopupMenu menu=new PopupMenu(this,anchor);Menu m=menu.getMenu();
-        m.add(0,8,0,needsReplyOnly?"All conversations":"Needs a reply");m.add(0,1,0,folder==1?"Archived":"Inbox");if(folder==1)m.add(0,7,0,"Mark all as read");if(folder==1){m.add(0,4,1,"Blocked & spam");if(!unknownOnly)m.add(0,6,1,"Unknown senders");}m.add(0,5,2,"Starred messages");m.add(0,2,3,"Refresh");m.add(0,3,4,"Settings");
-        menu.setOnMenuItemClickListener(item->{switch(item.getItemId()){case 1->{folder=folder==1?2:1;unknownOnly=false;promoOnly=false;needsReplyOnly=false;inbox();}case 4->{folder=3;inbox();}case 5->starredScreen();case 6->{unknownOnly=true;inbox();}case 7->markAllRead();case 8->{needsReplyOnly=!needsReplyOnly;folder=1;unknownOnly=false;promoOnly=false;inbox();}case 2->refreshInbox(true);case 3->settings();default->{}}return true;});menu.show();}
+    /**
+     * The inbox's ⋮ menu, as a sheet like a chat's: how many conversations and unread up top, the
+     * other lists as tiles with their counts (the one you're in is highlighted; tap it to go back
+     * to all conversations), then Mark as read and Refresh, and Settings on its own.
+     */
+    private Dialog inboxMenu(View anchor){Dialog[] d=new Dialog[1];java.util.function.Function<Runnable,Runnable> closing=r->()->{if(d[0]!=null)d[0].dismiss();r.run();};
+        List<JSONObject> inboxChats=store.chats("",1);inboxChats.removeIf(c->pendingDeletes.contains(c.optString("conversationID")));
+        int unread=0,unknown=0;for(JSONObject c:inboxChats){if(chatSettings.unread(c))unread++;if(unknownSender(c))unknown++;}
+        int archived=store.chats("",2).size(),spam=store.chats("",3).size(),stars=starred.all().size();
+        LinearLayout content=vertical();
+        LinearLayout top=vertical();top.setPadding(dp(6),0,dp(6),dp(16));TextView title=text("Messages",22,ink,true);top.addView(title);
+        TextView line=text(inboxChats.size()+(inboxChats.size()==1?" conversation":" conversations")+" \u00b7 "+(unread==0?"all read":unread+" unread"),13,muted,false);line.setPadding(0,dp(2),0,0);top.addView(line);content.addView(top);
+        // The other lists, with how much is in each.
+        boolean archivedHere=folder==2,spamHere=folder==3,unknownHere=folder==1&&unknownOnly,starredHere=screen.equals("starred");
+        Runnable allChats=()->{folder=1;unknownOnly=false;promoOnly=false;needsReplyOnly=false;inbox();};
+        LinearLayout tiles=row();
+        menuTile(tiles,R.drawable.ic_archive,"Archived",archived,archivedHere,closing.apply(archivedHere?allChats:()->{folder=2;unknownOnly=false;promoOnly=false;needsReplyOnly=false;inbox();}));
+        menuTile(tiles,R.drawable.ic_star,"Starred",stars,starredHere,closing.apply(starredHere?allChats:this::starredScreen));
+        menuTile(tiles,R.drawable.ic_person,"Unknown",unknown,unknownHere,closing.apply(unknownHere?allChats:()->{folder=1;unknownOnly=true;promoOnly=false;needsReplyOnly=false;inbox();}));
+        menuTile(tiles,R.drawable.ic_block,"Spam",spam,spamHere,closing.apply(spamHere?allChats:()->{folder=3;unknownOnly=false;promoOnly=false;needsReplyOnly=false;inbox();}));
+        content.addView(tiles,new LinearLayout.LayoutParams(-1,-2));gap(content,14);
+        LinearLayout actions=menuGroup(content);
+        if(unread>0)menuRow(actions,R.drawable.ic_done_all,0xff3b82f6,"Mark all as read",unread+" unread",false,closing.apply(this::markAllRead));
+        else{LinearLayout done=menuLine(R.drawable.ic_done_all,0xff3b82f6,"Mark all as read",false);TextView v=text("All read",14,muted,false);done.addView(v);done.setAlpha(0.55f);done.setContentDescription("Mark all as read: all read");addSettingRow(actions,done);}
+        menuRow(actions,R.drawable.ic_refresh,0xff14b8a6,"Refresh from Google",null,false,closing.apply(()->{if(!screen.equals("inbox"))allChats.run();refreshInbox(true);}));
+        gap(content,12);
+        LinearLayout more=menuGroup(content);menuRow(more,R.drawable.ic_settings,0xff64748b,"Settings","",false,closing.apply(this::settings));
+        content.setPadding(dp(3),0,dp(3),dp(8));ScrollView sc=new ScrollView(this);sc.setVerticalScrollBarEnabled(false);sc.addView(content);
+        View focused=getCurrentFocus();if(focused!=null)hideKeyboard(focused);
+        d[0]=sheet(sc,WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING|WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);return d[0];}
     private void refreshInbox(boolean force){if(!PairedService.ready()||busy)return;long now=System.currentTimeMillis();if(!force&&now-lastInboxRefresh<30_000)return;lastInboxRefresh=now;loadChats(false);}
     private void loadOlderChats(){if(busy||!PairedService.ready())return;if(store.page("folder:"+folder,false).isEmpty())return;loadChats(true);}
     private void renderInbox(){if(items==null||!screen.equals("inbox"))return;
@@ -782,9 +809,15 @@ public class PairedActivity extends Activity {
     private int raised(){if(!dark)return surface;int r=Color.red(surface),g=Color.green(surface),b=Color.blue(surface);
         return Color.rgb(r+Math.round((Color.red(ink)-r)*0.07f),g+Math.round((Color.green(ink)-g)*0.07f),b+Math.round((Color.blue(ink)-b)*0.07f));}
     /** A tile at the top of the chat menu: a round icon over its name, on a raised card. */
-    private void menuTile(LinearLayout tiles,int icon,String label,Runnable action){LinearLayout t=vertical();t.setGravity(Gravity.CENTER_HORIZONTAL);t.setPadding(dp(4),dp(14),dp(4),dp(12));
-        t.setBackground(shape(raised(),20));t.setElevation(dp(2));pressDim(t);t.setContentDescription(label);t.setOnClickListener(v->action.run());
-        t.addView(roundIcon(icon,fab,onFab,44));TextView name=text(label,13,ink,true);name.setGravity(Gravity.CENTER);name.setSingleLine(true);name.setEllipsize(TextUtils.TruncateAt.END);name.setPadding(0,dp(8),0,0);t.addView(name);
+    private void menuTile(LinearLayout tiles,int icon,String label,Runnable action){menuTile(tiles,icon,label,0,false,action);}
+    /** A tile with a count on its icon (none for 0), filled in when it's where you are now. */
+    private void menuTile(LinearLayout tiles,int icon,String label,int count,boolean here,Runnable action){LinearLayout t=vertical();t.setGravity(Gravity.CENTER_HORIZONTAL);t.setPadding(dp(4),dp(14),dp(4),dp(12));
+        t.setBackground(shape(here?fab:raised(),20));t.setElevation(dp(2));pressDim(t);t.setOnClickListener(v->action.run());
+        t.setContentDescription(here?label+", showing now: tap for all conversations":count>0?label+", "+count:label);
+        FrameLayout face=new FrameLayout(this);ImageView round=roundIcon(icon,here?onFab:fab,here?fab:onFab,44);face.addView(round,new FrameLayout.LayoutParams(dp(44),dp(44),Gravity.CENTER));
+        if(count>0){TextView badge=text(count>99?"99+":String.valueOf(count),11,Color.WHITE,true);badge.setGravity(Gravity.CENTER);badge.setPadding(dp(5),0,dp(5),0);badge.setMinWidth(dp(20));badge.setBackground(shape(BLUE,10));
+            face.addView(badge,new FrameLayout.LayoutParams(-2,dp(20),Gravity.TOP|Gravity.END));}
+        t.addView(face,new LinearLayout.LayoutParams(dp(60),dp(46)));TextView name=text(label,13,here?onFab:ink,true);name.setGravity(Gravity.CENTER);name.setSingleLine(true);name.setEllipsize(TextUtils.TruncateAt.END);name.setPadding(0,dp(8),0,0);t.addView(name);
         LinearLayout.LayoutParams tl=new LinearLayout.LayoutParams(0,-2,1);if(tiles.getChildCount()>0)tl.setMarginStart(dp(8));tiles.addView(t,tl);}
     /** A raised, rounded card holding a few rows of the chat menu. */
     private LinearLayout menuGroup(LinearLayout content){LinearLayout g=vertical();g.setBackground(shape(raised(),20));g.setClipToOutline(true);g.setElevation(dp(2));
@@ -796,7 +829,7 @@ public class PairedActivity extends Activity {
         r.addView(name,new LinearLayout.LayoutParams(0,-2,1));r.setContentDescription(label);return r;}
     /** A row that does something (value shows its current setting; a › means it leads to more choices). */
     private void menuRow(LinearLayout group,int icon,int color,String label,String value,boolean red,Runnable action){LinearLayout r=menuLine(icon,color,label,red);pressable(r);
-        if(value!=null){TextView v=text(value+"  \u203a",14,muted,false);v.setSingleLine(true);r.addView(v);r.setContentDescription(label+": "+value);}
+        if(value!=null){TextView v=text((value.isEmpty()?"":value+"  ")+"\u203a",14,muted,false);v.setSingleLine(true);r.addView(v);if(!value.isEmpty())r.setContentDescription(label+": "+value);}
         r.setOnClickListener(x->action.run());addSettingRow(group,r);}
     private void menuSwitch(LinearLayout group,int icon,int color,String label,boolean on,java.util.function.Consumer<Boolean> change){LinearLayout r=menuLine(icon,color,label,false);pressable(r);
         android.widget.Switch sw=new android.widget.Switch(this);sw.setChecked(on);sw.setContentDescription(label);int[][] states={{android.R.attr.state_checked},{}};
