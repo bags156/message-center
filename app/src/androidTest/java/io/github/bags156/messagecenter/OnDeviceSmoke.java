@@ -684,8 +684,9 @@ public final class OnDeviceSmoke extends Instrumentation {
             slide(ir.left+ir.width()*0.2f,ir.exactCenterY(),ir.left+ir.width()*0.85f,ir.exactCenterY());
             if(!"1 of 2".contentEquals(counter.getText()))slide(ir.left+ir.width()*0.85f,ir.exactCenterY(),ir.left+ir.width()*0.2f,ir.exactCenterY());
             check("1 of 2".contentEquals(counter.getText()),"Swiping sideways didn't go to the other photo ("+counter.getText()+")");
-            press(ir.exactCenterX(),ir.exactCenterY());Thread.sleep(500);check(!save.isShown(),"A tap didn't hide the viewer's bar");
-            press(ir.exactCenterX(),ir.exactCenterY());Thread.sleep(500);check(save.isShown(),"A second tap didn't bring the bar back");
+            // (A single tap counts once Android is sure it isn't a double-tap; the emulator can be slow to say so.)
+            Thread.sleep(400);press(ir.exactCenterX(),ir.exactCenterY());check(waitUntil(()->!save.isShown(),2500),"A tap didn't hide the viewer's bar");
+            Thread.sleep(400);press(ir.exactCenterX(),ir.exactCenterY());check(waitUntil(save::isShown,2500),"A second tap didn't bring the bar back");
             check(waitUntil(()->((android.widget.ImageView)image).getDrawable()!=null,4000),"The other photo didn't show");
             android.graphics.Rect sv=placed(save);press(sv.exactCenterX(),sv.exactCenterY());
             android.net.Uri images=android.provider.MediaStore.Images.Media.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY);long savedId=-1;
