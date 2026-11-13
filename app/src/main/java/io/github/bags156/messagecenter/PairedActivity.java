@@ -590,6 +590,12 @@ public class PairedActivity extends Activity {
             TextView label=text(t.label,16,ink,t.key.equals(current));label.setPadding(dp(16),0,0,0);r.addView(label,new LinearLayout.LayoutParams(0,-2,1));
             if(t.key.equals(current))r.addView(text("✓",18,t.accent(dark),true));
             r.setOnClickListener(v->{chatSettings.setTheme(id,t.key);dialog[0].dismiss();if(screen.equals("chat")&&chatId.equals(id))thread(id);else if(screen.equals("details"))details();});list.addView(r);}
+        // Custom: any color, picked on the next sheet.
+        {ChatTheme mine=chatSettings.theme(id);boolean on=mine.custom();LinearLayout r=row();r.setPadding(dp(16),dp(10),dp(16),dp(10));pressable(r);
+            View swatch=new View(this);GradientDrawable sw;if(on){sw=oval(mine.bubble(dark));sw.setStroke(dp(3),mine.accent(dark));}else{sw=new GradientDrawable();sw.setShape(GradientDrawable.OVAL);sw.setGradientType(GradientDrawable.SWEEP_GRADIENT);sw.setColors(RAINBOW);}
+            swatch.setBackground(sw);r.addView(swatch,new LinearLayout.LayoutParams(dp(32),dp(32)));
+            TextView label=text("Custom…",16,ink,on);label.setPadding(dp(16),0,0,0);r.addView(label,new LinearLayout.LayoutParams(0,-2,1));if(on)r.addView(text("✓",18,mine.accent(dark),true));
+            r.setOnClickListener(v->{dialog[0].dismiss();customTheme(id);});list.addView(r);}
         TextView bgHeading=text("Background",18,ink,true);bgHeading.setPadding(dp(8),dp(14),dp(8),dp(8));list.addView(bgHeading);
         HorizontalScrollView strip=new HorizontalScrollView(this);strip.setHorizontalScrollBarEnabled(false);LinearLayout tiles=row();tiles.setPadding(dp(8),0,dp(8),dp(8));strip.addView(tiles);list.addView(strip);
         String currentBg=chatSettings.background(id);
@@ -597,6 +603,74 @@ public class PairedActivity extends Activity {
         for(String[] stock:STOCK_BACKGROUNDS){String value="stock:"+stock[0];tiles.addView(backgroundTile(stock[0],stock[1],currentBg.equals(value),()->{dialog[0].dismiss();setChatBackground(id,value);}));}
         tiles.addView(backgroundTile("photo:"+id,"Your photo…",currentBg.equals("photo"),()->{dialog[0].dismiss();pickBackgroundPhoto(id);}));
         dialog[0]=sheet(list);}
+    private static final int[] RAINBOW={0xffff3b30,0xffffcc00,0xff34c759,0xff00c7be,0xff007aff,0xffaf52de,0xffff2d55,0xffff3b30};
+    /** A rounded slider track in these colors, left to right. */
+    private GradientDrawable track(int... colors){GradientDrawable d=new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,colors);d.setCornerRadius(dp(7));return d;}
+    private android.widget.SeekBar colorSlider(LinearLayout parent,String label,int max,int value){
+        TextView name=text(label,13,muted,false);name.setPadding(dp(4),dp(12),0,dp(6));parent.addView(name);
+        android.widget.SeekBar bar=new android.widget.SeekBar(this);bar.setMax(max);bar.setProgress(value);bar.setContentDescription(label);bar.setSplitTrack(false);bar.setMinHeight(dp(14));bar.setMaxHeight(dp(14));
+        GradientDrawable thumb=oval(Color.WHITE);thumb.setStroke(dp(2),0x66000000);thumb.setSize(dp(26),dp(26));bar.setThumb(thumb);bar.setPadding(dp(14),dp(6),dp(14),dp(6));
+        parent.addView(bar,new LinearLayout.LayoutParams(-1,dp(38)));return bar;}
+    private static String hexOf(int color){return String.format("#%06X",color&0xffffff);}
+    /** "#3366AA", "3366aa" or "#36A" as a color, or 0. */
+    static int parseHex(String text){String t=text==null?"":text.trim();if(t.startsWith("#"))t=t.substring(1);
+        if(t.length()==3)t=""+t.charAt(0)+t.charAt(0)+t.charAt(1)+t.charAt(1)+t.charAt(2)+t.charAt(2);
+        if(!t.matches("[0-9A-Fa-f]{6}"))return 0;return 0xff000000|Integer.parseInt(t,16);}
+    private List<Integer> recentCustomColors(){List<Integer> out=new ArrayList<>();for(String h:getSharedPreferences("paired",MODE_PRIVATE).getString("custom_colors","").split(",")){int c=parseHex(h);if(c!=0)out.add(c);}return out;}
+    private void rememberCustomColor(int color){List<Integer> recent=recentCustomColors();recent.remove(Integer.valueOf(color|0xff000000));recent.add(0,color|0xff000000);
+        StringBuilder b=new StringBuilder();for(int i=0;i<Math.min(6,recent.size());i++){if(b.length()>0)b.append(',');b.append(String.format("%06x",recent.get(i)&0xffffff));}
+        getSharedPreferences("paired",MODE_PRIVATE).edit().putString("custom_colors",b.toString()).apply();}
+    /**
+     * A chat theme in any color: color, intensity and brightness sliders (or a color code), with a sample
+     * chat that changes as you drag. Your bubbles are exactly the color picked here; the app works out a
+     * matching shade for the other light/dark look, readable words, and a send button that stands out.
+     */
+    private void customTheme(String id){ChatTheme now=chatSettings.theme(id);int start=now.custom()?ChatTheme.customColor(now.key):now.bubble(dark);
+        int[] picked={start};boolean[] syncing={false};Dialog[] dialog=new Dialog[1];
+        LinearLayout content=vertical();TextView heading=text("Custom color",18,ink,true);heading.setPadding(dp(8),0,dp(8),dp(10));content.addView(heading);
+        // A sample chat in this chat's colors: their bubble, yours, and the send button.
+        LinearLayout sample=vertical();sample.setPadding(dp(14),dp(14),dp(14),dp(12));sample.setBackground(shape(bg,20));
+        TextView theirs=text("What color is this?",15,ink,false);theirs.setPadding(dp(14),dp(9),dp(14),dp(9));theirs.setBackground(shape(surface,18));
+        LinearLayout.LayoutParams thl=new LinearLayout.LayoutParams(-2,-2);thl.gravity=Gravity.START;sample.addView(theirs,thl);
+        TextView mine=text("My new favorite",15,Color.WHITE,false);mine.setPadding(dp(14),dp(9),dp(14),dp(9));mine.setContentDescription("Preview of your bubble");
+        LinearLayout.LayoutParams mil=new LinearLayout.LayoutParams(-2,-2);mil.gravity=Gravity.END;mil.topMargin=dp(8);sample.addView(mine,mil);
+        LinearLayout box=row();box.setGravity(Gravity.CENTER_VERTICAL);TextView typing=text("RCS message",14,muted,false);typing.setPadding(dp(14),dp(10),dp(14),dp(10));typing.setBackground(shape(surface,20));
+        box.addView(typing,new LinearLayout.LayoutParams(0,-2,1));ImageView send=new ImageView(this);send.setImageResource(R.drawable.ic_send);send.setPadding(dp(10),dp(10),dp(10),dp(10));send.setContentDescription("Preview of the send button");
+        LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(dp(40),dp(40));sl.setMarginStart(dp(8));box.addView(send,sl);
+        LinearLayout.LayoutParams bl=new LinearLayout.LayoutParams(-1,-2);bl.topMargin=dp(12);sample.addView(box,bl);content.addView(sample);
+        float[] hsl=ChatTheme.hsl(start);
+        android.widget.SeekBar hue=colorSlider(content,"Color",360,Math.round(hsl[0])),sat=colorSlider(content,"Intensity",100,Math.round(hsl[1]*100)),light=colorSlider(content,"Brightness",100,Math.round(hsl[2]*100));
+        hue.setProgressDrawable(track(RAINBOW));
+        EditText code=new EditText(this);code.setSingleLine(true);code.setTextColor(ink);code.setHintTextColor(muted);code.setHint("Color code, like #3366AA");code.setContentDescription("Color code");
+        code.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS|InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS);code.setTypeface(Typeface.MONOSPACE);code.setBackground(shape(surface,14));code.setPadding(dp(14),dp(10),dp(14),dp(10));
+        LinearLayout.LayoutParams cl=new LinearLayout.LayoutParams(-1,-2);cl.topMargin=dp(14);content.addView(code,cl);
+        Runnable refresh=()->{int c=picked[0];ChatTheme t=ChatTheme.custom(c,dark);float[] p=ChatTheme.hsl(c);
+            mine.setBackground(shape(t.bubble(dark),18));mine.setTextColor(t.onBubble(dark));send.setBackground(oval(t.accent(dark)));send.setImageTintList(ColorStateList.valueOf(t.onAccent(dark)));
+            sat.setProgressDrawable(track(ChatTheme.fromHsl(p[0],0f,p[2]),ChatTheme.fromHsl(p[0],1f,p[2])));
+            light.setProgressDrawable(track(0xff000000,ChatTheme.fromHsl(p[0],p[1],0.5f),0xffffffff));
+            if(!syncing[0]){syncing[0]=true;code.setText(hexOf(c));syncing[0]=false;}};
+        android.widget.SeekBar.OnSeekBarChangeListener dragged=new android.widget.SeekBar.OnSeekBarChangeListener(){
+            @Override public void onProgressChanged(android.widget.SeekBar b,int v,boolean byYou){if(!byYou||syncing[0])return;picked[0]=ChatTheme.fromHsl(hue.getProgress(),sat.getProgress()/100f,light.getProgress()/100f);refresh.run();}
+            @Override public void onStartTrackingTouch(android.widget.SeekBar b){}
+            @Override public void onStopTrackingTouch(android.widget.SeekBar b){}};
+        hue.setOnSeekBarChangeListener(dragged);sat.setOnSeekBarChangeListener(dragged);light.setOnSeekBarChangeListener(dragged);
+        // Sets the sliders to a color typed or tapped (the code box keeps what you typed).
+        java.util.function.Consumer<Integer> choose=c->{picked[0]=c;float[] p=ChatTheme.hsl(c);syncing[0]=true;hue.setProgress(Math.round(p[0]));sat.setProgress(Math.round(p[1]*100));light.setProgress(Math.round(p[2]*100));refresh.run();syncing[0]=false;};
+        code.addTextChangedListener(new TextWatcher(){@Override public void beforeTextChanged(CharSequence x,int a,int b,int c){}@Override public void onTextChanged(CharSequence x,int a,int b,int c){}
+            @Override public void afterTextChanged(Editable e){if(syncing[0])return;int c=parseHex(e.toString());if(c!=0)choose.accept(c);}});
+        List<Integer> recent=recentCustomColors();
+        if(!recent.isEmpty()){TextView rl=text("Recent",13,muted,false);rl.setPadding(dp(4),dp(14),0,dp(6));content.addView(rl);LinearLayout dots=row();
+            for(int c:recent){View dot=new View(this);GradientDrawable d=oval(c);d.setStroke(dp(1),0x33000000|(ink&0xffffff));dot.setBackground(d);dot.setContentDescription("Recent color "+hexOf(c));pressable(dot);dot.setOnClickListener(v->{choose.accept(c);syncing[0]=true;code.setText(hexOf(c));syncing[0]=false;});
+                LinearLayout.LayoutParams dl=new LinearLayout.LayoutParams(dp(34),dp(34));dl.setMarginEnd(dp(10));dots.addView(dot,dl);}
+            content.addView(dots);}
+        LinearLayout buttons=row();buttons.setGravity(Gravity.END);
+        buttons.addView(button("Cancel",false,()->dialog[0].dismiss()));
+        LinearLayout.LayoutParams ul=new LinearLayout.LayoutParams(-2,-2);ul.setMarginStart(dp(10));
+        buttons.addView(button("Use color",true,()->{chatSettings.setTheme(id,ChatTheme.custom(picked[0],dark).key);rememberCustomColor(picked[0]);dialog[0].dismiss();
+            if(screen.equals("chat")&&chatId.equals(id))thread(id);else if(screen.equals("details"))details();}),ul);
+        LinearLayout.LayoutParams bul=new LinearLayout.LayoutParams(-1,-2);bul.topMargin=dp(18);content.addView(buttons,bul);
+        refresh.run();ScrollView scroller=new ScrollView(this);scroller.addView(content);
+        dialog[0]=sheet(scroller,WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE|WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN);}
     // ---- Chat backgrounds ----
     /** Built-in backgrounds (made for this app; no outside images): resource name, label. */
     private static final String[][] STOCK_BACKGROUNDS={{"dusk","Dusk"},{"forest","Misty forest"},{"ocean","Ocean"},{"aurora","Aurora"},{"bokeh","City lights"},{"stars","Starry night"}};

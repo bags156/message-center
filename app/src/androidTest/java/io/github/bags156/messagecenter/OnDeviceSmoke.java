@@ -714,6 +714,41 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(waitUntil(()->!dialog.isShowing(),3000),"Close didn't close the photo");}
         finally{Object v=field("shownViewer").get(a);if(v!=null){android.app.Dialog dl=(android.app.Dialog)got(v,"d");runOnMainSync(dl::dismiss);}
             for(java.io.File f:files)f.delete();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("photo-check");}}}
+    /** Something on screen whose accessibility label is exactly this, or null. */
+    private android.view.accessibility.AccessibilityNodeInfo describedOnScreen(String label){android.view.accessibility.AccessibilityNodeInfo r=getUiAutomation().getRootInActiveWindow();if(r==null)return null;
+        for(android.view.accessibility.AccessibilityNodeInfo n:r.findAccessibilityNodeInfosByText(label))if(n.getContentDescription()!=null&&label.contentEquals(n.getContentDescription()))return n;return null;}
+    /** The color your bubble is drawn in, found from one of your messages' words. */
+    private int bubbleColorOf(PairedActivity a,String words){int[] color={0};runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();
+        a.getWindow().getDecorView().findViewsWithText(found,words,android.view.View.FIND_VIEWS_WITH_TEXT);if(found.isEmpty())return;android.view.View v=found.get(0);
+        for(int up=0;up<5&&v!=null;up++){if(v.getBackground() instanceof android.graphics.drawable.GradientDrawable&&((android.graphics.drawable.GradientDrawable)v.getBackground()).getColor()!=null){color[0]=((android.graphics.drawable.GradientDrawable)v.getBackground()).getColor().getDefaultColor();return;}
+            v=v.getParent() instanceof android.view.View?(android.view.View)v.getParent():null;}});return color[0];}
+    /**
+     * A custom chat theme: Theme offers Custom…, its sliders change the color, a typed code sets it exactly,
+     * Use color makes your bubbles exactly that color, and the color is offered again under Recent.
+     */
+    private void checkCustomTheme(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();ChatSettings settings=new ChatSettings(ctx);
+        try{onMainCall(()->method("thread",String.class).invoke(a,"swipe-check"));waitForIdleSync();Thread.sleep(400);
+            onMainCall(()->method("chooseTheme",String.class).invoke(a,"swipe-check"));check(waitForText("Custom…",3000,true),"The chat theme choices have no Custom option");
+            pressText("Custom…");check(waitForText("Custom color",3000,true),"Custom… didn't open the color picker");Thread.sleep(300);shoot("shot-custom-theme");
+            android.view.accessibility.AccessibilityNodeInfo code=describedOnScreen("Color code");check(code!=null,"The color picker has no color code box");String before=String.valueOf(code.getText());
+            // Dragging the color slider changes the color.
+            android.view.accessibility.AccessibilityNodeInfo hue=describedOnScreen("Color");check(hue!=null,"The color picker has no color slider");android.graphics.Rect hb=new android.graphics.Rect();hue.getBoundsInScreen(hb);
+            slide(hb.left+hb.width()*0.15f,hb.exactCenterY(),hb.left+hb.width()*0.7f,hb.exactCenterY());code=describedOnScreen("Color code");
+            check(code!=null&&!before.contentEquals(code.getText()),"Dragging the color slider didn't change the color ("+before+" → "+(code==null?null:code.getText())+")");
+            // A typed code sets it exactly.
+            Bundle typed=new Bundle();typed.putCharSequence(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,"#E91E63");code.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT,typed);Thread.sleep(300);
+            shoot("shot-custom-theme-pink");pressText("Use color");check(waitForText("Custom color",3000,false),"Use color didn't close the picker");waitForIdleSync();Thread.sleep(400);
+            ChatTheme chosen=settings.theme("swipe-check");boolean dark=(boolean)field("dark").get(a);
+            check(chosen.key.startsWith("custom:e91e63"),"The chat didn't get the custom color ("+chosen.key+")");
+            int drawn=bubbleColorOf(a,"Line 0 of a long conversation");check(drawn==chosen.bubble(dark)&&(dark||drawn==0xffe91e63),"Your bubbles aren't drawn in the custom color ("+Integer.toHexString(drawn)+")");
+            shoot("shot-custom-theme-chat");
+            // Offered again under Recent, and marked as this chat's theme.
+            onMainCall(()->method("chooseTheme",String.class).invoke(a,"swipe-check"));check(waitForText("Custom…",3000,true),"The theme choices didn't open again");pressText("Custom…");
+            check(waitForText("Custom color",3000,true)&&describedOnScreen("Recent color #E91E63")!=null,"The custom color isn't offered under Recent");
+            pressText("Cancel");check(waitForText("Custom color",3000,false),"Cancel didn't close the color picker");
+            check(settings.theme("swipe-check").key.startsWith("custom:e91e63"),"Cancel changed the chat's theme");}
+        finally{settings.setTheme("swipe-check","default");ctx.getSharedPreferences("paired",0).edit().remove("custom_colors").commit();
+            getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);Thread.sleep(300);onMainCall(()->method("inbox").invoke(a));waitForIdleSync();}}
     private android.view.View linkCardIn(PairedActivity a){java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();
         a.getWindow().getDecorView().findViewsWithText(found,"Link preview",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);for(android.view.View v:found)if(v.isShown())return v;return null;}
     /**
@@ -1671,6 +1706,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkTimeSwipe((PairedActivity)activity);
         checkPhotoMechanics((PairedActivity)activity);
         checkLinkPreviewSteady((PairedActivity)activity);
+        checkCustomTheme((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();
