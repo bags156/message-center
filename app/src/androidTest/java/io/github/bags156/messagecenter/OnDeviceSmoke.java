@@ -428,6 +428,34 @@ public final class OnDeviceSmoke extends Instrumentation {
             onMainCall(()->method("openSettingsPage",String.class).invoke(a,"notifications"));waitForIdleSync();
             check(viewsWithDescription(a,"On the lock screen")>0,"The Notifications settings page has no lock screen setting");}
         finally{NotificationPrivacy.lockedForChecks=null;NotificationPrivacy.setLockMode(ctx,NotificationPrivacy.SAME);NotificationPrivacy.set(ctx,before);onMainCall(()->method("inbox").invoke(a));waitForIdleSync();}}
+    /** Whether the window on top shows this text (a sheet or dialog included), waiting up to two seconds. */
+    private boolean onTop(String text)throws Exception{for(int i=0;i<10;i++){android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();
+            if(root!=null&&!root.findAccessibilityNodeInfosByText(text).isEmpty())return true;Thread.sleep(200);}return false;}
+    /** Presses and holds a point on the screen for a long press, then lifts. */
+    private void hold(float x,float y)throws Exception{long t=android.os.SystemClock.uptimeMillis();
+        sendPointerSync(android.view.MotionEvent.obtain(t,t,android.view.MotionEvent.ACTION_DOWN,x,y,0));Thread.sleep(android.view.ViewConfiguration.getLongPressTimeout()+400);
+        long u=android.os.SystemClock.uptimeMillis();sendPointerSync(android.view.MotionEvent.obtain(t,u,android.view.MotionEvent.ACTION_UP,x,y,0));waitForIdleSync();}
+    /**
+     * A link inside a message with other words: holding the link offers it (Open, Copy, Share)
+     * and doesn't open it; holding other words offers the message, with Copy link in it.
+     */
+    private void checkHoldLink(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();
+        try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'link-check',name:'Lena Check',type:'RCS',participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'lc',number:'+15557770177'},fullName:'Lena Check'}]}"));
+            store.message(new JSONObject().put("messageID","link-msg").put("conversationID","link-check").put("participantID","lc").put("timestamp",System.currentTimeMillis()*1000)
+                .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","Look at https://example.com/page and tell me what you think")))),0,true);}
+        onMainCall(()->method("thread",String.class).invoke(a,"link-check"));waitForIdleSync();Thread.sleep(400);
+        float[] link={-1,-1},word={-1,-1};
+        runOnMainSync(()->{for(android.widget.TextView t:viewsOf(a.getWindow().getDecorView(),android.widget.TextView.class)){String shown=t.getText().toString();int at=shown.indexOf("example.com/page");
+            if(at<0||t.getLayout()==null)continue;int[] where=new int[2];t.getLocationOnScreen(where);android.text.Layout l=t.getLayout();
+            int line=l.getLineForOffset(at+4);link[0]=where[0]+t.getTotalPaddingLeft()+l.getPrimaryHorizontal(at+4);link[1]=where[1]+t.getTotalPaddingTop()+(l.getLineTop(line)+l.getLineBottom(line))/2f;
+            int w=shown.indexOf("Look");int wl=l.getLineForOffset(w+1);word[0]=where[0]+t.getTotalPaddingLeft()+l.getPrimaryHorizontal(w+1);word[1]=where[1]+t.getTotalPaddingTop()+(l.getLineTop(wl)+l.getLineBottom(wl))/2f;}});
+        check(link[0]>=0,"The message with a link wasn't drawn");
+        hold(link[0],link[1]);
+        check(onTop("Copy link")&&onTop("Share link"),"Holding a link in a message didn't offer to copy it");
+        sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);Thread.sleep(400);
+        hold(word[0],word[1]);
+        check(onTop("Copy text")&&onTop("Copy link"),"Holding the words around a link didn't offer the message with Copy link");
+        sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);Thread.sleep(300);onMainCall(()->method("inbox").invoke(a));waitForIdleSync();}
     /** The newest raw contact the shell just added: the highest "_id=12" it lists (arguments can't hold spaces, so no "DESC"). */
     private String newestRawContact()throws Exception{java.util.regex.Matcher m=java.util.regex.Pattern.compile("_id=(\\d+)").matcher(shell("content query --uri content://com.android.contacts/raw_contacts --projection _id"));
         long best=-1;while(m.find())best=Math.max(best,Long.parseLong(m.group(1)));return best<0?"":String.valueOf(best);}
@@ -1339,11 +1367,12 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkSettingsPages((PairedActivity)activity);
         checkSendWhileLoading((PairedActivity)activity);
         checkLockScreenPreviews((PairedActivity)activity);
+        checkHoldLink((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();
         checkSentTextStays((PairedActivity)activity);
         checkBubbleStepsAside((PairedActivity)activity);
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, emoji picker tabs and search, notes, chat menu sheet, inbox menu sheet, dialog look, settings pages, send while loading, lock screen previews, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, emoji picker tabs and search, notes, chat menu sheet, inbox menu sheet, dialog look, settings pages, send while loading, lock screen previews, hold a link, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }

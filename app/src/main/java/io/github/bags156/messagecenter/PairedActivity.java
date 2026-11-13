@@ -1069,6 +1069,35 @@ public class PairedActivity extends Activity {
     private static boolean applyLinks(TextView t,TextScan scan){if(scan.linkUrls.length==0)return false;SpannableString sp=new SpannableString(t.getText());boolean any=false;
         for(int k=0;k<scan.linkUrls.length;k++){int[] r=scan.linkRanges[k];if(r[0]<0||r[1]>sp.length()||r[0]>=r[1])continue;sp.setSpan(new URLSpan(scan.linkUrls[k]),r[0],r[1],Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);any=true;}
         if(any)t.setText(sp);return any;}
+    /**
+     * Holding a link in a message offers that link (open, copy, share) instead of the whole
+     * message; holding anywhere else in the text offers the message. Lifting your finger after a
+     * hold never opens the link.
+     */
+    private void holdLinks(TextView text,JSONObject m){float[] at={-1,-1};boolean[] held={false};
+        text.setOnTouchListener((v,e)->{int action=e.getActionMasked();
+            if(action==MotionEvent.ACTION_DOWN){at[0]=e.getX();at[1]=e.getY();held[0]=false;}
+            else if(action==MotionEvent.ACTION_UP&&held[0]){held[0]=false;MotionEvent cancel=MotionEvent.obtain(e);cancel.setAction(MotionEvent.ACTION_CANCEL);v.onTouchEvent(cancel);cancel.recycle();return true;}
+            return false;});
+        text.setOnLongClickListener(v->{held[0]=true;URLSpan link=linkAt(text,at[0],at[1]);if(link!=null)linkSheet(link.getURL(),m);else messageSheet(m);return true;});}
+    /** The link under a point in a text (view coordinates), or null. Only a touch on the link's own words counts, not the space past the end of its line. */
+    static URLSpan linkAt(TextView t,float x,float y){android.text.Layout layout=t.getLayout();if(x<0||layout==null||!(t.getText() instanceof Spanned))return null;
+        int line=layout.getLineForVertical((int)(y-t.getTotalPaddingTop()+t.getScrollY()));float lx=x-t.getTotalPaddingLeft()+t.getScrollX();
+        if(lx<layout.getLineLeft(line)||lx>layout.getLineRight(line))return null;
+        int offset=layout.getOffsetForHorizontal(line,lx);URLSpan[] spans=((Spanned)t.getText()).getSpans(offset,offset,URLSpan.class);
+        for(URLSpan span:spans){int start=((Spanned)t.getText()).getSpanStart(span),end=((Spanned)t.getText()).getSpanEnd(span);if(offset>=start&&offset<=end)return span;}return null;}
+    /** A link held in a message: open, copy or share it (call, text or copy a number; email or copy an address), or the message's own options. */
+    private void linkSheet(String url,JSONObject m){String u=url==null?"":url,lower=u.toLowerCase(Locale.ROOT);List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();String title;
+        ClipboardManager clip=getSystemService(ClipboardManager.class);
+        if(lower.startsWith("mailto:")){String address=Uri.decode(u.substring(7));title=address;
+            labels.add("Write an email");actions.add(()->openLink(u));labels.add("Copy email address");actions.add(()->clip.setPrimaryClip(ClipData.newPlainText("Email address",address)));}
+        else if(lower.startsWith("tel:")){String number=Uri.decode(u.substring(4));title=readableNumber(number);
+            labels.add("Call");actions.add(()->{try{startActivity(new Intent(Intent.ACTION_DIAL,Uri.parse(u)));}catch(Exception e){toast("No phone app is installed.");}});
+            labels.add("Text "+title);actions.add(()->startChat(number));labels.add("Copy number");actions.add(()->clip.setPrimaryClip(ClipData.newPlainText("Phone number",number)));}
+        else{title=ChatText.shortLink(u);labels.add("Open link");actions.add(()->openLink(u));labels.add("Copy link");actions.add(()->clip.setPrimaryClip(ClipData.newPlainText("Link",u)));
+            labels.add("Share link");actions.add(()->startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT,u),"Share link")));}
+        labels.add("Message options\u2026");actions.add(()->messageSheet(m));
+        menuSheet(title,labels,actions);}
     private View bubble(JSONObject m,JSONObject c,ChatTheme theme,boolean outgoing,boolean joinPrev,boolean joinNext){
         View v=bubbleBody(m,c,theme,outgoing,joinPrev,joinNext);return Effects.INK.equals(PairedProtocol.effect(m))&&effectsOn()?invisibleInk(v,m):v;}
     private View bubbleBody(JSONObject m,JSONObject c,ChatTheme theme,boolean outgoing,boolean joinPrev,boolean joinNext){
@@ -1106,6 +1135,7 @@ public class PairedActivity extends Activity {
             for(SmartText.Hit h:smart){if(sp.getSpans(h.start,h.end,URLSpan.class).length>0||sp.getSpans(h.start,h.end,ClickableSpan.class).length>0)continue;added=true;
                 sp.setSpan(new ClickableSpan(){@Override public void onClick(View w){smartTap(h,m,c);}@Override public void updateDrawState(TextPaint ds){ds.setColor(linkColor);ds.setUnderlineText(true);}},h.start,h.end,Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);}
             if(added){text.setText(sp);text.setHighlightColor(Color.TRANSPARENT);text.setMovementMethod(LinkMovementMethod.getInstance());text.setOnLongClickListener(v->{messageSheet(m);return true;});}}
+        if(text.getMovementMethod()!=null)holdLinks(text,m);
         b.setOnLongClickListener(v->{messageSheet(m);return true;});b.setOnClickListener(v->tapped(m,b));if(text.getMovementMethod()!=null)text.setOnClickListener(v->tapped(m,b));
         line.addView(b,new LinearLayout.LayoutParams(-2,-2));wrap.addView(line,new LinearLayout.LayoutParams(-1,-2));bubbleViews.put(m.optString("messageID"),b);
         String url=linkPreviewsOn()&&(outgoing||chatTrusted)?ChatText.firstUrl(fallback!=null?fallback:body):"";if(!url.isEmpty()){gap(wrap,4);wrap.addView(linkCard(url,outgoing),new LinearLayout.LayoutParams(-1,-2));}
@@ -1406,6 +1436,9 @@ public class PairedActivity extends Activity {
             pinShown=0;renderPinBar();});
         String typed=PairedProtocol.text(m),plain=ChatText.replyFallbackBody(typed)!=null?ChatText.replyFallbackBody(typed):typed;
         if(!plain.isEmpty())sheetAction(content,"Copy text",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Message",plain));});
+        // Links in the message can be copied on their own (one, or each of the first three).
+        List<String> links=new ArrayList<>(new java.util.LinkedHashSet<>(ChatText.urls(plain)));
+        for(String link:links.subList(0,Math.min(3,links.size())))sheetAction(content,links.size()==1?"Copy link":"Copy link: "+ChatText.shortLink(link),()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Link",link));});
         if(!plain.isEmpty())sheetAction(content,"Select text…",()->{d[0].dismiss();selectText(plain);});
         // Keep a message, photo or file in your notes about them: as a new note, or added to one you have.
         String[] noteTo=c==null?null:noteTarget(m,c);

@@ -223,6 +223,13 @@ final class ChatText {
     }
 
     /** Every web link in a message, in order and without repeats, cleaned up like firstUrl. */
+    /** A link as people say it: no https:// or www., no trailing slash, and shortened in the middle past 40 characters. */
+    static String shortLink(String url) {
+        String u = url == null ? "" : url.trim().replaceFirst("(?i)^https?://", "").replaceFirst("(?i)^www\\.", "");
+        if (u.endsWith("/")) u = u.substring(0, u.length() - 1);
+        return u.length() <= 40 ? u : u.substring(0, 26) + "…" + u.substring(u.length() - 13);
+    }
+
     static java.util.List<String> urls(String text) {
         java.util.List<String> out = new java.util.ArrayList<>();
         if (text == null) return out;

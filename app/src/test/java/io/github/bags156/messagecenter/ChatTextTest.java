@@ -199,4 +199,11 @@ public class ChatTextTest {
         org.junit.Assert.assertEquals("", ChatText.firstEmoji("fire"));
         org.junit.Assert.assertEquals("", ChatText.firstEmoji(""));
     }
+    @Test public void linksAsPeopleSayThem() {
+        org.junit.Assert.assertEquals("example.com/page", ChatText.shortLink("https://www.example.com/page/"));
+        org.junit.Assert.assertEquals("bit.ly/x", ChatText.shortLink("http://bit.ly/x"));
+        String longOne = ChatText.shortLink("https://www.example.com/a/very/long/path/that/keeps/going/and/going?id=12345");
+        org.junit.Assert.assertTrue(longOne, longOne.length() == 40 && longOne.contains("\u2026") && longOne.startsWith("example.com/a/very") && longOne.endsWith("?id=12345"));
+        org.junit.Assert.assertEquals("", ChatText.shortLink(null));
+    }
 }
