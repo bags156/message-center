@@ -120,6 +120,9 @@ jobs:
           adb exec-out run-as io.github.bags156.messagecenter cat cache/group-bubble-preview.png > group-bubble-preview.png
           # Settings screenshots for reviewing the UI (best effort; printed small in the log too).
           set +e
+          adb exec-out run-as io.github.bags156.messagecenter cat cache/chat-menu.png > chat-menu.png
+          if command -v convert >/dev/null; then convert chat-menu.png -resize 45% -quality 70 chat-menu.jpg; else cp chat-menu.png chat-menu.jpg; fi
+          echo "SHOT_BEGIN chat-menu"; base64 -w 120 chat-menu.jpg | sed 's/^/SHOT /'; echo "SHOT_END"
           adb shell am start -S -n io.github.bags156.messagecenter/.PairedActivity --es open settings
           sleep 5
           for i in 1 2 3; do
@@ -142,6 +145,7 @@ jobs:
             message-center.png
             group-bubble-preview.png
             settings-*.png
+            chat-menu.png
             android-runtime.txt
             emulator.log
           retention-days: 14

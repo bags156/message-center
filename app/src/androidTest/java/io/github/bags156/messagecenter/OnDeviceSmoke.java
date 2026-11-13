@@ -271,6 +271,9 @@ public final class OnDeviceSmoke extends Instrumentation {
         java.lang.reflect.Method thread=method("thread",String.class),menu=method("chatMenu",android.view.View.class);java.lang.reflect.Field settings=field("chatSettings"),screen=field("screen");
         android.app.Dialog[] d={null};onMainCall(()->{thread.invoke(a,"menu-check");d[0]=(android.app.Dialog)menu.invoke(a,(android.view.View)null);return null;});waitForIdleSync();
         check(d[0]!=null&&d[0].isShowing(),"The chat menu didn't open");
+        // A picture of it for the CI log, to review the design.
+        Thread.sleep(700);android.graphics.Bitmap shot=getUiAutomation().takeScreenshot();
+        if(shot!=null)try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(ctx.getCacheDir(),"chat-menu.png"))){shot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
         StringBuilder missing=new StringBuilder();
         for(String label:new String[]{"Details","Notes","Search","Theme","Pin to top","Notifications: On","Read receipts","Open as bubble","Archive","Block\u2026","Delete conversation\u2026"}){int[] n={0};
             runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();d[0].getWindow().getDecorView().findViewsWithText(found,label,android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);n[0]=found.size();});
