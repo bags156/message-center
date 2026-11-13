@@ -1685,7 +1685,10 @@ public class PairedActivity extends Activity {
         add.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_add,0,0,0);add.setCompoundDrawableTintList(ColorStateList.valueOf(onFab));add.setCompoundDrawablePadding(dp(10));
         add.setGravity(Gravity.CENTER_VERTICAL);add.setPadding(dp(18),0,dp(22),0);add.setBackground(shape(fab,18));add.setElevation(dp(3));add.setContentDescription("New note");
         add.setOnClickListener(v->noteEditor(key,who,null,()->notesList(key,who,back)));
-        FrameLayout.LayoutParams fl=new FrameLayout.LayoutParams(-2,dp(56),Gravity.BOTTOM|Gravity.END);fl.setMargins(0,0,dp(16),dp(16));frame.addView(add,fl);}
+        FrameLayout.LayoutParams fl=new FrameLayout.LayoutParams(-2,dp(56),Gravity.BOTTOM|Gravity.END);fl.setMargins(0,0,dp(16),dp(16));frame.addView(add,fl);
+        keyboardDown();}
+    /** A screen whose first box is for searching opens with the keyboard down, not focused on the box (even coming back from typing a note). */
+    private void keyboardDown(){root.setFocusableInTouchMode(true);root.requestFocus();View r=root;r.post(()->hideKeyboard(r));}
     /** "#gift" typed in the search (tags with spaces are typed with _ for them). */
     private static boolean hasTagWord(String query,String tag){for(String w:query.trim().split("\\s+"))if(w.startsWith("#")&&Notes.tag(w).replace('_',' ').equalsIgnoreCase(tag))return true;return false;}
     private static String withoutTagWord(String query,String tag){StringBuilder b=new StringBuilder();for(String w:query.trim().split("\\s+")){if(w.isEmpty()||(w.startsWith("#")&&Notes.tag(w).replace('_',' ').equalsIgnoreCase(tag)))continue;b.append(w).append(' ');}return b.toString().trim();}
@@ -3738,6 +3741,7 @@ public class PairedActivity extends Activity {
             search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int b,int c){}public void onTextChanged(CharSequence s,int a,int b,int c){}
                 public void afterTextChanged(Editable e){settingsQuery=e.toString();settingsShown=settingsPage+"|"+(settingsQuery.isEmpty()?"":"search");body.removeAllViews();settingsHome(body);}});}
         else settingsPageRows(settingsPage,content);
+        if(settingsQuery.isEmpty())keyboardDown();
         restoreScroll(sc,keep);}
     /** The main page: who you're connected as, then each page with what's set there; or, while searching, the settings that match. */
     private void settingsHome(LinearLayout body){String q=settingsQuery.trim();
