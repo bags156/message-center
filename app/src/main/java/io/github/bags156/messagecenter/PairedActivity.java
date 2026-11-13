@@ -198,7 +198,7 @@ public class PairedActivity extends Activity {
     // ---- Shared building blocks ----
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
     private void base(String name){
-        if(screen.equals("note"))saveNote();noteField=null;noteTags=null;noteFiles=null;notePin=null;editing=null;
+        if(screen.equals("note"))saveNote();noteField=null;noteTags=null;noteFiles=null;notePin=null;noteStatus=null;editing=null;
         if(!name.equals("chat"))stopInline();
         if(screen.equals("inbox")&&!name.equals("inbox")&&scroll!=null){inboxScrollY=scroll.getScrollY();inboxBack=inboxSpotNow();inboxKey=inboxKey();repliedSinceInbox=false;}
         inboxPlacing=null;inboxSpots=null;keepSpot=null;
@@ -1719,45 +1719,69 @@ public class PairedActivity extends Activity {
                     while(w/(s*2)>=px&&h/(s*2)>=px)s*=2;dec.setTargetSampleSize(s);dec.setAllocator(android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE);});}catch(Exception ignored){}
             if(b==null)return;Bitmap square=Avatars.scaleSquare(b,px);noteThumbs.put(k,square);ui.post(()->{if(k.equals(view.getTag()))view.setImageBitmap(square);});});}
     private void leaveNotes(){Runnable back=notesBack;notesBack=null;notesKey="";notesQuery="";if(back!=null)back.run();else inbox();}
+    private TextView noteStatus;
     /**
-     * One note: its words, tags, and photos or files, saved as you go. n is null for a new note,
-     * which is only kept once it has something in it. back is where the back arrow goes.
+     * One note, laid out like a page: who it's about and when at the top, its tags, the words,
+     * where it came from and its photos or files on a raised card, and a toolbar along the bottom
+     * (above the keyboard) to tag it or attach a photo or file. Saved as you go. n is null for a
+     * new note, which is only kept once it has something in it. back is where the back arrow goes.
      */
     private void noteEditor(String key,String who,Notes.Note n,Runnable back){long now=System.currentTimeMillis();Notes.Note note=n==null?new Notes.Note(Notes.newId(now),"",now):n.copy();
         base("note");editing=note;editingKey=key;editingWho=who;noteBack=back;editingSnapshot=n==null?noteState(new Notes.Note(note.id,"",now)):noteState(note);
+        // Who it's about, and when it was written.
         LinearLayout bar=row();bar.addView(icon(R.drawable.ic_back,ink,"Back",this::leaveNote));
-        TextView title=text(n==null?"New note":"Note",24,ink,false);title.setPadding(dp(8),0,dp(8),0);bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+        LinearLayout titles=vertical();titles.setPadding(dp(8),0,dp(8),0);TextView title=text(who,20,ink,true);title.setSingleLine(true);title.setEllipsize(TextUtils.TruncateAt.END);titles.addView(title);
+        String written=android.text.format.DateUtils.formatDateTime(this,note.created,android.text.format.DateUtils.FORMAT_SHOW_DATE|android.text.format.DateUtils.FORMAT_SHOW_TIME|android.text.format.DateUtils.FORMAT_ABBREV_MONTH);
+        TextView when=text(n==null?"New note":"Note · "+written,12,muted,false);when.setPadding(0,dp(1),0,0);titles.addView(when);bar.addView(titles,new LinearLayout.LayoutParams(0,-2,1));
         notePin=icon(R.drawable.ic_pin,note.pinned?BLUE:muted,note.pinned?"Unpin note":"Pin note",this::toggleNotePin);bar.addView(notePin);
         ImageView more=icon(R.drawable.ic_more,ink,"More options",null);pressable(more);more.setOnClickListener(v->menuSheet("Note",java.util.Arrays.asList("Delete note…"),java.util.Arrays.<Runnable>asList(()->{saveNote();Notes.Note e=editing;
             if(e!=null)deleteNote(key,e.id,()->{editing=null;Runnable b=noteBack;if(b!=null)b.run();else inbox();});})));bar.addView(more);
-        root.addView(bar,new LinearLayout.LayoutParams(-1,dp(56)));
-        String dated=who+" · "+android.text.format.DateUtils.formatDateTime(this,note.created,android.text.format.DateUtils.FORMAT_SHOW_DATE|android.text.format.DateUtils.FORMAT_SHOW_TIME|android.text.format.DateUtils.FORMAT_ABBREV_MONTH)
-            +(note.updated-note.created>60_000?" · edited "+android.text.format.DateUtils.getRelativeTimeSpanString(note.updated,now,android.text.format.DateUtils.MINUTE_IN_MILLIS):"");
-        TextView sub=text(dated,13,muted,false);sub.setPadding(dp(16),0,dp(16),dp(8));root.addView(sub);
-        if(!note.source.isEmpty()){TextView from=text("From "+note.source,13,muted,false);from.setPadding(dp(16),0,dp(16),dp(8));root.addView(from);}
-        EditText field=input("Write a note…");field.setSingleLine(false);field.setGravity(Gravity.TOP|Gravity.START);field.setContentDescription("Note");
+        root.addView(bar,new LinearLayout.LayoutParams(-1,dp(60)));
+        // The page: tags, words, where it came from, photos and files.
+        LinearLayout page=vertical();page.setPadding(dp(18),dp(14),dp(18),dp(16));page.setBackground(shape(raised(),24));page.setElevation(dp(2));
+        noteTags=row();HorizontalScrollView ts=new HorizontalScrollView(this);ts.setHorizontalScrollBarEnabled(false);ts.addView(noteTags);ts.setPadding(0,0,0,dp(6));page.addView(ts);
+        EditText field=new EditText(this);field.setBackground(null);field.setPadding(0,dp(4),0,dp(4));field.setHint("Start writing…");field.setHintTextColor(muted);field.setTextColor(ink);
+        field.setTextSize(18);field.setLineSpacing(0,1.2f);field.setGravity(Gravity.TOP|Gravity.START);field.setMinHeight(dp(220));field.setContentDescription("Note");
         field.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES|InputType.TYPE_TEXT_FLAG_AUTO_CORRECT);
-        field.setTextSize(17);field.setLineSpacing(0,1.15f);field.setText(note.text);field.setSelection(field.length());
-        LinearLayout.LayoutParams fl=new LinearLayout.LayoutParams(-1,0,1);fl.setMargins(dp(4),0,dp(4),dp(8));root.addView(field,fl);
+        field.setText(note.text);field.setSelection(field.length());page.addView(field,new LinearLayout.LayoutParams(-1,-2));
+        if(!note.source.isEmpty()){LinearLayout quote=row();quote.setPadding(0,dp(10),0,dp(2));View rule=new View(this);rule.setBackground(shape(BLUE,2));quote.addView(rule,new LinearLayout.LayoutParams(dp(3),dp(18)));
+            TextView from=text("From "+note.source,13,muted,false);from.setPadding(dp(10),0,0,0);quote.addView(from,new LinearLayout.LayoutParams(0,-2,1));page.addView(quote);}
+        noteFiles=row();HorizontalScrollView fs=new HorizontalScrollView(this);fs.setHorizontalScrollBarEnabled(false);fs.addView(noteFiles);fs.setPadding(0,dp(12),0,0);page.addView(fs);
+        // Tapping the empty part of the page puts the cursor at the end of the words.
+        page.setOnClickListener(v->{field.requestFocus();field.setSelection(field.length());getSystemService(InputMethodManager.class).showSoftInput(field,0);});
+        LinearLayout holder=vertical();holder.setPadding(dp(12),dp(4),dp(12),dp(8));holder.addView(page,new LinearLayout.LayoutParams(-1,-2));
+        TextView privacy=text("Only on this phone, never sent.",12,muted,false);privacy.setGravity(Gravity.CENTER);privacy.setPadding(0,dp(12),0,dp(4));holder.addView(privacy);
+        ScrollView sc=new ScrollView(this);sc.setVerticalScrollBarEnabled(false);sc.addView(holder);root.addView(sc,new LinearLayout.LayoutParams(-1,0,1));
+        // The toolbar: tag, photo, file, and whether it's saved.
+        LinearLayout tools=row();tools.setGravity(Gravity.CENTER_VERTICAL);tools.setPadding(dp(6),0,dp(16),0);tools.setBackground(shape(raised(),28));tools.setElevation(dp(3));
+        tools.addView(noteTool(R.drawable.ic_tag,"Tag",this::askNoteTags));tools.addView(noteTool(R.drawable.ic_gallery,"Photo",this::pickNotePhotos));tools.addView(noteTool(R.drawable.ic_file,"File",this::pickNoteFiles));
+        noteStatus=text(n==null?"New":note.updated-note.created>60_000?"Edited "+android.text.format.DateUtils.getRelativeTimeSpanString(note.updated,now,android.text.format.DateUtils.MINUTE_IN_MILLIS):"Saved",12,muted,false);
+        noteStatus.setGravity(Gravity.END);noteStatus.setSingleLine(true);tools.addView(noteStatus,new LinearLayout.LayoutParams(0,-2,1));
+        LinearLayout.LayoutParams tl=new LinearLayout.LayoutParams(-1,dp(56));tl.setMargins(dp(12),dp(2),dp(12),dp(10));root.addView(tools,tl);
         field.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int b,int c){}public void onTextChanged(CharSequence s,int a,int b,int c){}
             public void afterTextChanged(Editable e){ui.removeCallbacks(noteSaver);ui.postDelayed(noteSaver,600);}});
-        noteField=field;
-        noteTags=row();HorizontalScrollView ts=new HorizontalScrollView(this);ts.setHorizontalScrollBarEnabled(false);ts.addView(noteTags);ts.setPadding(dp(4),0,dp(4),dp(8));root.addView(ts);renderNoteTags();
-        noteFiles=row();HorizontalScrollView fs=new HorizontalScrollView(this);fs.setHorizontalScrollBarEnabled(false);fs.addView(noteFiles);fs.setPadding(dp(4),0,dp(4),dp(4));root.addView(fs);renderNoteFiles();
+        noteField=field;renderNoteTags();renderNoteFiles();
         if(note.text.trim().isEmpty()&&note.attachments.isEmpty()){field.requestFocus();field.post(()->getSystemService(InputMethodManager.class).showSoftInput(field,0));}}
+    /** A toolbar button in a note: an icon and its name. */
+    private View noteTool(int icon,String label,Runnable action){LinearLayout b=row();b.setGravity(Gravity.CENTER_VERTICAL);b.setPadding(dp(10),dp(8),dp(12),dp(8));pressDim(b);b.setContentDescription(label);
+        ImageView ic=new ImageView(this);ic.setImageResource(icon);ic.setImageTintList(ColorStateList.valueOf(ink));b.addView(ic,new LinearLayout.LayoutParams(dp(20),dp(20)));
+        TextView name=text(label,14,ink,true);name.setPadding(dp(6),0,0,0);b.addView(name);b.setOnClickListener(v->action.run());return b;}
+    private void pickNotePhotos(){Intent pick=new Intent(MediaStore.ACTION_PICK_IMAGES).putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX,Math.min(10,MediaStore.getPickImagesMaxLimit()));
+        try{startActivityForResult(pick,PICK_NOTE_PHOTOS);}catch(Exception e){toast("No photo picker on this phone.");}}
+    private void pickNoteFiles(){try{startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true),PICK_NOTE_FILES);}catch(Exception e){toast("No file picker is available.");}}
     /** What a note holds, to tell whether it changed (and only then call it edited). */
     private static String noteState(Notes.Note n){StringBuilder b=new StringBuilder(n.text).append('\u0000').append(n.pinned).append('\u0000').append(String.join("\u0001",n.tags)).append('\u0000');
         for(Notes.Attachment a:n.attachments)b.append(a.file).append('\u0001');return b.toString();}
     private void saveNote(){ui.removeCallbacks(noteSaver);if(editing==null||editingKey.isEmpty())return;if(noteField!=null)editing.text=noteField.getText().toString();
-        String state=noteState(editing);if(state.equals(editingSnapshot))return;editing.updated=System.currentTimeMillis();new Notes(this).save(editingKey,editingWho,editing.copy());editingSnapshot=state;}
+        String state=noteState(editing);if(state.equals(editingSnapshot))return;editing.updated=System.currentTimeMillis();new Notes(this).save(editingKey,editingWho,editing.copy());editingSnapshot=state;
+        if(noteStatus!=null)noteStatus.setText("Saved");}
     private void leaveNote(){saveNote();if(noteField!=null)hideKeyboard(noteField);editing=null;Runnable back=noteBack;noteBack=null;if(back!=null)back.run();else inbox();}
     private void toggleNotePin(){if(editing==null)return;editing.pinned=!editing.pinned;saveNote();if(notePin!=null){notePin.setImageTintList(ColorStateList.valueOf(editing.pinned?BLUE:muted));notePin.setContentDescription(editing.pinned?"Unpin note":"Pin note");}
         toast(editing.pinned?"Pinned to the top of the notes.":"Unpinned.");}
-    /** The note's tags (tap one to take it off) and "+ Tag". */
-    private void renderNoteTags(){if(noteTags==null||editing==null)return;noteTags.removeAllViews();
+    /** The note's tags at the top of its page (tap one to take it off); hidden while it has none. */
+    private void renderNoteTags(){if(noteTags==null||editing==null)return;noteTags.removeAllViews();((View)noteTags.getParent()).setVisibility(editing.tags.isEmpty()?View.GONE:View.VISIBLE);
         for(String t:editing.tags){TextView chip=tagChip("#"+t+"  ✕",true);chip.setContentDescription("Remove tag "+t);chip.setOnClickListener(v->{editing.tags.removeIf(x->x.equals(t));saveNote();renderNoteTags();});
-            LinearLayout.LayoutParams cl=new LinearLayout.LayoutParams(-2,-2);cl.setMarginEnd(dp(8));noteTags.addView(chip,cl);}
-        TextView add=tagChip("+ Tag",false);add.setContentDescription("Add tags");add.setOnClickListener(v->askNoteTags());noteTags.addView(add);}
+            LinearLayout.LayoutParams cl=new LinearLayout.LayoutParams(-2,-2);cl.setMarginEnd(dp(8));noteTags.addView(chip,cl);}}
     /** Adds tags: type them (commas between several), or tap ones you've used before. */
     private void askNoteTags(){if(editing==null)return;LinearLayout box=vertical();box.setPadding(dp(20),dp(8),dp(20),0);
         EditText in=input("gift ideas, birthday");in.setSingleLine(true);in.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);box.addView(in,new LinearLayout.LayoutParams(-1,-2));
@@ -1771,23 +1795,19 @@ public class PairedActivity extends Activity {
         in.setOnEditorActionListener((v,a,e)->{addNoteTags(in.getText().toString());d[0].dismiss();return true;});
         d[0].setOnShowListener(x->{in.requestFocus();Window w=d[0].getWindow();if(w!=null)w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);});d[0].show();}
     private void addNoteTags(String typed){if(editing==null)return;List<String> tags=editing.tags;for(String t:Notes.splitTags(typed))tags=Notes.withTag(tags,t);editing.tags=tags;saveNote();renderNoteTags();}
-    /** The note's photos and files (tap to open, hold to share or remove) and "Attach". */
+    /** The note's photos and files at the bottom of its page (tap to open, hold to share or remove); hidden while it has none. */
     private void renderNoteFiles(){if(noteFiles==null||editing==null)return;noteFiles.removeAllViews();Notes kept=new Notes(this);Notes.Note note=editing;
-        for(Notes.Attachment a:note.attachments){File f=kept.file(note,a);FrameLayout tile=new FrameLayout(this);tile.setBackground(shape(surface,14));tile.setClipToOutline(true);pressDim(tile);
-            if((a.image()||a.video())&&f!=null&&f.isFile()){ImageView img=new ImageView(this);img.setScaleType(ImageView.ScaleType.CENTER_CROP);tile.addView(img,new FrameLayout.LayoutParams(-1,-1));noteThumb(img,f,a.video(),dp(84));
+        ((View)noteFiles.getParent()).setVisibility(note.attachments.isEmpty()?View.GONE:View.VISIBLE);
+        for(Notes.Attachment a:note.attachments){File f=kept.file(note,a);FrameLayout tile=new FrameLayout(this);tile.setBackground(shape(surface,16));tile.setClipToOutline(true);pressDim(tile);
+            if((a.image()||a.video())&&f!=null&&f.isFile()){ImageView img=new ImageView(this);img.setScaleType(ImageView.ScaleType.CENTER_CROP);tile.addView(img,new FrameLayout.LayoutParams(-1,-1));noteThumb(img,f,a.video(),dp(96));
                 if(a.video()){ImageView play=new ImageView(this);play.setImageResource(R.drawable.ic_play);play.setPadding(dp(8),dp(8),dp(7),dp(8));play.setBackground(oval(0x8C000000));tile.addView(play,new FrameLayout.LayoutParams(dp(32),dp(32),Gravity.CENTER));}}
-            else{LinearLayout inner=vertical();inner.setGravity(Gravity.CENTER);inner.setPadding(dp(6),dp(6),dp(6),dp(6));ImageView ic=new ImageView(this);ic.setImageResource(R.drawable.ic_file);ic.setImageTintList(ColorStateList.valueOf(muted));inner.addView(ic,new LinearLayout.LayoutParams(dp(24),dp(24)));
-                TextView name=text(a.name,11,ink,false);name.setMaxLines(2);name.setEllipsize(TextUtils.TruncateAt.MIDDLE);name.setGravity(Gravity.CENTER);inner.addView(name);tile.addView(inner,new FrameLayout.LayoutParams(-1,-1));}
+            else{LinearLayout inner=vertical();inner.setGravity(Gravity.CENTER);inner.setPadding(dp(8),dp(8),dp(8),dp(8));ImageView ic=new ImageView(this);ic.setImageResource(R.drawable.ic_file);ic.setImageTintList(ColorStateList.valueOf(muted));
+                LinearLayout.LayoutParams il=new LinearLayout.LayoutParams(dp(26),dp(26));il.gravity=Gravity.CENTER_HORIZONTAL;inner.addView(ic,il);
+                TextView name=text(a.name,11,ink,false);name.setMaxLines(2);name.setEllipsize(TextUtils.TruncateAt.MIDDLE);name.setGravity(Gravity.CENTER);name.setPadding(0,dp(6),0,0);inner.addView(name,new LinearLayout.LayoutParams(-1,-2));
+                tile.addView(inner,new FrameLayout.LayoutParams(-1,-1));}
             tile.setContentDescription(a.name);tile.setOnClickListener(v->openNoteFile(f,a));
             tile.setOnLongClickListener(v->{menuSheet(a.name,java.util.Arrays.asList("Share","Remove from note"),java.util.Arrays.<Runnable>asList(()->shareNoteFile(f,a),()->{note.attachments.remove(a);saveNote();if(f!=null)f.delete();renderNoteFiles();}));return true;});
-            LinearLayout.LayoutParams tl=new LinearLayout.LayoutParams(dp(84),dp(84));tl.setMarginEnd(dp(8));noteFiles.addView(tile,tl);}
-        LinearLayout attach=vertical();attach.setGravity(Gravity.CENTER);attach.setBackground(shape(surface,14));pressDim(attach);attach.setContentDescription("Attach a photo or file");
-        ImageView plus=new ImageView(this);plus.setImageResource(R.drawable.ic_add);plus.setImageTintList(ColorStateList.valueOf(ink));attach.addView(plus,new LinearLayout.LayoutParams(dp(24),dp(24)));
-        TextView label=text("Attach",12,muted,false);label.setPadding(0,dp(4),0,0);attach.addView(label);
-        attach.setOnClickListener(v->menuSheet("Attach to this note",java.util.Arrays.asList("Photos & videos","Files"),java.util.Arrays.<Runnable>asList(
-            ()->{Intent pick=new Intent(MediaStore.ACTION_PICK_IMAGES).putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX,Math.min(10,MediaStore.getPickImagesMaxLimit()));try{startActivityForResult(pick,PICK_NOTE_PHOTOS);}catch(Exception e){toast("No photo picker on this phone.");}},
-            ()->startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true),PICK_NOTE_FILES))));
-        noteFiles.addView(attach,new LinearLayout.LayoutParams(dp(84),dp(84)));}
+            LinearLayout.LayoutParams tl=new LinearLayout.LayoutParams(dp(96),dp(96));tl.setMarginEnd(dp(8));noteFiles.addView(tile,tl);}}
     private void openNoteFile(File f,Notes.Attachment a){if(f==null||!f.isFile()){toast("This file is missing from the note.");return;}
         Intent view=new Intent(Intent.ACTION_VIEW).setDataAndType(MediaProvider.noteUri(f,a.name),a.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         if(bubble())view.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);try{startActivity(view);}catch(Exception e){toast("No app on this phone can open this kind of file. Hold it to share it instead.");}}

@@ -1,12 +1,8 @@
-Message Center 1.5.26.
+Message Center 1.5.27.
 
-- Settings are reorganized. The main page is short: a card showing your connection and version, a search box, and seven pages. The pages are Messages, Photos & media, Notifications, Automation, Appearance, Connection, and Data & about. Each page shows what's set there.
-- Search finds any setting by name, by what it does, or by a word people use for it. For example, "dark" finds Theme.
-- Related settings are now together:
-  - Busy auto-reply sits with its tile.
-  - All the verification code settings are in one place.
-  - Reconnect and Stop background connection are both on the Connection page.
-- Every setting has a colored icon. Current values are shown in gray with a ›, in place of blue text that looked like a link. Groups sit on raised cards, like the chat and inbox menus.
-- "Full-quality photos" is now "Download full-quality photos", so it isn't confused with Photo quality for what you send.
+- A note now looks like a page. The person's name and when the note was written are at the top. The note's tags, its words, where it came from and its photos or files sit together on one raised card.
+- A toolbar along the bottom stays above the keyboard while you type. It has Tag, Photo and File buttons, and shows whether the note is saved.
+- The empty Attach box and the lone "+ Tag" chip are gone. Tags and attachments only show once a note has them.
+- Tapping anywhere on the page puts the cursor at the end of the note.
 
 Install over the existing app through Obtainium. Your pairing, conversations and settings are retained.

@@ -222,6 +222,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         onMainCall(()->{((android.widget.EditText)noteField.get(a)).setText("Gift idea: blue scarf");addTags.invoke(a,"Gift, birthday");pin.invoke(a);return attach.invoke(a,java.util.Collections.singletonList(android.net.Uri.fromFile(pic)));});
         int[] attached={0};for(int wait=0;wait<50&&attached[0]==0;wait++){Thread.sleep(100);onMainCall(()->{Notes.Note e=(Notes.Note)editing.get(a);attached[0]=e==null?-1:e.attachments.size();return null;});}
         check(attached[0]==1,"A picture attached to a note wasn't kept ("+attached[0]+")");
+        Thread.sleep(400);shoot("note-editor");
         runOnMainSync(a::onBackPressed);waitForIdleSync();
         java.util.List<Notes.Note> saved=notes.list(key);
         check(saved.size()==1,"The new note wasn't saved ("+saved.size()+")");Notes.Note first=saved.get(0);
@@ -237,6 +238,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         onMainCall(()->list.invoke(a,key,"Nora Check",back));waitForIdleSync();
         java.util.List<String> order=noteCards(a);
         check(order.equals(java.util.Arrays.asList(first.id,"t2newer","t1older")),"Notes aren't pinned first, then newest: "+order);
+        shoot("notes-list");
         android.widget.EditText[] search={null};
         runOnMainSync(()->{for(android.widget.EditText e:viewsOf(a.getWindow().getDecorView(),android.widget.EditText.class))if("Search notes".contentEquals(e.getContentDescription()==null?"":e.getContentDescription()))search[0]=e;});
         check(search[0]!=null,"The notes list has no search box");
