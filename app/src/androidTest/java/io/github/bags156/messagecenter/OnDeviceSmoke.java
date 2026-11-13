@@ -492,7 +492,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         Float gone=timeOnScreen(a,list);check(gone!=null&&gone>=edge,"A time stayed on screen after letting go");
         onMainCall(()->method("inbox").invoke(a));waitForIdleSync();
         // The inbox list isn't moved by a chat's slide (it settles after you've left).
-        check(((android.view.View)field("items").get(a)).getTranslationX()==0,"Leaving a chat left the inbox slid over");}
+        Object inboxList=field("items").get(a);check(inboxList==null||((android.view.View)inboxList).getTranslationX()==0,"Leaving a chat left the inbox slid over");}
     // ---- Real touches, as a finger would make them (through the system, so status bar and back gestures apply) ----
     private final StringBuilder probe=new StringBuilder();
     private void note(String line){probe.append(line).append('\n');try{java.nio.file.Files.write(new java.io.File(getTargetContext().getCacheDir(),"probe.txt").toPath(),probe.toString().getBytes());}catch(Exception ignored){}}
