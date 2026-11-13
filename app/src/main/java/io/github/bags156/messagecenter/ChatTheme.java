@@ -59,7 +59,7 @@ final class ChatTheme {
         int accentDark = standOut(rgb, DARK_BACKGROUND, true), accentLight = standOut(rgb, LIGHT_BACKGROUND, false);
         String key = CUSTOM + String.format("%06x", rgb & 0xffffff) + (pickedInDark ? ":d" : ":l");
         return new ChatTheme(key, "Custom", bubbleDark, bubbleLight, accentDark, accentLight,
-            readable(bubbleDark, LIGHT_TEXT, DARK_TEXT), readable(bubbleLight, LIGHT_TEXT, DARK_TEXT),
+            wordsOn(bubbleDark), wordsOn(bubbleLight),
             readable(accentDark, 0xffffffff, 0xff102033), readable(accentLight, 0xffffffff, 0xff102033));
     }
 
@@ -78,6 +78,12 @@ final class ChatTheme {
     int onAccent(boolean dark) { return dark ? onAccentDark : onAccentLight; }
 
     // ---- Color arithmetic (WCAG contrast, HSL), without Android, for the unit tests ----
+
+    /**
+     * Light words on a bubble whenever they read well (3:1), else dark: on bright, saturated colors
+     * (pink, red, blue) light words look right and read fine, even where dark ones measure a hair higher.
+     */
+    static int wordsOn(int bubble) { return contrast(LIGHT_TEXT, bubble) >= 3.0 ? LIGHT_TEXT : DARK_TEXT; }
 
     /** Whichever of two text colors reads better on a background. */
     static int readable(int background, int light, int dark) {

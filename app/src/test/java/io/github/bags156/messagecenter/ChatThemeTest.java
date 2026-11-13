@@ -26,6 +26,14 @@ public class ChatThemeTest {
         assertTrue("a deeper shade for dark mode", ChatTheme.luminance(light.bubble(true)) < 0.1);
     }
 
+    @Test public void lightWordsOnBrightColors() {
+        assertEquals(ChatTheme.LIGHT_TEXT, ChatTheme.custom(0xffe91e63, false).onBubble(false));
+        assertEquals(ChatTheme.LIGHT_TEXT, ChatTheme.custom(0xffe53935, false).onBubble(false));
+        assertEquals(ChatTheme.LIGHT_TEXT, ChatTheme.custom(0xff1e88e5, true).onBubble(true));
+        assertEquals(ChatTheme.DARK_TEXT, ChatTheme.custom(0xfffdd835, false).onBubble(false));
+        assertEquals(ChatTheme.DARK_TEXT, ChatTheme.custom(0xffffc0cb, false).onBubble(false));
+    }
+
     @Test public void keysRoundTrip() {
         ChatTheme t = ChatTheme.custom(0xff3366aa, true);
         assertEquals("custom:3366aa:d", t.key);
@@ -48,7 +56,7 @@ public class ChatThemeTest {
                 ChatTheme t = ChatTheme.custom(color, picked);
                 for (boolean dark : new boolean[]{true, false}) {
                     String what = Integer.toHexString(color) + (picked ? " picked dark" : " picked light") + (dark ? ", dark" : ", light");
-                    assertTrue("words readable on " + what, ChatTheme.contrast(t.onBubble(dark), t.bubble(dark)) >= 3.5);
+                    assertTrue("words readable on " + what, ChatTheme.contrast(t.onBubble(dark), t.bubble(dark)) >= 3.0);
                     assertTrue("send icon readable on " + what, ChatTheme.contrast(t.onAccent(dark), t.accent(dark)) >= 3.0);
                     int background = dark ? ChatTheme.DARK_BACKGROUND : ChatTheme.LIGHT_BACKGROUND;
                     assertTrue("send button stands out on " + what, ChatTheme.contrast(t.accent(dark), background) >= 3.0);
