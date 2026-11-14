@@ -492,8 +492,12 @@ public final class PairedService extends Service {
             else if(ready)requestFullMedia(media,false,(v,e)->{});}}
     /** A song (or podcast) link just arrived from someone you know: find it in your app now, so it's ready when you open the chat. */
     private void musicArrived(JSONObject message){
-        if(PairedProtocol.outgoing(message)||System.currentTimeMillis()-message.optLong("timestamp")/1000>2L*24*60*60*1000)return;
-        JSONObject chat=store.chat(message.optString("conversationID"));if(chat==null||!PairedProtocol.allKnown(chat))return;
+        if(PairedProtocol.outgoing(message))return;
+        JSONObject chat=store.chat(message.optString("conversationID"));
+        // The service of a song they send is the one they use: songs you send them can go as that.
+        if(chat!=null&&PairedProtocol.other(chat)!=null)try{MusicApps.learn(new ChatSettings(this),message.optString("conversationID"),PairedProtocol.text(message));}catch(Exception ignored){}
+        if(System.currentTimeMillis()-message.optLong("timestamp")/1000>2L*24*60*60*1000)return;
+        if(chat==null||!PairedProtocol.allKnown(chat))return;
         try{MusicApps.arrived(this,PairedProtocol.text(message));}catch(Exception ignored){}}
     /** Android's Data Saver is on and this connection is metered: don't download what wasn't asked for. */
     private boolean dataSaverOn(){try{android.net.ConnectivityManager cm=getSystemService(android.net.ConnectivityManager.class);

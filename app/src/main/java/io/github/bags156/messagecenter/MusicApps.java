@@ -161,6 +161,43 @@ final class MusicApps {
         if (app != null && app != l.app) find(c, url, app, null);
     }
 
+    /** The music service a song link is from, if it's a song, album, or artist link (not a podcast or playlist). */
+    static MusicLinks.App musicService(String url) {
+        MusicLinks.Link l = url == null || url.isEmpty() ? null : link(url);
+        return l == null || !l.app.music || podcast(l) ? null : l.app;
+    }
+
+    /** Someone sent a song in a one-to-one chat: that's the service they use (until they send one from another). */
+    static void learn(ChatSettings settings, String chatId, String text) {
+        MusicLinks.App app = musicService(ChatText.firstUrl(text));
+        if (app != null) settings.learnMusic(chatId, app.name());
+    }
+
+    private static final java.util.Set<String> scanned = new java.util.HashSet<>();
+
+    /**
+     * The music app the person in this one-to-one chat uses: as you set it in the chat's details,
+     * or the service of the last song they sent (looked for back through the chat the first time).
+     * Null when it isn't known or you've said to leave the songs you send as they are.
+     */
+    static MusicLinks.App theirs(ChatSettings settings, PairedStore store, String chatId) {
+        String set = settings.theirMusic(chatId);
+        if (set.equals("off")) return null;
+        MusicLinks.App manual = MusicLinks.App.named(set);
+        if (manual != null) return manual;
+        MusicLinks.App learned = MusicLinks.App.named(settings.learnedMusic(chatId));
+        if (learned != null) return learned;
+        synchronized (scanned) { if (!scanned.add(chatId)) return null; }
+        List<JSONObject> recent = store.messages(chatId, 400);
+        for (int i = recent.size() - 1; i >= 0; i--) {
+            JSONObject m = recent.get(i);
+            if (PairedProtocol.outgoing(m)) continue;
+            MusicLinks.App app = musicService(ChatText.firstUrl(PairedProtocol.text(m)));
+            if (app != null) { settings.learnMusic(chatId, app.name()); return app; }
+        }
+        return null;
+    }
+
     /** Opens the match in the app: the app itself when it's on this phone, otherwise its web page. */
     static boolean open(Activity a, JSONObject result, MusicLinks.App app) {
         String url = result.optString("url"), alt = result.optString("alt");

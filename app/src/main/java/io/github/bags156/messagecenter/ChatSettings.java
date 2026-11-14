@@ -45,6 +45,17 @@ final class ChatSettings {
         if (id == null || id.isEmpty()) prefs.edit().putString("theme_all", key).apply();
         else prefs.edit().putString("theme:" + id, key).apply();
     }
+    /**
+     * The music app the person in this chat uses, as you set it: an app's name (MusicLinks.App),
+     * "off" to leave the song links you send as they are, or "" to go by the links they send.
+     */
+    String theirMusic(String id) { return prefs.getString("music_their:" + id, ""); }
+    void setTheirMusic(String id, String value) {
+        if (value == null || value.isEmpty()) prefs.edit().remove("music_their:" + id).apply(); else prefs.edit().putString("music_their:" + id, value).apply();
+    }
+    /** The service of the last song link they sent ("" if none yet). */
+    String learnedMusic(String id) { return prefs.getString("music_learned:" + id, ""); }
+    void learnMusic(String id, String app) { if (!app.equals(learnedMusic(id))) prefs.edit().putString("music_learned:" + id, app).apply(); }
     /** Back to the colors every chat uses. */
     void sameAsAll(String id) { prefs.edit().remove("theme:" + id).apply(); }
     /** The chats that have colors of their own. */

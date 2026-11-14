@@ -852,6 +852,35 @@ public final class OnDeviceSmoke extends Instrumentation {
         finally{removeMonitor(watch);onMainCall(()->method("inbox").invoke(a));waitForIdleSync();
             if(before==null)prefs.edit().remove("music_app").commit();else prefs.edit().putString("music_app",before).commit();
             preview.delete();found.delete();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("music-link");}}}
+    /**
+     * A song pasted into a one-to-one chat goes as the same song on the other person's service:
+     * they've sent an Apple Music link before, so a Spotify link in the message box changes to the
+     * Apple Music one (the match saved beforehand: no internet needed), with Undo; the chat's
+     * details say which app they use.
+     */
+    private void checkTheirMusic(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();
+        String spotify="https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b",apple="https://music.apple.com/us/album/blinding-lights/1499378108?i=1499378607";
+        java.io.File found=new java.io.File(new java.io.File(ctx.getCacheDir(),"music-v1"),MediaCache.hash("APPLE_MUSIC "+spotify)+".json");found.getParentFile().mkdirs();
+        java.nio.file.Files.write(found.toPath(),new JSONObject().put("how","exact").put("url",apple).put("alt","").put("kind","SONG").put("at",System.currentTimeMillis()).toString().getBytes("UTF-8"));
+        try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'their-music',name:'Theo Tunes',type:'RCS',participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'tt',number:'+15557770188'},fullName:'Theo Tunes'}]}"));
+            store.message(new JSONObject().put("messageID","their-song").put("conversationID","their-music").put("participantID","tt").put("timestamp",System.currentTimeMillis()*1000-3_600_000_000L)
+                .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","Obsessed with this https://music.apple.com/us/album/x/1?i=2")))),0,true);}
+        java.lang.reflect.Field composer=field("composer");
+        try{runOnMainSync(()->{try{method("thread",String.class).invoke(a,"their-music");}catch(Exception e){throw new RuntimeException(e);}});Thread.sleep(500);waitForIdleSync();
+            runOnMainSync(()->{try{((android.widget.EditText)composer.get(a)).setText("Have you heard this? "+spotify);}catch(Exception e){throw new RuntimeException(e);}});
+            String[] box={""};for(int i=0;i<30;i++){Thread.sleep(100);runOnMainSync(()->{try{box[0]=((android.widget.EditText)composer.get(a)).getText().toString();}catch(Exception e){throw new RuntimeException(e);}});if(box[0].contains(apple))break;}
+            check(box[0].equals("Have you heard this? "+apple),"A Spotify song in the box didn't change to the Apple Music one Theo uses ("+box[0]+")");
+            check(described(a,"Changed to Apple Music for Theo")!=null,"No note saying the song changed to Apple Music for Theo");shoot("shot-their-music");
+            runOnMainSync(()->{try{((android.view.View)field("musicUndo").get(a)).performClick();}catch(Exception e){throw new RuntimeException(e);}});Thread.sleep(600);waitForIdleSync();
+            runOnMainSync(()->{try{box[0]=((android.widget.EditText)composer.get(a)).getText().toString();}catch(Exception e){throw new RuntimeException(e);}});
+            check(box[0].equals("Have you heard this? "+spotify),"Undo didn't put the Spotify link back, or it changed again ("+box[0]+")");
+            runOnMainSync(()->{try{((android.widget.EditText)composer.get(a)).setText("");}catch(Exception e){throw new RuntimeException(e);}});
+            onMainCall(()->method("details").invoke(a));waitForIdleSync();
+            int[] rows={0};runOnMainSync(()->{java.util.ArrayList<android.view.View> hits=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(hits,"Their music app: Apple Music (from songs they've sent)",android.view.View.FIND_VIEWS_WITH_TEXT);rows[0]=hits.size();});
+            check(rows[0]>0,"The chat's details don't say Theo uses Apple Music");shoot("shot-their-music-details");}
+        finally{onMainCall(()->method("inbox").invoke(a));waitForIdleSync();found.delete();
+            ctx.getSharedPreferences("chat-settings",0).edit().remove("music_learned:their-music").remove("music_their:their-music").commit();
+            try(PairedStore store=new PairedStore(ctx)){store.deleteChat("their-music");}}}
     private void checkThemeAll(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();ChatSettings settings=new ChatSettings(ctx);
         settings.themeAll("default",true);settings.setTheme("smoke","berry");
         try{onMainCall(()->method("chooseTheme",String.class).invoke(a,""));check(waitForText("Color for all chats",3000,true),"Chat color for all chats didn't open");shoot("shot-theme-all");
@@ -1836,6 +1865,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkCallLines((PairedActivity)activity);
         checkThemeAll((PairedActivity)activity);
         checkMusicLink((PairedActivity)activity);
+        checkTheirMusic((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();

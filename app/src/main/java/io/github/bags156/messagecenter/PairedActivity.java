@@ -848,6 +848,11 @@ public class PairedActivity extends Activity {
         LinearLayout replyTexts=vertical();replyTexts.setPadding(dp(10),0,dp(8),0);replyLabel=text("",13,theme.accent(dark),true);replyQuote=text("",14,muted,false);
         replyQuote.setSingleLine(true);replyQuote.setEllipsize(TextUtils.TruncateAt.END);replyTexts.addView(replyLabel);replyTexts.addView(replyQuote);
         replyPanel.addView(replyTexts,new LinearLayout.LayoutParams(0,-2,1));replyPanel.addView(icon(R.drawable.ic_close,muted,"Cancel reply",this::cancelReply));root.addView(replyPanel);
+        musicNote=row();musicNote.setVisibility(View.GONE);musicNote.setPadding(dp(16),dp(2),dp(8),dp(2));
+        ImageView note=new ImageView(this);note.setImageResource(R.drawable.ic_play);note.setImageTintList(ColorStateList.valueOf(theme.accent(dark)));LinearLayout.LayoutParams nl=new LinearLayout.LayoutParams(dp(16),dp(16));nl.setMarginEnd(dp(8));musicNote.addView(note,nl);
+        musicNoteText=text("",13,muted,false);musicNoteText.setMaxLines(2);musicNote.addView(musicNoteText,new LinearLayout.LayoutParams(0,-2,1));
+        musicUndo=text("Undo",14,theme.accent(dark),true);musicUndo.setPadding(dp(12),dp(10),dp(12),dp(10));pressable(musicUndo);musicUndo.setOnClickListener(v->undoMusic());musicNote.addView(musicUndo);root.addView(musicNote);
+        if(!id.equals(musicChat)){musicChat=id;musicKept.clear();}musicFrom="";musicTo="";musicPending="";sendAfterMusic=false;ui.post(musicCheck);
         if(!id.equals(outgoingChat)){for(Outgoing o:outgoing)if(!o.sending)discardPicked(o);outgoing.removeIf(o->!o.sending);outgoingChat=id;}
         attachStrip=row();attachScroll=new HorizontalScrollView(this);attachScroll.setHorizontalScrollBarEnabled(false);attachScroll.setPadding(dp(16),dp(4),dp(16),dp(6));attachScroll.addView(attachStrip);root.addView(attachScroll);
         // Recording: cancel, a pulsing dot and the time, your voice as it comes in, and send.
@@ -863,7 +868,7 @@ public class PairedActivity extends Activity {
         composerHint=PairedProtocol.rcs(c)?"RCS message":"Text message";composer=new EditText(this);composer.setHint(composerHint);composer.setTextColor(ink);composer.setHintTextColor(muted);composer.setTextSize(17*textScale);
         composer.setBackground(shape(surface,28));composer.setPadding(dp(22),dp(14),dp(22),dp(14));composer.setMaxLines(5);
         composer.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);composer.setText(drafts.getOrDefault(id,""));composer.setSelection(composer.length());
-        composer.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){remember();maybeSendTyping(s);updateComposeButton();updateQuickRow();}public void afterTextChanged(Editable e){}});
+        composer.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){remember();maybeSendTyping(s);updateComposeButton();updateQuickRow();ui.removeCallbacks(musicCheck);ui.postDelayed(musicCheck,350);}public void afterTextChanged(Editable e){}});
         composer.setOnFocusChangeListener((v,focused)->updateQuickRow());
         composer.setOnReceiveContentListener(new String[]{"image/*","video/*"},keyboardContent);
         compose.addView(composer,new LinearLayout.LayoutParams(0,-2,1));
@@ -1509,7 +1514,10 @@ public class PairedActivity extends Activity {
         receiptStatusView.setText(value);
     }
     private boolean sendingText;
-    private void send(){if(composer==null)return;repliedSinceInbox=true;unreadSince=-1;String body=composer.getText().toString(),id=chatId,reply=replyId;JSONObject c=store.chat(id);
+    private void send(){if(composer==null)return;
+        if(!musicPending.isEmpty()){if(!sendAfterMusic){sendAfterMusic=true;showMusicNote("Finding it on "+musicPendingApp+"\u2026 sends in a moment",false);
+            ui.postDelayed(()->{if(sendAfterMusic){sendAfterMusic=false;musicPending="";send();}},4000);}return;}
+        repliedSinceInbox=true;unreadSince=-1;String body=composer.getText().toString(),id=chatId,reply=replyId;JSONObject c=store.chat(id);
         boolean files=false;for(Outgoing o:outgoing)if(!o.sending)files=true;
         if(body.trim().isEmpty()&&!files)return;if(c==null){error("Refresh this conversation before sending.");return;}
         if(sendButton!=null)sendButton.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM);
@@ -1731,6 +1739,9 @@ public class PairedActivity extends Activity {
         gap(content,20);content.addView(text("This chat",14,muted,true));gap(content,4);
         sheetAction(content,chatSettings.pinned(c)?"Unpin":"Pin to top",()->{togglePin(c);details();});
         sheetAction(content,"Theme & background: "+chatSettings.theme(id).label+(chatSettings.background(id).isEmpty()?"":" + picture"),()->chooseTheme(id));
+        if(!group){String name=PairedProtocol.firstName(PairedProtocol.other(c));
+            sheetAction(content,"Their music app: "+theirMusicLabel(id),()->chooseTheirMusic(id,name));
+            TextView why=text("Songs you send "+name+" from another app change to the same song on theirs before they go",13,muted,false);why.setPadding(dp(8),0,dp(16),dp(8));content.addView(why);}
         sheetAction(content,"Read receipts: "+(chatSettings.receipts(id)?"on":"off"),()->toggleReceipts(id));
         receiptStatusView=text("",13,muted,false);receiptStatusView.setPadding(dp(16),0,dp(16),dp(8));content.addView(receiptStatusView);updateReceiptStatus();
         if(chatSettings.receipts(id)){sheetAction(content,"Retry read request / refresh Google setting",()->{JSONObject latest=store.latestIncoming(id);
@@ -3997,6 +4008,47 @@ public class PairedActivity extends Activity {
         labels.add(podcast?"Leave podcast links as they are":"Leave music links as they are");actions.add(()->{MusicApps.choose(this,podcast,null);if(then!=null)then.accept(null);});
         menuSheet(podcast?"Open podcasts in":"Open music in",labels,actions);}
     private ScrollView settingsScroll;private int pendingSettingsY;
+    // A song pasted into a one-to-one chat goes as the same song on the other person's service.
+    private LinearLayout musicNote;private TextView musicNoteText,musicUndo;private String musicChat="",musicFrom="",musicTo="",musicPending="",musicPendingApp="";
+    private final java.util.Set<String> musicKept=new java.util.HashSet<>();private boolean sendAfterMusic;private final Runnable musicCheck=this::checkMusicInDraft;
+    /**
+     * A song link in the message box, from another service than the one this person uses (set in the
+     * chat's details, or learned from the songs they send): it's swapped for the same song on theirs,
+     * with Undo. Only an exact match is swapped in; otherwise the link goes as it is.
+     */
+    private void checkMusicInDraft(){if(composer==null||musicNote==null||!screen.equals("chat"))return;String id=chatId;
+        String url=ChatText.firstUrl(composer.getText().toString());
+        if(url.isEmpty()){musicKept.clear();musicFrom="";musicTo="";if(!sendAfterMusic)hideMusicNote();return;}
+        if(url.equals(musicTo)||url.equals(musicPending)||musicKept.contains(url))return;
+        if(!musicFrom.isEmpty()&&!composer.getText().toString().contains(musicTo)){musicFrom="";musicTo="";hideMusicNote();}
+        MusicLinks.App from=MusicApps.musicService(url);if(from==null)return;
+        JSONObject c=store.chat(id);JSONObject other=c==null?null:PairedProtocol.other(c);if(other==null)return;
+        MusicLinks.App theirs=MusicApps.theirs(chatSettings,store,id);if(theirs==null||theirs==from)return;
+        String name=PairedProtocol.firstName(other);musicPending=url;musicPendingApp=theirs.label;showMusicNote("Finding it on "+theirs.label+" for "+name+"\u2026",false);
+        MusicApps.find(this,url,theirs,res->{if(!url.equals(musicPending))return;musicPending="";
+            boolean here=composer!=null&&screen.equals("chat")&&chatId.equals(id);
+            String now=here?composer.getText().toString():"";int at=now.indexOf(url);
+            if(here&&at>=0&&res.optString("how").equals("exact")&&!res.optString("url").isEmpty()){String to=res.optString("url");
+                int sel=composer.getSelectionStart(),end=at+url.length();composer.getText().replace(at,end,to);
+                if(sel>=end)composer.setSelection(Math.min(composer.length(),sel+to.length()-url.length()));
+                musicFrom=url;musicTo=to;showMusicNote("Changed to "+theirs.label+" for "+name+": the same song",true);}
+            else if(here&&at>=0)showMusicNote(res.optString("how").equals("error")?"Couldn't reach "+theirs.label+", so the link goes as it is":"Not on "+theirs.label+" exactly, so the link goes as it is",false);
+            if(sendAfterMusic){sendAfterMusic=false;if(here)send();}});}
+    private void showMusicNote(String text,boolean undo){if(musicNote==null)return;musicNoteText.setText(text);musicUndo.setVisibility(undo?View.VISIBLE:View.GONE);musicNote.setVisibility(View.VISIBLE);musicNote.setContentDescription(text);}
+    private void hideMusicNote(){if(musicNote!=null)musicNote.setVisibility(View.GONE);}
+    /** Back to the link as you pasted it (and it stays that way in this message). */
+    private void undoMusic(){if(composer==null||musicTo.isEmpty())return;String now=composer.getText().toString();int at=now.indexOf(musicTo);
+        musicKept.add(musicFrom);if(at>=0)composer.getText().replace(at,at+musicTo.length(),musicFrom);musicFrom="";musicTo="";hideMusicNote();}
+    /** The music app the person in this chat uses: learned from the songs they send, or set here. */
+    private String theirMusicLabel(String id){String set=chatSettings.theirMusic(id);if(set.equals("off"))return "off";
+        MusicLinks.App manual=MusicLinks.App.named(set);if(manual!=null)return manual.label;
+        MusicLinks.App known=MusicApps.theirs(chatSettings,store,id);return known==null?"not known yet":known.label+" (from songs they've sent)";}
+    private void chooseTheirMusic(String id,String name){List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
+        MusicLinks.App learned=MusicLinks.App.named(chatSettings.learnedMusic(id));
+        labels.add("Go by the songs they send"+(learned==null?"":" ("+learned.label+")"));actions.add(()->{chatSettings.setTheirMusic(id,"");details();});
+        for(MusicLinks.App a:MusicLinks.App.values()){if(!a.music)continue;labels.add(a.label);actions.add(()->{chatSettings.setTheirMusic(id,a.name());details();});}
+        labels.add("Don't change songs I send");actions.add(()->{chatSettings.setTheirMusic(id,"off");details();});
+        menuSheet(name+"'s music app",labels,actions);}
     /** Which settings page is showing: "" for the main page, else messages, media, notifications, automation, appearance, apps, connection or data. */
     private String settingsPage="",settingsQuery="",settingsShown=null;private boolean keepSettingsPage;
     /** While searching settings: what was typed (rows that don't match aren't added), and the page being searched. */
