@@ -103,6 +103,14 @@ final class PairedStore extends SQLiteOpenHelper {
     /** Whether Google's copy of a message sent under this temporary ID is saved in the chat yet. */
     synchronized boolean hasSent(String chat,String tmpID){if(tmpID==null||tmpID.isEmpty())return false;
         try(Cursor c=getReadableDatabase().rawQuery("SELECT 1 FROM items WHERE chat=? AND (id=? OR instr(data,?)>0) LIMIT 1",new String[]{chat,tmpID,"\"tmpID\":\""+tmpID+"\""})){return c.moveToFirst();}}
+    /**
+     * Messages someone sent you in a chat since a time (your last read, 0 if unknown), counting back from
+     * the newest and stopping at your own last message (anything before your reply has been seen), up to max.
+     */
+    synchronized int incomingSince(String chat,long since,int max){int n=0;
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM items WHERE chat=? AND time>? ORDER BY time DESC LIMIT ?",new String[]{chat,String.valueOf(since),String.valueOf(max+50)})){
+            while(c.moveToNext()&&n<max){JSONObject m=json(c.getString(0));if(PairedProtocol.outgoing(m))break;if(PairedProtocol.status(m).startsWith("INCOMING"))n++;}}
+        return n;}
     /** Google's copy of a text sent under this temporary ID, or null when it hasn't arrived. */
     synchronized JSONObject sentCopy(String chat,String tmpID){if(tmpID==null||tmpID.isEmpty())return null;
         try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM items WHERE chat=? AND (id=? OR instr(data,?)>0) LIMIT 1",new String[]{chat,tmpID,"\"tmpID\":\""+tmpID+"\""})){return c.moveToFirst()?json(c.getString(0)):null;}}

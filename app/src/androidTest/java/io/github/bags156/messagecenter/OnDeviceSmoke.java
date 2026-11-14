@@ -749,6 +749,28 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(settings.theme("swipe-check").key.startsWith("custom:e91e63"),"Cancel changed the chat's theme");}
         finally{settings.setTheme("swipe-check","default");ctx.getSharedPreferences("paired",0).edit().remove("custom_colors").commit();
             getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);Thread.sleep(300);onMainCall(()->method("inbox").invoke(a));waitForIdleSync();}}
+    /** The number beside Messages, or -1 when it isn't showing. */
+    private int unreadShown(PairedActivity a)throws Exception{onMainCall(()->method("updateUnreadBadge").invoke(a));android.widget.TextView badge=(android.widget.TextView)field("unreadBadge").get(a);
+        int[] n={-1};runOnMainSync(()->{if(badge!=null&&badge.getVisibility()==android.view.View.VISIBLE&&badge.getContentDescription()!=null)n[0]=Integer.parseInt(badge.getContentDescription().toString().replaceAll("\\D.*$",""));});return n[0];}
+    /**
+     * The unread count beside Messages: three new messages after your last reply in an unread chat add
+     * three; reading the chat takes them off; the setting turns the count off.
+     */
+    private void checkUnreadCount(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();long now=System.currentTimeMillis();
+        android.content.SharedPreferences prefs=ctx.getSharedPreferences("paired",0);prefs.edit().putBoolean("inbox_unread_count",true).commit();
+        try{try(PairedStore store=new PairedStore(ctx)){
+                store.chat(new JSONObject("{conversationID:'unread-check',name:'Una Read',type:'RCS',unread:true,participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'ur',number:'+15557770111'},fullName:'Una Read'}]}").put("lastMessageTimestamp",now*1000));
+                store.message(new JSONObject().put("messageID","ur-mine").put("conversationID","unread-check").put("participantID","me").put("timestamp",(now-60_000)*1000).put("messageStatus",new JSONObject().put("status","OUTGOING_COMPLETE"))
+                    .put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","See you there")))),0,true);
+                for(int i=0;i<3;i++)store.message(new JSONObject().put("messageID","ur-"+i).put("conversationID","unread-check").put("participantID","ur").put("timestamp",(now-30_000+i*1000)*1000).put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE"))
+                    .put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","On my way "+i)))),0,true);}
+            onMainCall(()->method("inbox").invoke(a));waitForIdleSync();
+            int with=unreadShown(a);check(with>=3,"The unread count beside Messages doesn't include the three new messages ("+with+")");shoot("shot-unread-count");
+            new ChatSettings(ctx).markSeen("unread-check",now+1000);int without=unreadShown(a);
+            check(without==(with==3?-1:with-3),"Reading the chat didn't take its three messages off the count ("+with+" → "+without+")");
+            new ChatSettings(ctx).setMarkedUnread("unread-check",true);check(unreadShown(a)==(with==3?1:with-2),"A chat marked unread doesn't count as one");
+            prefs.edit().putBoolean("inbox_unread_count",false).commit();check(unreadShown(a)==-1,"Turning the unread count off didn't hide it");}
+        finally{prefs.edit().putBoolean("inbox_unread_count",true).commit();new ChatSettings(ctx).setMarkedUnread("unread-check",false);try(PairedStore store=new PairedStore(ctx)){store.deleteChat("unread-check");}}}
     private android.view.View linkCardIn(PairedActivity a){java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();
         a.getWindow().getDecorView().findViewsWithText(found,"Link preview",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);for(android.view.View v:found)if(v.isShown())return v;return null;}
     /**
@@ -1707,6 +1729,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkPhotoMechanics((PairedActivity)activity);
         checkLinkPreviewSteady((PairedActivity)activity);
         checkCustomTheme((PairedActivity)activity);
+        checkUnreadCount((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();

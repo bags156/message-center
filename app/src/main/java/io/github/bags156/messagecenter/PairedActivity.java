@@ -344,7 +344,11 @@ public class PairedActivity extends Activity {
         if(folder!=1){unknownOnly=false;promoOnly=false;needsReplyOnly=false;}
         LinearLayout bar=row();TextView title=text(folder==2?"Archived":folder==3?"Blocked & spam":unknownOnly?"Unknown senders":promoOnly?"Promotions":needsReplyOnly?"Needs a reply":"Messages",26,ink,false);title.setPadding(dp(folder!=1||unknownOnly||promoOnly||needsReplyOnly?8:4),0,0,0);
         if(folder!=1||unknownOnly||promoOnly||needsReplyOnly)bar.addView(icon(R.drawable.ic_back,ink,"Back",()->{folder=1;unknownOnly=false;promoOnly=false;needsReplyOnly=false;inbox();}));
-        bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+        // The title, with how many messages are waiting to be read across your conversations beside it.
+        LinearLayout heading=row();heading.setGravity(Gravity.CENTER_VERTICAL);heading.addView(title);
+        unreadBadge=text("",14,onFab,true);unreadBadge.setGravity(Gravity.CENTER);unreadBadge.setMinWidth(dp(28));unreadBadge.setPadding(dp(9),dp(3),dp(9),dp(3));unreadBadge.setBackground(shape(fab,14));unreadBadge.setVisibility(View.GONE);
+        LinearLayout.LayoutParams ubl=new LinearLayout.LayoutParams(-2,-2);ubl.setMarginStart(dp(10));heading.addView(unreadBadge,ubl);
+        bar.addView(heading,new LinearLayout.LayoutParams(0,-2,1));updateUnreadBadge();
         if(new SessionVault(this).exists()){bar.addView(icon(R.drawable.ic_search,ink,"Search",this::toggleSearch));bar.addView(icon(R.drawable.ic_more,ink,"More options",null));
             View more=bar.getChildAt(bar.getChildCount()-1);pressable(more);more.setOnClickListener(this::inboxMenu);}
         root.addView(bar,new LinearLayout.LayoutParams(-1,dp(64)));connection();
@@ -483,7 +487,7 @@ public class PairedActivity extends Activity {
         if(!pins.isEmpty()){View g=pinnedGrid(pins);g.setTag(R.id.chat_row,"\npinned");items.addView(g);}
         if(!promos.isEmpty())items.addView(promotionsRow(promos));
         for(JSONObject c:chats)if(pins.isEmpty()||!chatSettings.pinned(c)){View row=chatRow(c);row.setTag(R.id.chat_row,c.optString("conversationID"));row.setTag(R.id.chat_time,PairedProtocol.time(c));items.addView(row);}
-        Perf.end("inbox: rows",perf);perf=Perf.start();renderNoteHits();renderMessageHits();
+        Perf.end("inbox: rows",perf);perf=Perf.start();renderNoteHits();renderMessageHits();updateUnreadBadge();
         String note=store.page("folder:"+folder,true);if(!chats.isEmpty()&&store.page("folder:"+folder,false).isEmpty()&&!note.isEmpty()){TextView end=text(note,12,muted,false);end.setGravity(Gravity.CENTER);end.setPadding(dp(16),dp(16),dp(16),dp(8));items.addView(end);}
         requestPhotos(chats);
         if(keep!=null||fallbackY>0)placeInbox(keep==null?new ArrayList<>():keep,fallbackY);Perf.end("inbox: rest",perf);
@@ -3013,6 +3017,20 @@ public class PairedActivity extends Activity {
         b.setOnClickListener(act);s.setOnClickListener(act);}}
     // ---- 1.0: promotions, unsubscribe, old codes, smart taps, quick replies, @ names, location, keywords, auto-reply, search ----
     private boolean promoOnly;private LinearLayout searchChips,quickRow;private HorizontalScrollView quickScroll;
+    private boolean unreadCountOn(){return getSharedPreferences("paired",MODE_PRIVATE).getBoolean("inbox_unread_count",true);}
+    private TextView unreadBadge;
+    /**
+     * Messages waiting to be read across the inbox: for each unread conversation, what they've sent since
+     * you last read it (at least one). Promotions (with their own count) and archived chats aren't included.
+     */
+    private int inboxUnread(){int total=0;boolean promos=promotionsSeparate();
+        for(JSONObject c:store.chats("",1)){String id=c.optString("conversationID");if(pendingDeletes.contains(id)||!chatSettings.unread(c)||(promos&&promotion(c)))continue;
+            total+=Math.max(1,store.incomingSince(id,chatSettings.seen(id),99));}
+        return total;}
+    /** The count beside Messages: on the main inbox list only, when there's something unread and it isn't turned off. */
+    private void updateUnreadBadge(){if(unreadBadge==null)return;boolean main=screen.equals("inbox")&&folder==1&&!unknownOnly&&!promoOnly&&!needsReplyOnly;
+        int n=main&&unreadCountOn()?inboxUnread():0;unreadBadge.setVisibility(n>0?View.VISIBLE:View.GONE);
+        if(n>0){unreadBadge.setText(n>99?"99+":String.valueOf(n));unreadBadge.setContentDescription(n+(n==1?" unread message":" unread messages"));}}
     private boolean promotionsSeparate(){return getSharedPreferences("paired",MODE_PRIVATE).getBoolean("promotions_separate",true);}
     /** A one-to-one chat with a short code or business name that isn't a saved contact (a fresh verification code stays in the inbox). */
     private boolean promotion(JSONObject c){if(chatSettings.pinned(c))return false;JSONObject other=PairedProtocol.other(c);if(other==null||PairedProtocol.known(other))return false;
@@ -3875,7 +3893,7 @@ public class PairedActivity extends Activity {
     private static String settingsTitle(String page){switch(page){case "messages":return "Messages";case "media":return "Photos & media";case "notifications":return "Notifications";
         case "automation":return "Automation";case "appearance":return "Appearance";case "connection":return "Connection";case "data":return "Data & about";default:return "Settings";}}
     /** Words people might search for that a setting's own words don't say. */
-    private static String settingKeywords(String title){switch(title){case "Theme":return "dark light black mode night colors";case "Text size":return "font bigger smaller larger";
+    private static String settingKeywords(String title){switch(title){case "Theme":return "dark light black mode night colors";case "Text size":return "font bigger smaller larger";case "Unread count":return "badge number total inbox";
         case "Undo send":return "unsend delay take back cancel";case "Typing indicators":return "typing privacy";case "Read receipts":return "seen read privacy";case "Bubbles":return "floating chat heads";
         case "Busy auto-reply":return "away driving automatic reply";case "Notifications":return "sound vibration alerts";case "Background activity":return "battery optimization";
         case "Back up app data":return "backup export save";case "Restore from a backup":return "import backup";case "Photo quality":return "pictures compress size";
@@ -4003,6 +4021,7 @@ public class PairedActivity extends Activity {
             String themeMode=prefs.getString("theme","system");
             settingRow(looks,R.drawable.ic_palette,0xffec4899,"Theme",themeMode.equals("black")?"True black for OLED screens: those pixels switch off":null,themeMode.equals("light")?"Light":themeMode.equals("dark")?"Dark":themeMode.equals("black")?"Black":"Match phone",
                 ()->menuSheet("Theme",java.util.Arrays.asList("Match phone","Light","Dark","Black (saves battery on OLED)"),java.util.Arrays.<Runnable>asList(()->{appTheme("system");settings();},()->{appTheme("light");settings();},()->{appTheme("dark");settings();},()->{appTheme("black");settings();})));
+            settingSwitch(looks,R.drawable.ic_done_all,0xff0ea5e9,"Unread count","How many messages are unread, next to Messages at the top",unreadCountOn(),on->prefs.edit().putBoolean("inbox_unread_count",on).apply());
             settingRow(looks,R.drawable.ic_text_size,0xff8b5cf6,"Text size",null,scaleLabel(textScale),()->{float[] sizes={0.9f,1f,1.15f,1.3f};List<Runnable> actions=new ArrayList<>();
                 for(float f:sizes)actions.add(()->{prefs.edit().putFloat("text_scale",f).apply();settings();});
                 menuSheet("Text size",java.util.Arrays.asList("Small","Default","Large","Larger"),actions);});
