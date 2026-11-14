@@ -231,6 +231,13 @@ public class PairedActivity extends Activity {
     private TextView text(String value,int size,int color,boolean bold){TextView t=new TextView(this);t.setText(value);t.setTextSize(size);t.setTextColor(color);if(bold)t.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));return t;}
     private void gap(LinearLayout target,int h){target.addView(new View(this),new LinearLayout.LayoutParams(1,dp(h)));}
     private TextView button(String title,boolean primary,Runnable action){TextView b=text(title,15,primary?Color.WHITE:BLUE,true);b.setGravity(Gravity.CENTER);b.setPadding(dp(14),dp(12),dp(14),dp(12));b.setMinHeight(dp(48));b.setBackground(shape(primary?BLUE:card,16));b.setOnClickListener(v->action.run());return b;}
+    /** A search box with an ✕ at its end while there's text in it: tapping it empties the box (the keyboard stays up). */
+    private View clearable(EditText box){FrameLayout f=new FrameLayout(this);f.addView(box,new FrameLayout.LayoutParams(-1,-2));
+        box.setPaddingRelative(box.getPaddingStart(),box.getPaddingTop(),dp(48),box.getPaddingBottom());
+        ImageView x=icon(R.drawable.ic_close,muted,"Clear search",()->{box.setText("");box.requestFocus();});
+        f.addView(x,new FrameLayout.LayoutParams(dp(44),dp(44),Gravity.END|Gravity.CENTER_VERTICAL));x.setVisibility(box.length()>0?View.VISIBLE:View.GONE);
+        box.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence t,int a,int b,int c){}public void onTextChanged(CharSequence t,int a,int b,int c){x.setVisibility(t.length()>0?View.VISIBLE:View.GONE);}public void afterTextChanged(Editable e){}});
+        return f;}
     private ImageView icon(int drawable,int color,String label,Runnable action){
         ImageView i=new ImageView(this);i.setImageResource(drawable);i.setImageTintList(ColorStateList.valueOf(color));i.setPadding(dp(12),dp(12),dp(12),dp(12));
         i.setContentDescription(label);if(action!=null){i.setOnClickListener(v->action.run());pressable(i);}
@@ -360,7 +367,7 @@ public class PairedActivity extends Activity {
         if(folder==1){TextView follow=text(needsReplyOnly?"All conversations  ›":"Needs a reply  ›",14,muted,false);follow.setPadding(dp(16),dp(10),dp(16),dp(10));follow.setOnClickListener(v->{needsReplyOnly=!needsReplyOnly;unknownOnly=false;promoOnly=false;inbox();});root.addView(follow);}
         if(hasIncoming())root.addView(shareBanner());
         else if(folder==1&&showBatteryCard())root.addView(batteryCard=batteryBanner());
-        searchRow=row();EditText search=input("Search conversations");search.setSingleLine(true);search.setText(query);searchRow.addView(search,new LinearLayout.LayoutParams(-1,-2));
+        searchRow=row();EditText search=input("Search conversations");search.setSingleLine(true);search.setText(query);searchRow.addView(clearable(search),new LinearLayout.LayoutParams(-1,-2));
         searchRow.setVisibility(query.isEmpty()?View.GONE:View.VISIBLE);root.addView(searchRow);
         // Search filters: tap to add or remove; they work with or without words.
         searchChips=row();HorizontalScrollView chipScroll=new HorizontalScrollView(this);chipScroll.setHorizontalScrollBarEnabled(false);chipScroll.addView(searchChips);chipScroll.setPadding(0,dp(6),0,dp(2));
@@ -426,7 +433,7 @@ public class PairedActivity extends Activity {
             if(screen.equals("inbox"))renderInbox();else if(screen.equals("details"))details();});}
         menuSheet("Needs a reply",java.util.Arrays.asList(choices),actions);}
     private void toggleSearch(){if(searchRow==null)return;boolean show=searchRow.getVisibility()!=View.VISIBLE;searchRow.setVisibility(show?View.VISIBLE:View.GONE);
-        EditText field=(EditText)searchRow.getChildAt(0);if(show){field.requestFocus();getSystemService(InputMethodManager.class).showSoftInput(field,0);}else{field.setText("");hideKeyboard(field);}}
+        EditText field=(EditText)((ViewGroup)searchRow.getChildAt(0)).getChildAt(0);if(show){field.requestFocus();getSystemService(InputMethodManager.class).showSoftInput(field,0);}else{field.setText("");hideKeyboard(field);}}
     /**
      * The inbox's ⋮ menu, as a sheet like a chat's: how many conversations and unread up top, the
      * other lists as tiles with their counts (the one you're in is highlighted; tap it to go back
@@ -1343,7 +1350,7 @@ public class PairedActivity extends Activity {
     private void chooseReplyOriginal(JSONObject reply){
         LinearLayout content=vertical();TextView heading=text("Choose the original message",18,ink,true);content.addView(heading);gap(content,8);
         TextView info=text("This selection links the reply only in Message Center on this phone.",13,muted,false);content.addView(info);gap(content,8);
-        EditText search=input("Search earlier synced messages");search.setSingleLine(true);content.addView(search);gap(content,8);
+        EditText search=input("Search earlier synced messages");search.setSingleLine(true);content.addView(clearable(search));gap(content,8);
         ScrollView sc=new ScrollView(this);LinearLayout choices=vertical();sc.addView(choices);content.addView(sc,new LinearLayout.LayoutParams(-1,dp(320)));
         Dialog[] dialog=new Dialog[1];Runnable show=()->{choices.removeAllViews();List<JSONObject> candidates=store.replyCandidates(reply,search.getText().toString(),100);
             for(JSONObject original:candidates){String label=(PairedProtocol.outgoing(original,store.chat(chatId))?"You":senderName(original,store.chat(chatId)))+" · "+displayBody(original);
@@ -1654,7 +1661,7 @@ public class PairedActivity extends Activity {
         LinearLayout content=vertical();Dialog[] d=new Dialog[1];boolean[] done={false};
         java.util.function.Consumer<String> choose=e->{if(done[0])return;done[0]=true;usedEmoji(e);if(d[0]!=null)d[0].dismiss();picked.accept(e);};
         EditText search=input("Search emoji");search.setSingleLine(true);search.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);search.setContentDescription("Search emoji");
-        content.addView(search,new LinearLayout.LayoutParams(-1,-2));gap(content,8);
+        content.addView(clearable(search),new LinearLayout.LayoutParams(-1,-2));gap(content,8);
         TextView[] tabs=new TextView[EmojiIndex.CATEGORIES.length+1];LinearLayout tabRow=row();
         for(int i=0;i<tabs.length;i++){TextView t=text(i==0?"🕘":EmojiIndex.CATEGORY_ICONS[i-1],19,ink,false);t.setGravity(Gravity.CENTER);t.setContentDescription(i==0?"Recent":EmojiIndex.CATEGORY_NAMES[i-1]);
             tabs[i]=t;tabRow.addView(t,new LinearLayout.LayoutParams(0,dp(40),1));}
@@ -1751,7 +1758,7 @@ public class PairedActivity extends Activity {
             if(list.getChildCount()==0){TextView none=text("No group matches",15,muted,false);none.setPadding(dp(8),dp(16),dp(8),dp(16));list.addView(none);}};
         if(groups.size()>8){EditText search=input("Search these groups");search.setBackground(shape(surface,18));search.setSingleLine(true);search.setContentDescription("Search these groups");
             search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int b,int c){}public void onTextChanged(CharSequence s,int a,int b,int c){fill.accept(s.toString());}public void afterTextChanged(Editable e){}});
-            LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(-1,-2);sl.bottomMargin=dp(8);content.addView(search,sl);}
+            LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(-1,-2);sl.bottomMargin=dp(8);content.addView(clearable(search),sl);}
         fill.accept("");int tall=Math.round(getResources().getDisplayMetrics().heightPixels*0.6f);content.addView(sc,new LinearLayout.LayoutParams(-1,Math.min(tall,groups.size()*dp(52)+dp(8))));
         d[0]=sheet(content,WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);}
     /** Everyone in the conversation, plus this chat's settings. */
@@ -1889,7 +1896,7 @@ public class PairedActivity extends Activity {
         List<Notes.Note> all=new Notes(this).list(key);LinearLayout list=vertical();list.setPadding(0,dp(4),0,dp(96));
         LinearLayout chips=row();
         if(!all.isEmpty()){EditText search=input("Search notes or #tags");search.setSingleLine(true);search.setText(notesQuery);search.setContentDescription("Search notes");
-            LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(-1,-2);sl.setMargins(dp(4),0,dp(4),dp(8));root.addView(search,sl);
+            LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(-1,-2);sl.setMargins(dp(4),0,dp(4),dp(8));root.addView(clearable(search),sl);
             List<String> tags=Notes.tagsOf(all);
             if(!tags.isEmpty()){HorizontalScrollView hs=new HorizontalScrollView(this);hs.setHorizontalScrollBarEnabled(false);hs.addView(chips);hs.setPadding(dp(4),0,dp(4),dp(8));root.addView(hs);}
             Runnable[] draw=new Runnable[1];
@@ -2547,7 +2554,7 @@ public class PairedActivity extends Activity {
     private void showContactPicker(){String chat=chatId;decoder.execute(()->{List<ContactPeople.Person> people=PhoneContacts.people(this);ui.post(()->{
         if(!screen.equals("chat")||!chatId.equals(chat)||isFinishing())return;
         if(people.isEmpty()){toast("No contacts with a phone number.");return;}
-        LinearLayout box=vertical();box.setPadding(dp(16),dp(8),dp(16),0);EditText search=input("Search contacts");search.setSingleLine(true);box.addView(search,new LinearLayout.LayoutParams(-1,-2));
+        LinearLayout box=vertical();box.setPadding(dp(16),dp(8),dp(16),0);EditText search=input("Search contacts");search.setSingleLine(true);box.addView(clearable(search),new LinearLayout.LayoutParams(-1,-2));
         List<ContactPeople.Person> shown=new ArrayList<>(people);android.widget.ListView list=new android.widget.ListView(this);list.setDivider(null);
         android.widget.BaseAdapter adapter=new android.widget.BaseAdapter(){public int getCount(){return shown.size();}public Object getItem(int i){return shown.get(i);}public long getItemId(int i){return i;}
             public View getView(int i,View reuse,android.view.ViewGroup parent){LinearLayout r=reuse instanceof LinearLayout?(LinearLayout)reuse:null;TextView name,detail;
@@ -3745,7 +3752,7 @@ public class PairedActivity extends Activity {
             .setNegativeButton("Cancel",null).setPositiveButton("Delete",(d,w)->PairedService.execute(c->{c.deleteMessage(mid);return "";},(v,e)->{if(!e.isEmpty()){error(e);return;}store.deleteMessage(mid);renderMessages(false);})).show();}
 
     // Search inside a chat
-    private void searchChat(){LinearLayout content=vertical();EditText q=input("Search this conversation");q.setSingleLine(true);content.addView(q);gap(content,8);
+    private void searchChat(){LinearLayout content=vertical();EditText q=input("Search this conversation");q.setSingleLine(true);content.addView(clearable(q));gap(content,8);
         LinearLayout results=vertical();ScrollView rs=new ScrollView(this);rs.addView(results);content.addView(rs,new LinearLayout.LayoutParams(-1,Math.round(getResources().getDisplayMetrics().heightPixels*0.45f)));
         TextView hint=text("Searches synced messages and indexed text in downloaded pictures. Use Details → Load older messages to include more history.",13,muted,false);results.addView(hint);
         Dialog d=sheet(content);String id=chatId;JSONObject c=store.chat(id);int[] generation={0};
@@ -4145,7 +4152,7 @@ public class PairedActivity extends Activity {
         if(settingsPage.isEmpty()||settingsPage.equals("connection"))connection();
         ScrollView sc=new ScrollView(this);settingsScroll=sc;LinearLayout content=vertical();content.setPadding(dp(4),0,dp(4),dp(32));sc.addView(content);root.addView(sc,new LinearLayout.LayoutParams(-1,0,1));
         if(settingsPage.isEmpty()){EditText search=input("Search settings");search.setSingleLine(true);search.setText(settingsQuery);search.setSelection(search.length());search.setContentDescription("Search settings");
-            LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(-1,-2);sl.setMargins(0,dp(2),0,dp(6));content.addView(search,sl);
+            LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(-1,-2);sl.setMargins(0,dp(2),0,dp(6));content.addView(clearable(search),sl);
             LinearLayout body=vertical();content.addView(body,new LinearLayout.LayoutParams(-1,-2));settingsHome(body);
             search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int b,int c){}public void onTextChanged(CharSequence s,int a,int b,int c){}
                 public void afterTextChanged(Editable e){settingsQuery=e.toString();settingsShown=settingsPage+"|"+(settingsQuery.isEmpty()?"":"search");body.removeAllViews();settingsHome(body);}});}
