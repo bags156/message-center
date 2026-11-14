@@ -566,31 +566,40 @@ public class PairedActivity extends Activity {
     private String senderFirst(JSONObject m,JSONObject c){return PairedProtocol.personFirst(c,m.optString("participantID"),m.optJSONObject("senderParticipant"));}
     /** Message text without an iPhone "Replied to a message:" prefix. */
     private static String displayBody(JSONObject m){String body=PairedProtocol.body(m),reply=ChatText.replyFallbackBody(body);return reply!=null?reply:body;}
-    /** Pin, theme and read-receipt options for one conversation (long-press in the list). */
-    private void chatOptions(JSONObject c){String id=c.optString("conversationID");boolean pinned=chatSettings.pinned(c),receipts=chatSettings.receipts(id),group=PairedProtocol.other(c)==null;
+    /**
+     * Holding a chat in the list: who it is, the four you reach for most as tiles (pin, read or
+     * unread, mute, archive), then reminders and where it opens, with Block and Delete set apart in
+     * red. Looks like the chat's own ⋮ menu. Theme and read receipts are in Details.
+     */
+    private void chatOptions(JSONObject c){String id=c.optString("conversationID");boolean pinned=chatSettings.pinned(c),group=PairedProtocol.other(c)==null;
         boolean archived=c.optString("status").contains("ARCHIVED"),blocked=folder==3,unread=chatSettings.unread(c),muted=chatSettings.muted(id);
-        List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
-        if(!blocked){labels.add(pinned?"Unpin":"Pin to top");actions.add(()->togglePin(c));
-            labels.add(unread?"Mark as read":"Mark as unread");actions.add(()->{if(unread){chatSettings.setMarkedUnread(id,false);chatSettings.markSeen(id,PairedProtocol.time(c));renderInbox();}else toggleUnread(id);});
-            JSONObject reminder=Reminders.forChat(this,id);
-            if(reminder==null){labels.add("Remind me in 1 hour");actions.add(()->remindChat(c,System.currentTimeMillis()+3_600_000L));}
-            else{labels.add("Reminder at "+timeOnly(reminder.optLong("at"))+" · remove");actions.add(()->{Reminders.remove(this,reminder.optString("id"));toast("Reminder removed");});}
-            labels.add(muted?"Unmute notifications":"Mute notifications");actions.add(()->toggleMute(id));
-            labels.add(chatSettings.snoozed(id)?"Snoozed until "+snoozeLabel(id)+"…":"Snooze notifications…");actions.add(()->snoozeMenu(id));
-            labels.add(archived?"Unarchive":"Archive");actions.add(()->archive(c,!archived));
-            labels.add("Chat theme…");actions.add(()->chooseTheme(id));
-            labels.add(receipts?"Turn off read receipts for this chat":"Turn on read receipts for this chat");actions.add(()->toggleReceipts(id));
-            labels.add(group?"Group details":"Details");actions.add(()->{chatId=id;details();});
-            labels.add("Needs a reply / mark handled…");actions.add(()->replyFollowUp(c));
-            labels.add("Open as bubble");actions.add(()->openBubble(id));}
-        labels.add(blocked?"Unblock":"Block…");actions.add(()->block(c));
-        labels.add("Delete conversation…");actions.add(()->deleteChat(c));
-        menuSheet(PairedProtocol.title(c),labels,actions);}
-    /** A banner at that time about the chat, with its latest message (what notifications may show permitting). */
-    private void remindChat(JSONObject c,long at){String id=c.optString("conversationID");JSONObject last=store.latestIncoming(id);
-        String said=last==null?"":displayBody(last),who=last!=null&&PairedProtocol.other(c)==null?senderFirst(last,c)+": ":"";
-        Reminders.add(this,id,"",PairedProtocol.title(c),said.isEmpty()?"Tap to open the chat":who+said,at);
-        toast(getSystemService(android.app.AlarmManager.class).canScheduleExactAlarms()?"I'll remind you at "+timeOnly(at):"Reminder set. Allow \"Alarms & reminders\" for exact timing.");}
+        LinearLayout content=vertical();Dialog[] d=new Dialog[1];java.util.function.Function<Runnable,Runnable> closing=r->()->{if(d[0]!=null)d[0].dismiss();r.run();};
+        LinearLayout who=row();who.setPadding(dp(4),0,dp(4),dp(16));who.addView(avatar(c,52));
+        LinearLayout names=vertical();names.setPadding(dp(14),0,dp(4),0);TextView title=text(PairedProtocol.title(c),19,ink,true);title.setSingleLine(true);title.setEllipsize(TextUtils.TruncateAt.END);names.addView(title);
+        JSONObject other=PairedProtocol.other(c);String number=other==null?"":other.optString("formattedNumber",PairedProtocol.number(other)),kind=PairedProtocol.rcs(c)?"RCS":"SMS";
+        TextView line=text(group?"Group \u00b7 "+(PairedProtocol.members(c).size()+1)+" people":(number.isEmpty()||number.equals(PairedProtocol.title(c))?kind:number+" \u00b7 "+kind),13,muted,false);
+        line.setPadding(0,dp(2),0,0);names.addView(line);who.addView(names,new LinearLayout.LayoutParams(0,-2,1));content.addView(who);
+        if(!blocked){
+            LinearLayout tiles=row();
+            menuTile(tiles,R.drawable.ic_pin,pinned?"Unpin":"Pin",closing.apply(()->togglePin(c)));
+            menuTile(tiles,unread?R.drawable.ic_done_all:R.drawable.ic_chat,unread?"Read":"Unread",closing.apply(()->{if(unread){chatSettings.setMarkedUnread(id,false);chatSettings.markSeen(id,PairedProtocol.time(c));renderInbox();}else toggleUnread(id);}));
+            menuTile(tiles,muted?R.drawable.ic_volume_on:R.drawable.ic_volume_off,muted?"Unmute":"Mute",closing.apply(()->toggleMute(id)));
+            menuTile(tiles,R.drawable.ic_archive,archived?"Unarchive":"Archive",closing.apply(()->archive(c,!archived)));
+            content.addView(tiles,new LinearLayout.LayoutParams(-1,-2));gap(content,14);
+            LinearLayout later=menuGroup(content);JSONObject reminder=Reminders.forChat(this,id);
+            if(reminder==null)menuRow(later,R.drawable.ic_clock,0xfff97316,"Remind me in 1 hour",null,false,closing.apply(()->remindChat(c,System.currentTimeMillis()+3_600_000L)));
+            else menuRow(later,R.drawable.ic_clock,0xfff97316,"Reminder at "+timeOnly(reminder.optLong("at")),"Remove",false,closing.apply(()->{Reminders.remove(this,reminder.optString("id"));toast("Reminder removed");}));
+            menuRow(later,R.drawable.ic_bell,0xff8b5cf6,"Snooze notifications",chatSettings.snoozed(id)?"Until "+snoozeLabel(id):"",false,closing.apply(()->snoozeMenu(id)));
+            menuRow(later,R.drawable.ic_send,0xff0ea5e9,"Needs a reply","",false,closing.apply(()->replyFollowUp(c)));
+            gap(content,12);LinearLayout places=menuGroup(content);
+            menuRow(places,R.drawable.ic_chat,0xff14b8a6,"Open as bubble",null,false,closing.apply(()->openBubble(id)));
+            menuRow(places,R.drawable.ic_info,0xff3b82f6,group?"Group details":"Details",null,false,closing.apply(()->{chatId=id;details();}));
+            gap(content,12);}
+        LinearLayout risky=menuGroup(content);
+        menuRow(risky,R.drawable.ic_block,0xffef4444,blocked?"Unblock":"Block\u2026",null,!blocked,closing.apply(()->block(c)));
+        menuRow(risky,R.drawable.ic_delete,0xffdc2626,"Delete conversation\u2026",null,true,closing.apply(()->deleteChat(c)));
+        content.setPadding(dp(3),0,dp(3),dp(8));ScrollView sc=new ScrollView(this);sc.setVerticalScrollBarEnabled(false);sc.addView(content);
+        d[0]=sheet(sc,WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING|WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);}
     private void openBubble(String id){String problem=PairedService.showBubble(this,id);if(!problem.isEmpty())toast(problem);}
     private void togglePin(JSONObject c){String id=c.optString("conversationID");boolean now=!chatSettings.pinned(c);chatSettings.setPinned(id,now);decoder.execute(()->Nudges.reschedule(this));
         toast(now?"Pinned to the top of Message Center":"Unpinned");if(screen.equals("inbox"))renderInbox();}

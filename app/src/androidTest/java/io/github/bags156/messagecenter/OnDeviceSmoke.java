@@ -970,6 +970,10 @@ public final class OnDeviceSmoke extends Instrumentation {
             JSONObject chat;try(PairedStore store=new PairedStore(ctx)){chat=store.chat("remind-chat");}
             onMainCall(()->method("chatOptions",JSONObject.class).invoke(a,chat));
             check(waitForText("Remind me in 1 hour",3000,true),"Holding a chat doesn't offer \"Remind me in 1 hour\"");shoot("shot-chat-remind-menu");
+            // The menu: four tiles, then short lists; theme and read receipts live in Details.
+            for(String tile:new String[]{"Pin","Unread","Mute","Archive","Snooze notifications","Needs a reply","Open as bubble","Details","Block\u2026","Delete conversation\u2026"})
+                check(onScreen(tile)!=null,"Holding a chat doesn't offer "+tile);
+            check(onScreen("Chat theme\u2026")==null&&onScreen("Turn on read receipts for this chat")==null,"Holding a chat still lists theme and read receipts (they're in Details)");
             long before=System.currentTimeMillis();pressText("Remind me in 1 hour");Thread.sleep(400);
             JSONObject set=Reminders.forChat(ctx,"remind-chat");
             check(set!=null&&Math.abs(set.optLong("at")-(before+3_600_000L))<10_000,"\"Remind me in 1 hour\" didn't set a reminder an hour out ("+set+")");
