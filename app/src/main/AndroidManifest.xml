@@ -24,6 +24,17 @@
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <queries>
         <package android:name="com.google.android.apps.messaging" />
+        <!-- The music and podcast apps a shared song can open in ("Open in Spotify" under the link). -->
+        <package android:name="com.spotify.music" />
+        <package android:name="com.apple.android.music" />
+        <package android:name="com.google.android.apps.youtube.music" />
+        <package android:name="com.amazon.mp3" />
+        <package android:name="com.aspiro.tidal" />
+        <package android:name="deezer.android.app" />
+        <package android:name="com.soundcloud.android" />
+        <package android:name="au.com.shiftyjelly.pocketcasts" />
+        <package android:name="com.bambuna.podcastaddict" />
+        <package android:name="de.danoeh.antennapod" />
         <!-- To list the maps apps that can open an address (Settings → Maps app). -->
         <intent>
             <action android:name="android.intent.action.VIEW" />

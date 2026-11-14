@@ -84,6 +84,27 @@ jobs:
             app/build/reports/lint-results-debug.html
           retention-days: 14
 
+  # Music links matched against the real services. Printed only, never a reason to hold a release:
+  # any of these services can be down for a minute, and the app falls back to a search when one is.
+  music-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Try music link matching against the real services (printed only)
+        run: |
+          mkdir -p "$RUNNER_TEMP/music"
+          curl -fsSL -o "$RUNNER_TEMP/music/json.jar" https://repo1.maven.org/maven2/org/json/json/20240303/json-20240303.jar
+          javac -nowarn -d "$RUNNER_TEMP/music" -cp "$RUNNER_TEMP/music/json.jar" app/src/main/java/io/github/bags156/messagecenter/MusicLinks.java tools/MusicProbe.java
+          java -cp "$RUNNER_TEMP/music:$RUNNER_TEMP/music/json.jar" io.github.bags156.messagecenter.MusicProbe | sed 's/^/MUSIC /'
+
   device-smoke:
     needs: build
     runs-on: ubuntu-latest

@@ -1211,7 +1211,9 @@ public class PairedActivity extends Activity {
             labels.add("Call");actions.add(()->{try{startActivity(new Intent(Intent.ACTION_DIAL,Uri.parse(u)));}catch(Exception e){toast("No phone app is installed.");}});
             labels.add("Text "+title);actions.add(()->startChat(number));labels.add("Copy number");actions.add(()->clip.setPrimaryClip(ClipData.newPlainText("Phone number",number)));}
         else{title=ChatText.shortLink(u);labels.add("Open link");actions.add(()->openLink(u));labels.add("Copy link");actions.add(()->clip.setPrimaryClip(ClipData.newPlainText("Link",u)));
-            labels.add("Share link");actions.add(()->startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT,u),"Share link")));}
+            labels.add("Share link");actions.add(()->startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT,u),"Share link")));
+            MusicLinks.Link music=MusicApps.link(u);if(music!=null){boolean podcast=MusicApps.podcast(music);
+                labels.add(podcast?"Choose podcast app\u2026":"Choose music app\u2026");actions.add(()->chooseMusicApp(podcast,chosen->renderMessages(false)));}}
         labels.add("Message options\u2026");actions.add(()->messageSheet(m));
         menuSheet(title,labels,actions);}
     private View bubble(JSONObject m,JSONObject c,ChatTheme theme,boolean outgoing,boolean joinPrev,boolean joinNext){
@@ -3943,12 +3945,57 @@ public class PairedActivity extends Activity {
             LinearLayout texts=vertical();TextView title=text(p.optString("title"),15,ink,true);title.setMaxLines(2);title.setEllipsize(TextUtils.TruncateAt.END);texts.addView(title);
             String desc=p.optString("description");if(!desc.isEmpty()&&!desc.equals(p.optString("title"))){TextView d=text(desc,13,ink,false);d.setAlpha(0.8f);d.setMaxLines(2);d.setEllipsize(TextUtils.TruncateAt.END);d.setPadding(0,dp(2),0,0);texts.addView(d);}
             String site=p.optString("site");TextView sv=text(site.isEmpty()?ChatText.domain(url):site,13,muted,false);sv.setPadding(0,dp(2),0,0);texts.addView(sv);
-            body.addView(texts,new LinearLayout.LayoutParams(0,-2,1));card.addView(body);card.setContentDescription("Link preview: "+p.optString("title")+". Tap to open, hold to copy or share.");line.setVisibility(View.VISIBLE);};
+            body.addView(texts,new LinearLayout.LayoutParams(0,-2,1));card.addView(body);card.setContentDescription("Link preview: "+p.optString("title")+". Tap to open, hold to copy or share.");
+            View music=musicRow(url,m);if(music!=null)card.addView(music,new LinearLayout.LayoutParams(-1,-2));line.setVisibility(View.VISIBLE);};
         card.setOnClickListener(v->{try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));}catch(Exception e){toast("No browser is available.");}});
         // Holding the preview: the same choices as holding the link in the text (copy, share, open, the message's options).
         card.setOnLongClickListener(v->{linkSheet(url,m);return true;});
         JSONObject ready=LinkPreviews.peekSaved(this,url);if(ready!=null){if(!ready.optString("title").isEmpty())fill.done(ready);}else LinkPreviews.load(this,url,fill);
         return line;}
+    /**
+     * Under a song's (album's, artist's, podcast's) preview: "Open in Spotify", found there even when
+     * the link is from Apple Music or YouTube Music. The first tap asks which app you listen with.
+     * The row's height is set from the start, so nothing in the chat moves when the match arrives.
+     */
+    private View musicRow(String url,JSONObject m){MusicLinks.Link link=MusicApps.link(url);if(link==null)return null;boolean podcast=MusicApps.podcast(link);
+        if(MusicApps.off(this,podcast))return null;MusicLinks.App app=MusicApps.chosen(this,podcast);if(app!=null&&app==link.app)return null;
+        JSONObject known=app==null?null:MusicApps.peek(this,url,app);if(known!=null&&known.optString("how").equals("none"))return null;
+        int accent=chatSettings.theme(chatId).accent(dark);
+        LinearLayout wrap=vertical();View rule=new View(this);rule.setBackgroundColor((muted&0x00ffffff)|0x33000000);wrap.addView(rule,new LinearLayout.LayoutParams(-1,Math.max(1,dp(0.5f))));
+        LinearLayout r=row();r.setPadding(dp(14),0,dp(14),0);wrap.addView(r,new LinearLayout.LayoutParams(-1,dp(44)));
+        ImageView icon=new ImageView(this);android.graphics.drawable.Drawable own=app!=null&&MusicApps.installed(this,app)?appIcon(app.pkg):null;
+        if(own!=null)icon.setImageDrawable(own);else{icon.setImageResource(podcast?R.drawable.ic_mic:R.drawable.ic_play);icon.setImageTintList(ColorStateList.valueOf(accent));}
+        LinearLayout.LayoutParams il=new LinearLayout.LayoutParams(dp(22),dp(22));il.setMarginEnd(dp(10));r.addView(icon,il);
+        TextView label=text(app==null?"Open in…":"Open in "+app.label,14,accent,true);label.setSingleLine(true);label.setEllipsize(TextUtils.TruncateAt.END);r.addView(label,new LinearLayout.LayoutParams(0,-2,1));
+        TextView how=text("",13,muted,false);how.setSingleLine(true);how.setPadding(dp(8),0,0,0);r.addView(how);
+        JSONObject[] found={known};boolean[] openWhenFound={false};
+        Runnable show=()->{if(app==null){how.setText("Choose app");r.setContentDescription("Open in your "+(podcast?"podcast":"music")+" app. Choose which one.");return;}
+            JSONObject f=found[0];if(f!=null&&f.optString("how").equals("none")){wrap.setVisibility(View.GONE);return;}
+            String state=f==null?"Finding…":f.optString("how").equals("error")?"Tap to try again":MusicApps.how(f);
+            how.setText(state);r.setContentDescription("Open in "+app.label+(state.isEmpty()?"":". "+state)+".");};
+        show.run();
+        Runnable lookUp=()->MusicApps.find(this,url,app,res->{found[0]=res;show.run();if(openWhenFound[0]){openWhenFound[0]=false;openMusic(res,app);}});
+        if(app!=null&&known==null)lookUp.run();
+        r.setOnClickListener(v->{
+            if(app==null){chooseMusicApp(podcast,chosen->{renderMessages(false);if(chosen!=null)MusicApps.find(this,url,chosen,res->openMusic(res,chosen));});return;}
+            JSONObject f=found[0];
+            if(f==null){openWhenFound[0]=true;return;}
+            if(f.optString("how").equals("error")){found[0]=null;openWhenFound[0]=true;show.run();lookUp.run();return;}
+            openMusic(f,app);});
+        r.setOnLongClickListener(v->{linkSheet(url,m);return true;});
+        return wrap;}
+    /** Opens what was found, if this screen is still the one in front (a slow lookup shouldn't jump into another app later). */
+    private void openMusic(JSONObject found,MusicLinks.App app){if(!resumed)return;String how=found.optString("how");
+        if(how.equals("none")){toast("Couldn't find this in "+app.label+".");return;}
+        if(how.equals("error")){toast("Couldn't reach "+app.label+" to find this. Check the connection and try again.");return;}
+        if(!MusicApps.open(this,found,app))toast("Couldn't open "+app.label+".");}
+    private android.graphics.drawable.Drawable appIcon(String pkg){try{return getPackageManager().getApplicationIcon(pkg);}catch(Exception e){return null;}}
+    /** Which app songs (or podcasts) open in: the ones on this phone first. */
+    private void chooseMusicApp(boolean podcast,java.util.function.Consumer<MusicLinks.App> then){List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
+        for(MusicLinks.App a:MusicApps.choices(this,podcast)){labels.add(a.label+(a.pkg.isEmpty()?" (on the web)":MusicApps.installed(this,a)?"":" (not on this phone)"));
+            actions.add(()->{MusicApps.choose(this,podcast,a);if(then!=null)then.accept(a);});}
+        labels.add(podcast?"Leave podcast links as they are":"Leave music links as they are");actions.add(()->{MusicApps.choose(this,podcast,null);if(then!=null)then.accept(null);});
+        menuSheet(podcast?"Open podcasts in":"Open music in",labels,actions);}
     private ScrollView settingsScroll;private int pendingSettingsY;
     /** Which settings page is showing: "" for the main page, else messages, media, notifications, automation, appearance, connection or data. */
     private String settingsPage="",settingsQuery="",settingsShown=null;private boolean keepSettingsPage;
@@ -4093,7 +4140,9 @@ public class PairedActivity extends Activity {
             settingRow(looks,R.drawable.ic_text_size,0xff8b5cf6,"Text size",null,scaleLabel(textScale),()->{float[] sizes={0.9f,1f,1.15f,1.3f};List<Runnable> actions=new ArrayList<>();
                 for(float f:sizes)actions.add(()->{prefs.edit().putFloat("text_scale",f).apply();settings();});
                 menuSheet("Text size",java.util.Arrays.asList("Small","Default","Large","Larger"),actions);});
-            LinearLayout apps=settingsGroup(content,"Apps for addresses and dates");
+            LinearLayout apps=settingsGroup(content,"Apps for music, addresses and dates");
+            settingRow(apps,R.drawable.ic_play,0xff22c55e,"Music app","Songs from any service open here: “Open in…” under the link",MusicApps.label(this,false),()->chooseMusicApp(false,a->{if(screen.equals("settings"))settings();}));
+            settingRow(apps,R.drawable.ic_mic,0xffa855f7,"Podcast app","Shows and episodes from any app open here",MusicApps.label(this,true),()->chooseMusicApp(true,a->{if(screen.equals("settings"))settings();}));
             settingRow(apps,R.drawable.ic_place,0xffef4444,"Maps app for addresses","Tap an address in a message to open it",mapsAppLabel(),()->chooseMapsApp(pkg->{if(screen.equals("settings"))settings();}));
             settingRow(apps,R.drawable.ic_event,0xff3b82f6,"Calendar app for dates","Tap a date or time in a message to add it",calendarAppLabel(),()->chooseCalendarApp(pkg->{if(screen.equals("settings"))settings();}));
             break;}
