@@ -939,6 +939,8 @@ final class MusicLinks {
 
     private static boolean same(Item found, Item wanted) {
         if (wanted.kind == Kind.ARTIST) return sameName(found.title, wanted.title);
+        // A song more than 15 seconds longer or shorter is another version (an extended mix, a radio edit).
+        if (found.ms > 0 && wanted.ms > 0 && Math.abs(found.ms - wanted.ms) > 15_000) return false;
         return sameName(found.title, wanted.title) && sameArtist(found.artist, wanted.artist);
     }
 

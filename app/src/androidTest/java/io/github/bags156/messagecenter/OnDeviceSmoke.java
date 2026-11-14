@@ -800,6 +800,49 @@ public final class OnDeviceSmoke extends Instrumentation {
      * a chat with its own is asked about (Keep theirs / Change all); any chat can still get its own
      * after, and go back with "Same as all chats".
      */
+    /**
+     * A song from another service opens in yours: under an Apple Music link's preview, "Open in…"
+     * asks which music app the first time, then opens the same song there, and says how close the
+     * match is ("Same song"). The match is saved beforehand, as if found when the message arrived,
+     * so this needs no internet.
+     */
+    private void checkMusicLink(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();
+        String url="https://music.apple.com/us/album/test-album/1111?i=2222",spotify="https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b";
+        android.content.SharedPreferences prefs=ctx.getSharedPreferences("paired",0);String before=prefs.getString("music_app",null);prefs.edit().remove("music_app").commit();
+        java.io.File dir=new java.io.File(ctx.getCacheDir(),"links-v2");dir.mkdirs();java.io.File preview=new java.io.File(dir,MediaCache.hash(url)+".json");
+        java.nio.file.Files.write(preview.toPath(),new JSONObject().put("url",url).put("title","Test Song").put("description","Test Artist · Song · 2026").put("site","Apple Music").toString().getBytes("UTF-8"));
+        java.io.File found=new java.io.File(new java.io.File(ctx.getCacheDir(),"music-v1"),MediaCache.hash("SPOTIFY "+url)+".json");found.getParentFile().mkdirs();
+        java.nio.file.Files.write(found.toPath(),new JSONObject().put("how","exact").put("url",spotify).put("alt","").put("kind","SONG").put("at",System.currentTimeMillis()).toString().getBytes("UTF-8"));
+        try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'music-link',name:'Mia Music',type:'RCS',participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'mm',number:'+15557770123'},fullName:'Mia Music'}]}"));
+            long now=System.currentTimeMillis()*1000;
+            store.message(new JSONObject().put("messageID","music-hi").put("conversationID","music-link").put("participantID","me").put("timestamp",now-60_000_000L)
+                .put("messageStatus",new JSONObject().put("status","OUTGOING_DELIVERED")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","What are you listening to?")))),0,true);
+            store.message(new JSONObject().put("messageID","music-song").put("conversationID","music-link").put("participantID","mm").put("timestamp",now)
+                .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","This one "+url)))),0,true);}
+        Intent[] opened=new Intent[1];ActivityMonitor watch=new ActivityMonitor(){@Override public ActivityResult onStartActivity(Intent intent){
+            if(Intent.ACTION_VIEW.equals(intent.getAction())&&intent.getData()!=null&&intent.getData().toString().startsWith("https://open.spotify.com/")){opened[0]=intent;return new ActivityResult(Activity.RESULT_CANCELED,null);}return null;}};
+        addMonitor(watch);
+        try{runOnMainSync(()->{try{method("thread",String.class).invoke(a,"music-link");}catch(Exception e){throw new RuntimeException(e);}});Thread.sleep(800);waitForIdleSync();
+            android.view.View ask=described(a,"Open in your music app");
+            check(ask!=null,"An Apple Music link's preview has no \"Open in…\" for your own music app");
+            android.graphics.Rect r=placed(ask);press(r.exactCenterX(),r.exactCenterY());
+            check(waitForText("Open music in",3000,true),"Tapping \"Open in…\" didn't ask which music app");shoot("shot-music-choose");
+            pressText("Spotify (not on this phone)");
+            for(int i=0;i<30&&opened[0]==null;i++)Thread.sleep(100);
+            check(opened[0]!=null&&spotify.equals(String.valueOf(opened[0].getData())),"Choosing Spotify didn't open the same song in Spotify ("+opened[0]+")");
+            check("SPOTIFY".equals(prefs.getString("music_app","")),"The music app chosen wasn't remembered");
+            waitForIdleSync();Thread.sleep(400);
+            android.view.View open=described(a,"Open in Spotify. Same song");
+            check(open!=null,"After choosing, the preview doesn't say \"Open in Spotify · Same song\"");shoot("shot-music-link");
+            opened[0]=null;r=placed(open);press(r.exactCenterX(),r.exactCenterY());
+            for(int i=0;i<30&&opened[0]==null;i++)Thread.sleep(100);
+            check(opened[0]!=null&&spotify.equals(String.valueOf(opened[0].getData())),"Tapping \"Open in Spotify\" didn't open the song ("+opened[0]+")");
+            // Holding it offers to change the music app.
+            hold(r.exactCenterX(),r.exactCenterY());check(onTop("Choose music app…"),"Holding a song's preview doesn't offer to change the music app");
+            getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);Thread.sleep(300);}
+        finally{removeMonitor(watch);onMainCall(()->method("inbox").invoke(a));waitForIdleSync();
+            if(before==null)prefs.edit().remove("music_app").commit();else prefs.edit().putString("music_app",before).commit();
+            preview.delete();found.delete();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("music-link");}}}
     private void checkThemeAll(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();ChatSettings settings=new ChatSettings(ctx);
         settings.themeAll("default",true);settings.setTheme("smoke","berry");
         try{onMainCall(()->method("chooseTheme",String.class).invoke(a,""));check(waitForText("Color for all chats",3000,true),"Chat color for all chats didn't open");shoot("shot-theme-all");
@@ -1783,6 +1826,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkUnreadCount((PairedActivity)activity);
         checkCallLines((PairedActivity)activity);
         checkThemeAll((PairedActivity)activity);
+        checkMusicLink((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();

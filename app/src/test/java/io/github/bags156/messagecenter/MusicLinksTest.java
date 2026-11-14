@@ -124,6 +124,13 @@ public class MusicLinksTest {
         assertTrue(net.asked.get(0).contains("country=us") && net.asked.get(0).contains("term=Blinding%20Lights%20The%20Weeknd"));
     }
 
+    @Test public void aLongRemixIsNotTheSong() throws Exception {
+        Fake net = new Fake().on(MusicLinks.DEEZER + "search/track", o("data", a(
+            o("id", 1, "title", "Mr. Brightside (Jacques Lu Cont's Thin White Duke Short Version)", "duration", 374, "artist", o("name", "The Killers"), "link", "https://www.deezer.com/track/1"))));
+        MusicLinks.Item song = new MusicLinks.Item(MusicLinks.Kind.SONG); song.title = "Mr. Brightside"; song.artist = "The Killers"; song.ms = 223_000;
+        assertEquals("search", MusicLinks.find(song, MusicLinks.App.DEEZER, net, "us").how);
+    }
+
     @Test public void findsTheSongOnDeezerByItsCode() throws Exception {
         Fake net = new Fake().on(MusicLinks.DEEZER + "track/isrc:USUG11904206", o("id", 908604612, "link", "https://www.deezer.com/track/908604612"));
         MusicLinks.Item song = new MusicLinks.Item(MusicLinks.Kind.SONG); song.title = "Blinding Lights"; song.artist = "The Weeknd"; song.isrc = "USUG11904206";
