@@ -990,6 +990,19 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(again!=null&&!again.optString("id").equals(fired[0])&&again.optLong("at")>System.currentTimeMillis()+3_500_000L,"\"Again in 1 hour\" didn't set the reminder an hour out again ("+again+")");}
         finally{JSONObject left=Reminders.forChat(ctx,"remind-chat");if(left!=null)Reminders.remove(ctx,left.optString("id"));if(fired[0]!=null)nm.cancel("reminder:"+fired[0],2);
             onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("remind-chat");}}}
+    /** Search boxes have an ✕ while there's text: settings search, typed into and cleared with it, shows all the pages again. */
+    private void checkSearchClear(PairedActivity a)throws Exception{
+        onMainCall(()->method("openSettings").invoke(a));waitForIdleSync();
+        android.widget.EditText[] box={null};
+        runOnMainSync(()->{for(android.widget.EditText e:viewsOf(a.getWindow().getDecorView(),android.widget.EditText.class))if("Search settings".contentEquals(e.getContentDescription()==null?"":e.getContentDescription()))box[0]=e;});
+        check(box[0]!=null,"Settings has no search box");
+        check(described(a,"Clear search")==null,"The ✕ shows while the search box is empty");
+        runOnMainSync(()->box[0].setText("dark"));waitForIdleSync();
+        android.view.View x=described(a,"Clear search");check(x!=null,"No ✕ to clear the search box after typing");shoot("shot-search-clear");
+        runOnMainSync(x::performClick);waitForIdleSync();
+        check(box[0].length()==0&&described(a,"Clear search")==null,"The ✕ didn't empty the search box (or stayed)");
+        check(viewsWithDescription(a,"Data & about")>0,"Clearing the search didn't bring the settings pages back");
+        onMainCall(()->method("inbox").invoke(a));waitForIdleSync();}
     private void checkThemeAll(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();ChatSettings settings=new ChatSettings(ctx);
         settings.themeAll("default",true);settings.setTheme("smoke","berry");
         try{onMainCall(()->method("chooseTheme",String.class).invoke(a,""));check(waitForText("Color for all chats",3000,true),"Chat color for all chats didn't open");shoot("shot-theme-all");
@@ -1979,6 +1992,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkGroupsInCommon((PairedActivity)activity);
         checkSongPlaying((PairedActivity)activity);
         checkChatReminder((PairedActivity)activity);
+        checkSearchClear((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();
