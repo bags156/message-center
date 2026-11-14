@@ -1,7 +1,6 @@
-Message Center 1.5.42.
+Message Center 1.5.43.
 
-- Songs you send go as the other person's music app. Paste a Spotify song into a chat with someone who uses Apple Music, and it changes to the same song on Apple Music before you send it. A note above the message box says so, with Undo. It only swaps in an exact match; if it can't find the same song on their app, your link goes as it is.
-- Message Center knows someone's music app from the song links they've sent you. You can also set it, or turn this off for a chat, in the chat's details → Their music app.
-- This is for one-to-one chats. If you tap send while it's still looking, it waits a moment (4 seconds at most) so the right link goes.
+- Fixed: a waiting message lit up a locked phone every few seconds. With the lock screen set to show less (Settings → Notifications → On the lock screen), Message Center redrew its notifications each time the screen went off. On OnePlus phones a redraw lights the screen, so it went off, redrew, and lit up again. Now a notification is redrawn only when what it shows has to change: once as the phone locks and once when you unlock.
+- Group chat pictures in bubbles aren't refreshed while the phone is locked either.
 
 Install over the existing app through Obtainium. Your pairing, conversations and settings are retained.

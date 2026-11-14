@@ -726,7 +726,7 @@ public final class PairedService extends Service {
         synchronized(notified){List<JSONObject> list=notified.computeIfAbsent(id,k->new ArrayList<>());if(m!=null)list.add(m);while(list.size()>6)list.remove(0);recent=new ArrayList<>(list);}
         if(recent.isEmpty()){List<JSONObject> saved=store.messages(id,3);for(JSONObject r:saved)if(!PairedProtocol.body(r).isEmpty())recent.add(r);}
         // What notifications show (this chat's own choice, or Settings): "Name only" swaps what was said for a count; "Nothing" hides who it's from too.
-        boolean showText=NotificationPrivacy.showText(this,id),showName=NotificationPrivacy.showName(this,id)||bubbleNow;
+        boolean showText=NotificationPrivacy.showText(this,id),showName=NotificationPrivacy.showName(this,id)||bubbleNow;drawnPrivacy.put(id,NotificationPrivacy.mode(this,id));
         int incoming=0;JSONObject lastIn=null;for(JSONObject r:recent)if(!PairedProtocol.outgoing(r,chat)){incoming++;lastIn=r;}
         boolean replied=!recent.isEmpty()&&PairedProtocol.outgoing(recent.get(recent.size()-1),chat);
         String hidden=replied?"You replied":NotificationPrivacy.count(incoming);
@@ -775,7 +775,7 @@ public final class PairedService extends Service {
     }
     static void refreshConversationIcons(){PairedService s=current;if(s==null||s.media.isShutdown()||!s.refreshingIcons.compareAndSet(false,true))return;
         try{s.media.execute(()->{try{s.refreshGroupBubbles();}finally{s.refreshingIcons.set(false);}});}catch(java.util.concurrent.RejectedExecutionException ignored){s.refreshingIcons.set(false);}}
-    private void refreshGroupBubbles(){NotificationManager manager=getSystemService(NotificationManager.class);
+    private void refreshGroupBubbles(){if(NotificationPrivacy.locked(this))return;NotificationManager manager=getSystemService(NotificationManager.class);
         for(StatusBarNotification sbn:manager.getActiveNotifications()){String tag=sbn.getTag();if(tag==null||!tag.startsWith("chat:"))continue;String id=tag.substring(5);if(ChatBubbles.away(id))continue;JSONObject chat=store.chat(id);
             Notification old=sbn.getNotification();Notification.BubbleMetadata meta=old.getBubbleMetadata();if(meta==null||!Avatars.isGroup(chat)||!NotificationPrivacy.showName(this,id))continue;
             try{Bitmap icon=chatIcon(chat,PairedProtocol.title(chat));publishShortcut(id,PairedProtocol.title(chat),icon);
@@ -834,11 +834,21 @@ public final class PairedService extends Service {
         getSystemService(NotificationManager.class).notify("chat:"+id,1,b.build());
     }
     /** Redraws the chat notifications already on screen after "What notifications show" changes, without sound. */
+    /**
+     * Redraws chat notifications whose privacy changed: the phone locked or unlocked with a stricter
+     * lock screen choice, or a setting changed. Only those whose shown details have to change: on some
+     * phones (OnePlus) redrawing a notification lights the screen, and the screen going off again
+     * redrew it again, so a waiting message lit a locked phone every few seconds.
+     */
     static void refreshChatNotifications(Context context) {
         PairedService s=current;if(s==null)return;
         s.main.post(()->{for(android.service.notification.StatusBarNotification sbn:s.getSystemService(NotificationManager.class).getActiveNotifications()){
-            String tag=sbn.getTag();if(tag!=null&&tag.startsWith("chat:")&&!ChatBubbles.away(tag.substring(5)))s.postConversation(tag.substring(5),null,true,false);}});
+            String tag=sbn.getTag();if(tag==null||!tag.startsWith("chat:"))continue;String id=tag.substring(5);
+            if(ChatBubbles.away(id)||NotificationPrivacy.mode(s,id).equals(s.drawnPrivacy.get(id)))continue;
+            s.postConversation(id,null,true,false);}});
     }
+    /** What each chat's notification was drawn showing (NotificationPrivacy's mode then), so it's only redrawn when that changes. */
+    final java.util.Map<String,String> drawnPrivacy=new java.util.concurrent.ConcurrentHashMap<>();
     /**
      * Opens Android's settings for this one conversation (sound, vibration, priority, Do Not
      * Disturb), creating its own channel first so it can differ from other chats.

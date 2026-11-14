@@ -427,6 +427,30 @@ public final class OnDeviceSmoke extends Instrumentation {
      * only, or nothing); unlocked, they show what's chosen for the chat. It's on the
      * Notifications settings page.
      */
+    /**
+     * A waiting message doesn't keep lighting a locked phone: with a stricter lock screen choice the
+     * chat's notification is redrawn once as the phone locks (hiding what was said), and not again
+     * each time the screen goes off (on a OnePlus, each redraw lit the screen, which then went off
+     * and redrew it again, every few seconds). Unlocking redraws it in full.
+     */
+    private void checkLockedNoRedrawLoop()throws Exception{android.content.Context ctx=getTargetContext();
+        if(field(PairedService.class,"current").get(null)==null){note("lock redraw check skipped: the service isn't running");return;}
+        getUiAutomation().grantRuntimePermission(ctx.getPackageName(),android.Manifest.permission.POST_NOTIFICATIONS);
+        android.app.NotificationManager nm=ctx.getSystemService(android.app.NotificationManager.class);String before=NotificationPrivacy.mode(ctx);
+        try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'lock-loop',name:'Lou Lock',type:'RCS',participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'ll',number:'+15557770166'},fullName:'Lou Lock'}]}"));
+            store.message(new JSONObject().put("messageID","lock-loop-1").put("conversationID","lock-loop").put("participantID","ll").put("timestamp",System.currentTimeMillis()*1000)
+                .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","Are you up?")))),0,true);}
+        nm.notify("chat:lock-loop",1,new android.app.Notification.Builder(ctx,"paired-messages").setSmallIcon(android.R.drawable.sym_action_chat).setContentTitle("Lou Lock").setContentText("Are you up?").build());
+        try{NotificationPrivacy.set(ctx,NotificationPrivacy.ALL);NotificationPrivacy.setLockMode(ctx,NotificationPrivacy.NAME);NotificationPrivacy.lockedForChecks=true;
+            PairedService.refreshChatNotifications(ctx);Thread.sleep(1200);long locked=postTime(nm,"chat:lock-loop");
+            check(locked>0,"The chat's notification wasn't redrawn as the phone locked");
+            for(int i=0;i<3;i++){PairedService.refreshChatNotifications(ctx);Thread.sleep(700);}
+            check(postTime(nm,"chat:lock-loop")==locked,"The chat's notification was redrawn again each time the locked screen went off (it lights the screen every few seconds)");
+            NotificationPrivacy.lockedForChecks=false;PairedService.refreshChatNotifications(ctx);Thread.sleep(1200);
+            check(postTime(nm,"chat:lock-loop")>locked,"Unlocking didn't redraw the chat's notification in full");}
+        finally{NotificationPrivacy.lockedForChecks=null;NotificationPrivacy.setLockMode(ctx,NotificationPrivacy.SAME);NotificationPrivacy.set(ctx,before);nm.cancel("chat:lock-loop",1);
+            try(PairedStore store=new PairedStore(ctx)){store.deleteChat("lock-loop");}}}
+    private static long postTime(android.app.NotificationManager nm,String tag){for(android.service.notification.StatusBarNotification sbn:nm.getActiveNotifications())if(tag.equals(sbn.getTag()))return sbn.getPostTime();return -1;}
     private void checkLockScreenPreviews(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();
         String before=NotificationPrivacy.mode(ctx);NotificationPrivacy.set(ctx,NotificationPrivacy.ALL);
         try{NotificationPrivacy.setLockMode(ctx,NotificationPrivacy.NONE);NotificationPrivacy.lockedForChecks=true;
@@ -1856,6 +1880,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkSettingsPages((PairedActivity)activity);
         checkSendWhileLoading((PairedActivity)activity);
         checkLockScreenPreviews((PairedActivity)activity);
+        checkLockedNoRedrawLoop();
         checkHoldLink((PairedActivity)activity);
         checkTimeSwipe((PairedActivity)activity);
         checkPhotoMechanics((PairedActivity)activity);
