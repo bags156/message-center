@@ -35,6 +35,9 @@ final class Translation {
     /** What a translation came out as. same: it's already in your language (text is empty then). */
     static final class Result { final String text, from; final boolean same; Result(String text, String from, boolean same) { this.text = text; this.from = from; this.same = same; } }
 
+    /** Where the last on-device translation stopped (never the words): for the device checks. */
+    static volatile String lastStep = "";
+
     /** The language the words are in (Android's guess, on the phone), or null. Off the main thread. */
     static ULocale language(Context c, String words) {
         try {
@@ -52,18 +55,19 @@ final class Translation {
         if (from != null && from.getLanguage().equals(to.getLanguage())) return new Result("", from.getDisplayLanguage(ULocale.forLocale(Locale.getDefault())), true);
         try {
             TranslationManager manager = c.getSystemService(TranslationManager.class);
-            if (manager == null || from == null) return null;
-            boolean can = false;
+            if (manager == null || from == null) { lastStep = from == null ? "language unknown" : "no translation service"; return null; }
+            int state = -1;
             for (TranslationCapability cap : manager.getOnDeviceTranslationCapabilities(TranslationSpec.DATA_FORMAT_TEXT, TranslationSpec.DATA_FORMAT_TEXT)) {
                 if (cap.getSourceSpec().getLocale().getLanguage().equals(from.getLanguage()) && cap.getTargetSpec().getLocale().getLanguage().equals(to.getLanguage())
-                    && cap.getState() != TranslationCapability.STATE_NOT_AVAILABLE) can = true;
+                    && cap.getState() != TranslationCapability.STATE_NOT_AVAILABLE) state = cap.getState();
             }
-            if (!can) return null;
+            lastStep = "pair state " + state;
+            if (state == -1) return null;
             Executor now = Runnable::run;
             TranslationContext context = new TranslationContext.Builder(new TranslationSpec(from, TranslationSpec.DATA_FORMAT_TEXT), new TranslationSpec(to, TranslationSpec.DATA_FORMAT_TEXT)).build();
             AtomicReference<Translator> made = new AtomicReference<>(); CountDownLatch ready = new CountDownLatch(1);
             manager.createOnDeviceTranslator(context, now, t -> { made.set(t); ready.countDown(); });
-            if (!ready.await(10, TimeUnit.SECONDS) || made.get() == null) return null;
+            if (!ready.await(10, TimeUnit.SECONDS) || made.get() == null) { lastStep += ", no translator"; return null; }
             Translator translator = made.get();
             try {
                 AtomicReference<String> said = new AtomicReference<>(); CountDownLatch done = new CountDownLatch(1);
@@ -71,12 +75,14 @@ final class Translation {
                 translator.translate(request, new CancellationSignal(), now, response -> {
                     SparseArray<TranslationResponseValue> values = response.getTranslationResponseValues();
                     if (values != null && values.size() > 0 && values.valueAt(0).getText() != null) said.set(values.valueAt(0).getText().toString());
-                    done.countDown();
+                    if (said.get() != null || response.isFinalResponse()) done.countDown();
                 });
-                if (!done.await(20, TimeUnit.SECONDS) || said.get() == null || said.get().trim().isEmpty()) return null;
+                boolean answered = done.await(30, TimeUnit.SECONDS);
+                if (!answered || said.get() == null || said.get().trim().isEmpty()) { lastStep += answered ? ", empty answer" : ", no answer in 30 s"; return null; }
+                lastStep += ", translated";
                 return new Result(said.get(), from.getDisplayLanguage(ULocale.forLocale(Locale.getDefault())), false);
             } finally { translator.destroy(); }
-        } catch (Exception e) { return null; }
+        } catch (Exception e) { lastStep += ", " + e.getClass().getSimpleName(); return null; }
     }
 
     /** Hands the words to the phone's translation app (Google Translate's pop-up). False when there isn't one. */

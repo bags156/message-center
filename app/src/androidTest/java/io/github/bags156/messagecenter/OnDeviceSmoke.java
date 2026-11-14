@@ -1062,9 +1062,9 @@ public final class OnDeviceSmoke extends Instrumentation {
             shoot("shot-suggested-replies");
             JSONObject spanish;try(PairedStore store=new PairedStore(ctx)){spanish=store.message("sr-1");}
             onMainCall(()->method("translate",JSONObject.class,String.class).invoke(a,spanish,PairedProtocol.text(spanish)));
-            until=android.os.SystemClock.uptimeMillis()+15000;boolean shown=false;
+            until=android.os.SystemClock.uptimeMillis()+45000;boolean shown=false;
             while(android.os.SystemClock.uptimeMillis()<until&&!(shown=described(a,"Translated from")!=null))Thread.sleep(300);
-            note("PROBE translate "+(shown?"translated on the phone":"no on-device translation here (hands off to a translation app)"));
+            note("PROBE translate "+(shown?"translated on the phone":"no on-device translation here (hands off to a translation app)")+": "+Translation.lastStep);
             if(shown){shoot("shot-translated");runOnMainSync(()->described(a,"Translated from").performClick());waitForIdleSync();
                 check(described(a,"Show translation")!=null,"Tapping a translation didn't show the original");}
             check(!a.isFinishing(),"The chat closed after Translate");}
