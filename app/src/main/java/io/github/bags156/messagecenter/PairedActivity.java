@@ -1516,7 +1516,7 @@ public class PairedActivity extends Activity {
     private boolean sendingText;
     private void send(){if(composer==null)return;
         if(!musicPending.isEmpty()){if(!sendAfterMusic){sendAfterMusic=true;showMusicNote("Finding it on "+musicPendingApp+"\u2026 sends in a moment",false);
-            ui.postDelayed(()->{if(sendAfterMusic){sendAfterMusic=false;musicPending="";send();}},4000);}return;}
+            ui.postDelayed(()->{if(sendAfterMusic){sendAfterMusic=false;musicPending="";send();}},8000);}return;}
         repliedSinceInbox=true;unreadSince=-1;String body=composer.getText().toString(),id=chatId,reply=replyId;JSONObject c=store.chat(id);
         boolean files=false;for(Outgoing o:outgoing)if(!o.sending)files=true;
         if(body.trim().isEmpty()&&!files)return;if(c==null){error("Refresh this conversation before sending.");return;}
@@ -4032,7 +4032,7 @@ public class PairedActivity extends Activity {
                 int sel=composer.getSelectionStart(),end=at+url.length();composer.getText().replace(at,end,to);
                 if(sel>=end)composer.setSelection(Math.min(composer.length(),sel+to.length()-url.length()));
                 musicFrom=url;musicTo=to;showMusicNote("Changed to "+theirs.label+" for "+name+": the same song",true);}
-            else if(here&&at>=0)showMusicNote(res.optString("how").equals("error")?"Couldn't reach "+theirs.label+", so the link goes as it is":"Not on "+theirs.label+" exactly, so the link goes as it is",false);
+            else if(here&&at>=0)showMusicNote(res.optString("how").equals("error")?"Couldn't reach "+theirs.label+", so the link goes as it is":"Couldn't find an exact "+theirs.label+" link, so yours goes as it is",false);
             if(sendAfterMusic){sendAfterMusic=false;if(here)send();}});}
     private void showMusicNote(String text,boolean undo){if(musicNote==null)return;musicNoteText.setText(text);musicUndo.setVisibility(undo?View.VISIBLE:View.GONE);musicNote.setVisibility(View.VISIBLE);musicNote.setContentDescription(text);}
     private void hideMusicNote(){if(musicNote!=null)musicNote.setVisibility(View.GONE);}

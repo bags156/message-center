@@ -151,18 +151,35 @@ public class MusicLinksTest {
         assertEquals("USUG11904206", song.isrc);
     }
 
-    @Test public void findsTheSongOnItsSpotifyAlbumWhenOnlyTheAlbumIsLinked() throws Exception {
+    @Test public void findsSpotifySongsThroughListenBrainzFirst() throws Exception {
         Fake net = new Fake()
-            .on(MusicLinks.MB + "isrc/USUG11904206", o("recordings", a(o("id", "rec-1", "title", "Blinding Lights"))))
-            .on(MusicLinks.MB + "recording/rec-1", o("id", "rec-1", "relations", a(), "releases", a(o("id", "rel-single", "title", "Blinding Lights"), o("id", "rel-album", "title", "After Hours"))))
-            .on(MusicLinks.MB + "release/rel-album", o("relations", a(o("url", o("resource", "https://open.spotify.com/album/4yP0hdKOZPNshxUOjY0cZj")))))
-            .on("https://open.spotify.com/embed/album/4yP0hdKOZPNshxUOjY0cZj", "<script>{\"trackList\":[{\"uri\":\"spotify:track:aaaaaaaaaaaaaaaaaaaaaa\",\"title\":\"Alone Again\"},"
-                + "{\"uri\":\"spotify:track:0VjIjW4GlUZAMYd2vXMi3b\",\"uid\":\"x\",\"title\":\"Blinding Lights\",\"subtitle\":\"The Weeknd\"}]}</script>");
-        MusicLinks.Item song = new MusicLinks.Item(MusicLinks.Kind.SONG); song.title = "Blinding Lights"; song.artist = "The Weeknd"; song.album = "After Hours"; song.isrc = "USUG11904206";
+            .on(MusicLinks.DEEZER + "search/track", o("data", a(o("id", 1, "title", "A Bar Song (Tipsy)", "duration", 171, "artist", o("name", "Shaboozey"), "album", o("title", "Where I've Been, Isn't Where I'm Going")))))
+            .on(MusicLinks.DEEZER + "track/1", o("id", 1, "isrc", "USUYG1543939"))
+            .on(MusicLinks.LB + "spotify-id-from-metadata/json?artist_name=Shaboozey&release_name=Where", "[{\"artist_name\":\"Shaboozey\",\"spotify_track_ids\":[\"5fZJQrFKWQLb7FpJXZ1g7K\",\"6ZGkfAtpzimwD4597JhIsl\"]}]");
+        MusicLinks.Item song = new MusicLinks.Item(MusicLinks.Kind.SONG); song.title = "A Bar Song (Tipsy)"; song.artist = "Shaboozey";
         MusicLinks.Match m = MusicLinks.find(song, MusicLinks.App.SPOTIFY, net, "us");
-        assertEquals("https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b", m.url);
-        assertTrue("the album the song was on was looked at first", net.asked.indexOf(net.asked.stream().filter(u -> u.contains("release/rel-album")).findFirst().orElse("")) >= 0
-            && net.asked.stream().noneMatch(u -> u.contains("release/rel-single")));
+        assertTrue(m.exact()); assertEquals("https://open.spotify.com/track/5fZJQrFKWQLb7FpJXZ1g7K", m.url);
+        assertTrue("the album came from Deezer, since a YouTube Music link doesn't say it", net.asked.stream().anyMatch(u -> u.contains("release_name=Where%20I%E2%80%99ve") || u.contains("release_name=Where%20I%27ve")));
+        assertTrue("MusicBrainz wasn't needed", net.asked.stream().noneMatch(u -> u.startsWith(MusicLinks.MB)));
+    }
+
+    @Test public void asksListenBrainzWithoutTheAlbumWhenTheAlbumNameDiffers() throws Exception {
+        Fake net = new Fake()
+            .on(MusicLinks.LB + "spotify-id-from-metadata/json?artist_name=Lady%20Gaga%20%26%20Bruno%20Mars&release_name=Wrong", "[{\"spotify_track_ids\":[]}]")
+            .on(MusicLinks.LB + "spotify-id-from-metadata/json?artist_name=Lady%20Gaga%20%26%20Bruno%20Mars&release_name=&", "[{\"spotify_track_ids\":[]}]")
+            .on(MusicLinks.LB + "spotify-id-from-metadata/json?artist_name=Lady%20Gaga&release_name=&", "[{\"spotify_track_ids\":[\"2plbrEY59IikOBgBGLjaoe\"]}]");
+        MusicLinks.Item song = new MusicLinks.Item(MusicLinks.Kind.SONG); song.title = "Die With A Smile"; song.artist = "Lady Gaga & Bruno Mars"; song.album = "Wrong"; song.isrc = "USUM72409273";
+        assertEquals("https://open.spotify.com/track/2plbrEY59IikOBgBGLjaoe", MusicLinks.find(song, MusicLinks.App.SPOTIFY, net, "us").url);
+    }
+
+    @Test public void asksListenBrainzAboutTheRecordingMusicBrainzFound() throws Exception {
+        Fake net = new Fake()
+            .on(MusicLinks.LB + "spotify-id-from-metadata", "[{\"spotify_track_ids\":[]}]")
+            .on(MusicLinks.MB + "isrc/USUG11904206", o("recordings", a(o("id", "rec-1", "title", "Blinding Lights"))))
+            .on(MusicLinks.MB + "recording/rec-1", o("id", "rec-1", "relations", a()))
+            .on(MusicLinks.LB + "spotify-id-from-mbid/json?recording_mbid=rec-1", "[{\"recording_mbid\":\"rec-1\",\"spotify_track_ids\":[\"0VjIjW4GlUZAMYd2vXMi3b\"]}]");
+        MusicLinks.Item song = new MusicLinks.Item(MusicLinks.Kind.SONG); song.title = "Blinding Lights"; song.artist = "The Weeknd"; song.isrc = "USUG11904206";
+        assertEquals("https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b", MusicLinks.find(song, MusicLinks.App.SPOTIFY, net, "us").url);
     }
 
     @Test public void searchesTheAppWhenNothingIsExact() {
