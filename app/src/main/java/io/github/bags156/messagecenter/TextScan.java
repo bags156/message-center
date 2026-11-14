@@ -4,6 +4,7 @@ import android.text.SpannableString;
 import android.text.style.URLSpan;
 import android.text.util.Linkify;
 import android.util.LruCache;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.TimeZone;
 
@@ -38,16 +39,21 @@ final class TextScan {
         SpannableString s = new SpannableString(text);
         int[][] ranges = new int[0][];
         String[] urls = new String[0];
+        List<SmartText.Hit> smart = SmartText.all(text, sentAt, zone);
         if (Linkify.addLinks(s, Linkify.WEB_URLS | Linkify.EMAIL_ADDRESSES | Linkify.PHONE_NUMBERS)) {
-            URLSpan[] spans = s.getSpans(0, s.length(), URLSpan.class);
-            ranges = new int[spans.length][];
-            urls = new String[spans.length];
-            for (int i = 0; i < spans.length; i++) {
-                ranges[i] = new int[]{s.getSpanStart(spans[i]), s.getSpanEnd(spans[i])};
-                urls[i] = spans[i].getURL();
+            List<int[]> keptRanges = new ArrayList<>(); List<String> keptUrls = new ArrayList<>();
+            for (URLSpan span : s.getSpans(0, s.length(), URLSpan.class)) {
+                int start = s.getSpanStart(span), end = s.getSpanEnd(span);
+                // The digits in a tracking number or flight aren't a phone number.
+                boolean inside = false;
+                if (span.getURL().startsWith("tel:")) for (SmartText.Hit h : smart) if (start < h.end && end > h.start && !"date".equals(h.kind)) inside = true;
+                if (inside) continue;
+                keptRanges.add(new int[]{start, end}); keptUrls.add(span.getURL());
             }
+            ranges = keptRanges.toArray(new int[0][]);
+            urls = keptUrls.toArray(new String[0]);
         }
-        TextScan scan = new TextScan(ranges, urls, ChatText.addresses(text), SmartText.all(text, sentAt, zone));
+        TextScan scan = new TextScan(ranges, urls, ChatText.addresses(text), smart);
         scans.put(key, scan);
         return scan;
     }

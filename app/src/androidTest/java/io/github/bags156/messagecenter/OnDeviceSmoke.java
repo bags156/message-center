@@ -1027,8 +1027,12 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(box[0].startsWith("Happy birthday!"),"\"Say happy birthday\" didn't put it in the message box ("+box[0]+")");
             runOnMainSync(()->{try{((android.widget.EditText)field("composer").get(a)).setText("");}catch(Exception e){throw new RuntimeException(e);}});
             onMainCall(()->method("inbox").invoke(a));waitForIdleSync();Thread.sleep(300);
-            int[] cakes={0};runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(found,"Bea Birthday 🎂",android.view.View.FIND_VIEWS_WITH_TEXT);cakes[0]=found.size();});
-            check(cakes[0]>0,"No cake by Bea's name in the list on her birthday");}
+            String[] bea={""};long until=android.os.SystemClock.uptimeMillis()+3000;
+            do{Thread.sleep(200);runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(found,"Bea",android.view.View.FIND_VIEWS_WITH_TEXT);
+                StringBuilder all=new StringBuilder();for(android.view.View v:found)if(v instanceof android.widget.TextView)all.append(((android.widget.TextView)v).getText()).append(" | ");bea[0]=all.toString();});}
+            while(!bea[0].contains("Bea Birthday \uD83C\uDF82")&&android.os.SystemClock.uptimeMillis()<until);
+            shoot("shot-birthday-inbox");
+            check(bea[0].contains("Bea Birthday \uD83C\uDF82"),"No cake by Bea's name in the list on her birthday (the list shows: "+bea[0]+")");}
         finally{Birthdays.setForChecks(new java.util.HashMap<>());onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("bday-chat");}}}
     private void checkThemeAll(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();ChatSettings settings=new ChatSettings(ctx);
         settings.themeAll("default",true);settings.setTheme("smoke","berry");
