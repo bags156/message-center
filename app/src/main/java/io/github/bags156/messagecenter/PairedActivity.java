@@ -572,6 +572,9 @@ public class PairedActivity extends Activity {
         List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
         if(!blocked){labels.add(pinned?"Unpin":"Pin to top");actions.add(()->togglePin(c));
             labels.add(unread?"Mark as read":"Mark as unread");actions.add(()->{if(unread){chatSettings.setMarkedUnread(id,false);chatSettings.markSeen(id,PairedProtocol.time(c));renderInbox();}else toggleUnread(id);});
+            JSONObject reminder=Reminders.forChat(this,id);
+            if(reminder==null){labels.add("Remind me in 1 hour");actions.add(()->remindChat(c,System.currentTimeMillis()+3_600_000L));}
+            else{labels.add("Reminder at "+timeOnly(reminder.optLong("at"))+" · remove");actions.add(()->{Reminders.remove(this,reminder.optString("id"));toast("Reminder removed");});}
             labels.add(muted?"Unmute notifications":"Mute notifications");actions.add(()->toggleMute(id));
             labels.add(chatSettings.snoozed(id)?"Snoozed until "+snoozeLabel(id)+"…":"Snooze notifications…");actions.add(()->snoozeMenu(id));
             labels.add(archived?"Unarchive":"Archive");actions.add(()->archive(c,!archived));
@@ -583,6 +586,11 @@ public class PairedActivity extends Activity {
         labels.add(blocked?"Unblock":"Block…");actions.add(()->block(c));
         labels.add("Delete conversation…");actions.add(()->deleteChat(c));
         menuSheet(PairedProtocol.title(c),labels,actions);}
+    /** A banner at that time about the chat, with its latest message (what notifications may show permitting). */
+    private void remindChat(JSONObject c,long at){String id=c.optString("conversationID");JSONObject last=store.latestIncoming(id);
+        String said=last==null?"":displayBody(last),who=last!=null&&PairedProtocol.other(c)==null?senderFirst(last,c)+": ":"";
+        Reminders.add(this,id,"",PairedProtocol.title(c),said.isEmpty()?"Tap to open the chat":who+said,at);
+        toast(getSystemService(android.app.AlarmManager.class).canScheduleExactAlarms()?"I'll remind you at "+timeOnly(at):"Reminder set. Allow \"Alarms & reminders\" for exact timing.");}
     private void openBubble(String id){String problem=PairedService.showBubble(this,id);if(!problem.isEmpty())toast(problem);}
     private void togglePin(JSONObject c){String id=c.optString("conversationID");boolean now=!chatSettings.pinned(c);chatSettings.setPinned(id,now);decoder.execute(()->Nudges.reschedule(this));
         toast(now?"Pinned to the top of Message Center":"Unpinned");if(screen.equals("inbox"))renderInbox();}

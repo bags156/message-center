@@ -18,11 +18,12 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * "Remind me about this message": at the chosen time a notification brings the message
- * back and opens the chat at it. Kept on this phone; alarms are set again after a restart.
+ * "Remind me about this message", and "Remind me in 1 hour" for a whole chat (hold it in the
+ * list): at the chosen time a banner brings it back and opens the chat (at the message). The
+ * banner can remind again in an hour. Kept on this phone; alarms are set again after a restart.
  */
 public final class Reminders extends BroadcastReceiver {
-    static final String FIRE = "io.github.bags156.messagecenter.REMIND";
+    static final String FIRE = "io.github.bags156.messagecenter.REMIND", AGAIN = "io.github.bags156.messagecenter.REMIND_AGAIN";
     static final String CHANNEL = "reminders";
 
     private static SharedPreferences prefs(Context c) { return c.getSharedPreferences("reminders", Context.MODE_PRIVATE); }
@@ -40,8 +41,15 @@ public final class Reminders extends BroadcastReceiver {
         return null;
     }
 
+    /** The reminder set on this chat as a whole (not on one of its messages), or null. */
+    static JSONObject forChat(Context context, String chat) {
+        for (JSONObject o : all(context)) if (o.optString("message").isEmpty() && chat.equals(o.optString("chat"))) return o;
+        return null;
+    }
+
+    /** messageID "": a reminder about the chat itself. */
     static synchronized void add(Context context, String chat, String messageID, String title, String text, long at) {
-        JSONObject existing = forMessage(context, messageID);
+        JSONObject existing = messageID.isEmpty() ? forChat(context, chat) : forMessage(context, messageID);
         if (existing != null) remove(context, existing.optString("id"));
         JSONObject o = new JSONObject();
         try { o.put("id", UUID.randomUUID().toString()).put("chat", chat).put("message", messageID).put("title", title).put("text", text).put("at", at); } catch (Exception ignored) {}
@@ -83,27 +91,38 @@ public final class Reminders extends BroadcastReceiver {
         remove(context, id);
         if (context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return;
         NotificationManager nm = context.getSystemService(NotificationManager.class);
-        if (nm.getNotificationChannel(CHANNEL) == null) {
-            NotificationChannel ch = new NotificationChannel(CHANNEL, "Message reminders", NotificationManager.IMPORTANCE_HIGH);
-            ch.setDescription("Reminders you set on messages"); nm.createNotificationChannel(ch);
-        }
+        // High importance: a banner over whatever's on screen (unless Do Not Disturb, or it's been changed in Android's settings).
+        NotificationChannel ch = new NotificationChannel(CHANNEL, "Reminders", NotificationManager.IMPORTANCE_HIGH);
+        ch.setDescription("Reminders you set on messages and chats"); nm.createNotificationChannel(ch);
         String chat = due.optString("chat"), message = due.optString("message");
         Intent open = new Intent(context, PairedActivity.class).setAction(PairedActivity.OPEN_CHAT)
             .setData(Uri.parse("messagecenter://reminder-open/" + id)).putExtra("chat", chat).putExtra("message", message)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent tap = PendingIntent.getActivity(context, 8, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         // Settings → What notifications show applies here too.
-        String heading = NotificationPrivacy.showName(context, chat) ? "Reminder: " + due.optString("title") : "Message reminder";
-        String text = NotificationPrivacy.showText(context, chat) ? due.optString("text") : "Tap to see the message";
+        boolean wholeChat = message.isEmpty();
+        String heading = NotificationPrivacy.showName(context, chat) ? "Reminder: " + due.optString("title") : wholeChat ? "Chat reminder" : "Message reminder";
+        String text = NotificationPrivacy.showText(context, chat) ? due.optString("text") : wholeChat ? "Tap to open the chat" : "Tap to see the message";
+        Intent again = new Intent(context, Reminders.class).setAction(AGAIN).setData(Uri.parse("messagecenter://reminder-again/" + id))
+            .putExtra("id", id).putExtra("chat", chat).putExtra("message", message).putExtra("title", due.optString("title")).putExtra("text", due.optString("text"));
+        PendingIntent later = PendingIntent.getBroadcast(context, 9, again, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification n = new Notification.Builder(context, CHANNEL).setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(heading).setContentText(text)
             .setStyle(new Notification.BigTextStyle().bigText(text))
             .setCategory(Notification.CATEGORY_REMINDER).setVisibility(Notification.VISIBILITY_PRIVATE)
-            .setContentIntent(tap).setAutoCancel(true).build();
+            .setContentIntent(tap).setAutoCancel(true)
+            .addAction(new Notification.Action.Builder(null, "Again in 1 hour", later).build()).build();
         nm.notify("reminder:" + id, 2, n);
     }
 
     @Override public void onReceive(Context context, Intent intent) {
         if (FIRE.equals(intent.getAction())) { String id = intent.getStringExtra("id"); if (id != null) fire(context.getApplicationContext(), id); }
+        else if (AGAIN.equals(intent.getAction())) {
+            Context app = context.getApplicationContext(); String id = intent.getStringExtra("id"), chat = intent.getStringExtra("chat");
+            if (id == null || chat == null) return;
+            app.getSystemService(NotificationManager.class).cancel("reminder:" + id, 2);
+            String message = intent.getStringExtra("message");
+            add(app, chat, message == null ? "" : message, String.valueOf(intent.getStringExtra("title")), String.valueOf(intent.getStringExtra("text")), System.currentTimeMillis() + 3_600_000L);
+        }
     }
 }
