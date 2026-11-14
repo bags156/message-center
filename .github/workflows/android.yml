@@ -103,7 +103,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/music"
           curl -fsSL -o "$RUNNER_TEMP/music/json.jar" https://repo1.maven.org/maven2/org/json/json/20240303/json-20240303.jar
           javac -nowarn -d "$RUNNER_TEMP/music" -cp "$RUNNER_TEMP/music/json.jar" app/src/main/java/io/github/bags156/messagecenter/MusicLinks.java tools/MusicProbe.java
-          java -cp "$RUNNER_TEMP/music:$RUNNER_TEMP/music/json.jar" io.github.bags156.messagecenter.MusicProbe | sed 's/^/MUSIC /'
+          java -cp "$RUNNER_TEMP/music:$RUNNER_TEMP/music/json.jar" io.github.bags156.messagecenter.MusicProbe 'song:A Bar Song (Tipsy)|Shaboozey' 'song:Paranoid|Barlas & Mert' 'song:Die With A Smile|Lady Gaga & Bruno Mars' 'song:Espresso|Sabrina Carpenter' 'song:Golden|HUNTR/X' 'song:luther|Kendrick Lamar & SZA' 'song:Mr. Brightside|The Killers' 'song:Dreams|Fleetwood Mac' 'song:Ordinary|Alex Warren' 'song:Birds of a Feather|Billie Eilish' 'https://music.youtube.com/watch?v=bu7MdYXJe1s&si=56IgSi3bsaPK1Cyc&drli=1' 'https://music.youtube.com/watch?v=J7p4bzqLvCw' | sed 's/^/MUSIC /'
 
   device-smoke:
     needs: build
