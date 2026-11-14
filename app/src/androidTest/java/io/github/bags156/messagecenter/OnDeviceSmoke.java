@@ -771,6 +771,30 @@ public final class OnDeviceSmoke extends Instrumentation {
             new ChatSettings(ctx).setMarkedUnread("unread-check",true);check(unreadShown(a)==(with==3?1:with-2),"A chat marked unread doesn't count as one");
             prefs.edit().putBoolean("inbox_unread_count",false).commit();check(unreadShown(a)==-1,"Turning the unread count off didn't hide it");}
         finally{prefs.edit().putBoolean("inbox_unread_count",true).commit();new ChatSettings(ctx).setMarkedUnread("unread-check",false);try(PairedStore store=new PairedStore(ctx)){store.deleteChat("unread-check");}}}
+    private boolean shownInChat(PairedActivity a,String words)throws Exception{boolean[] hit={false};runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();
+        a.getWindow().getDecorView().findViewsWithText(found,words,android.view.View.FIND_VIEWS_WITH_TEXT);for(android.view.View v:found)if(v.isShown())hit[0]=true;});return hit[0];}
+    private boolean waitForChatText(PairedActivity a,String words,long ms,boolean there)throws Exception{long until=android.os.SystemClock.uptimeMillis()+ms;
+        do{if(shownInChat(a,words)==there)return true;Thread.sleep(200);}while(android.os.SystemClock.uptimeMillis()<until);return false;}
+    /**
+     * Calls in chats: with the call log allowed, calls with the person show among their messages
+     * ("Outgoing call · 4 min 12 sec", "Missed call"), a call that ends while the chat's open shows up
+     * by itself, and turning the setting off hides them.
+     */
+    private void checkCallLines(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();long now=System.currentTimeMillis();
+        android.content.SharedPreferences prefs=ctx.getSharedPreferences("paired",0);prefs.edit().putBoolean("show_calls",true).commit();
+        getUiAutomation().grantRuntimePermission(ctx.getPackageName(),android.Manifest.permission.READ_CALL_LOG);
+        String out=shell("content insert --uri content://call_log/calls --bind number:s:+15557770188 --bind date:l:"+(now-60_000)+" --bind duration:l:252 --bind type:i:2 --bind new:i:0");
+        shell("content insert --uri content://call_log/calls --bind number:s:5557770188 --bind date:l:"+(now-120_000)+" --bind duration:l:0 --bind type:i:3 --bind new:i:0");
+        note("call log insert: "+out.trim());
+        try{onMainCall(()->method("thread",String.class).invoke(a,"swipe-check"));onMainCall(()->method("watchCalls",boolean.class).invoke(a,true));
+            check(waitForChatText(a,"Outgoing call · 4 min 12 sec",5000,true),"An outgoing call with them doesn't show in the chat");
+            check(shownInChat(a,"Missed call"),"A missed call from them doesn't show in the chat");shoot("shot-call-lines");
+            shell("content insert --uri content://call_log/calls --bind number:s:+15557770188 --bind date:l:"+(System.currentTimeMillis()-5_000)+" --bind duration:l:61 --bind type:i:1 --bind new:i:0");
+            check(waitForChatText(a,"Incoming call · 1 min 1 sec",6000,true),"A call that ended with the chat open didn't show up by itself");
+            prefs.edit().putBoolean("show_calls",false).commit();onMainCall(()->method("renderMessages",boolean.class).invoke(a,false));
+            check(waitForChatText(a,"Outgoing call",2000,false),"Turning calls off didn't hide them");}
+        finally{prefs.edit().putBoolean("show_calls",true).commit();shell("content delete --uri content://call_log/calls --where number='+15557770188'");shell("content delete --uri content://call_log/calls --where number='5557770188'");
+            onMainCall(()->method("inbox").invoke(a));waitForIdleSync();}}
     private android.view.View linkCardIn(PairedActivity a){java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();
         a.getWindow().getDecorView().findViewsWithText(found,"Link preview",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);for(android.view.View v:found)if(v.isShown())return v;return null;}
     /**
@@ -1730,6 +1754,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkLinkPreviewSteady((PairedActivity)activity);
         checkCustomTheme((PairedActivity)activity);
         checkUnreadCount((PairedActivity)activity);
+        checkCallLines((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();

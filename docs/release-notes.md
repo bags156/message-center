@@ -1,8 +1,8 @@
-Message Center 1.5.37.
+Message Center 1.5.38.
 
-- How many messages are unread now shows next to "Messages" at the top of the inbox.
-  - For each unread conversation it counts the messages they've sent since you last read it, or at least one for a chat you marked unread.
-  - Promotions (which has its own count) and archived chats aren't included.
-  - It goes away when everything's read. Turn it off in Settings → Appearance → Unread count.
+- Calls now show in your chats. Each call with that person gets a small line among the messages, at the time it happened, for example "Outgoing call · 4 min 12 sec · 3:42 PM", "Incoming call · 1 min" or "Missed call" (in red).
+  - Tap the line to call them back.
+  - The lines come from your phone's call log and stay on this phone. Nothing is sent to anyone.
+  - Turn it on in Settings → Messages → Calls in chats. Android will ask to let Message Center read your call log. It's for one-on-one chats only, and a call that just ended shows up right away.
 
 Install over the existing app through Obtainium. Your pairing, conversations and settings are retained.

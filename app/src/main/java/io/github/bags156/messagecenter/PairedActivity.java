@@ -181,7 +181,7 @@ public class PairedActivity extends Activity {
     private void reportChatOnScreen(){if(bubble())return;boolean inChat=screen.equals("chat")||screen.equals("details")||screen.equals("media")||screen.equals("notes")||screen.equals("note");
         ChatBubbles.showing(this,started&&inChat?chatId:"");}
     @Override protected void onResume(){super.onResume();resumed=true;timeFormat=null;dateFormat=null;PairedService.screenVisible(true);refreshDraft();if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
-        PhotoText.indexDownloaded(this,false);
+        PhotoText.indexDownloaded(this,false);watchCalls(true);if(screen.equals("chat")&&!chatId.isEmpty())loadCalls(chatId);
         if(PairedService.ready()&&screen.equals("pair")){CookieManager.getInstance().removeAllCookies(null);inbox();askNotifications();}
         else if(!bubble()&&!PairedService.emoji().isEmpty()&&login==null)pairing();
         else {updateStatus();PairedService.syncNow();
@@ -189,7 +189,7 @@ public class PairedActivity extends Activity {
             if(screen.equals("chat")){renderMessages(false);if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();if(!bubble())PairedService.clearNotification(this,chatId);}
             else if(screen.equals("inbox")){if(batteryCard!=null&&!showBatteryCard()){root.removeView(batteryCard);batteryCard=null;}renderInbox();refreshInbox(false);
                 if(!bubble()&&PairedService.ready()&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED)askContactPhotos();}}}
-    @Override protected void onPause(){saveNote();if(resumed)PairedService.screenVisible(false);resumed=false;if(dictation!=null)stopDictation();remember();if(inline!=null)inline.pause();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&!playingId.isEmpty())pauseVoice();if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
+    @Override protected void onPause(){saveNote();watchCalls(false);if(resumed)PairedService.screenVisible(false);resumed=false;if(dictation!=null)stopDictation();remember();if(inline!=null)inline.pause();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&!playingId.isEmpty())pauseVoice();if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
     @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);if(focused)refreshDraft();if(focused&&store!=null){markReadIfAllowed();updateReceiptStatus();}}
     /** Picks up a draft typed in the other window (bubble or full app) so you carry on where you left off. */
     private void refreshDraft(){if(composer==null||drafts==null||chatId.isEmpty()||!screen.equals("chat"))return;String stored=drafts.getOrDefault(chatId,"");
@@ -770,7 +770,7 @@ public class PairedActivity extends Activity {
         Spot back=(screen.equals("details")||screen.equals("notes")||screen.equals("note")||backFromSaved)&&id.equals(backChat)?backSpot:null;backChat="";backSpot=null;backFromSaved=false;
         // Opening a chat with unread messages: remember where they start, for the "New messages" line.
         if(!id.equals(chatId)||!screen.equals("chat")){JSONObject before=store.chat(id);unreadSince=before!=null&&chatSettings.unread(before)?chatSettings.seen(id):-1;unreadJump=unreadSince>0;}
-        remember();chatId=id;if(back==null)limit=firstWindow(id);replyId="";base("chat");JSONObject c=store.chat(id);ChatTheme theme=chatSettings.theme(id);
+        remember();chatId=id;if(back==null)limit=firstWindow(id);replyId="";base("chat");JSONObject c=store.chat(id);ChatTheme theme=chatSettings.theme(id);loadCalls(id);
         root.setPadding(dp(4),dp(4),dp(4),dp(8));
         LinearLayout bar=row();if(!bubble())bar.addView(icon(R.drawable.ic_back,ink,"Back",this::inbox));else bar.setPadding(dp(12),0,0,0);
         LinearLayout who=row();View face=avatar(c,40);who.addView(face);
@@ -1046,11 +1046,14 @@ public class PairedActivity extends Activity {
         moreSaved=messages.size()>=limit-5;if(moreSaved)items.addView(button("Show more saved messages",false,()->{limit+=WINDOW;renderMessages(false);}));
         // iPhone reactions sent as text ("Laughed at an image") go on the message they're about, like any other reaction.
         tapbacks=new HashMap<>();messages=placeTapbacks(messages,tapbacks);
+        // Calls with this person (from the phone's call log, shown only here) go among the messages by time.
+        if(!group&&callsChat.equals(chatId)&&!chatCalls.isEmpty()&&callsOn())messages=withCalls(messages,chatCalls,moreSaved&&!messages.isEmpty()?PairedProtocol.time(messages.get(0)):0);
         if(messages.isEmpty()){TextView empty=text(PairedService.ready()?"No messages have synced for this conversation yet.":"Messages will appear once the connection is ready.",14,muted,false);empty.setGravity(Gravity.CENTER);empty.setPadding(dp(24),dp(48),dp(24),dp(24));items.addView(empty);}
         else if(store.page("messages:"+chatId,false).isEmpty()&&!store.page("messages:"+chatId,true).isEmpty()){TextView end=text(store.page("messages:"+chatId,true),12,muted,false);end.setGravity(Gravity.CENTER);end.setPadding(dp(16),dp(8),dp(16),dp(8));items.addView(end);}
         Perf.end("messages: read",perf);perf=Perf.start();
         int n=messages.size();boolean[] out=new boolean[n],replyTo=new boolean[n],reacted=new boolean[n];String[] who=new String[n],line=new String[n],ev=new String[n];long[] at=new long[n];
-        for(int i=0;i<n;i++){JSONObject m=messages.get(i);out[i]=PairedProtocol.outgoing(m,c);who[i]=out[i]?"":m.optString("participantID");at[i]=PairedProtocol.time(m);
+        for(int i=0;i<n;i++){JSONObject m=messages.get(i);if(CallLines.isCall(m)){who[i]="";at[i]=PairedProtocol.time(m);ev[i]=CallLines.label(m);line[i]=ev[i];continue;}
+            out[i]=PairedProtocol.outgoing(m,c);who[i]=out[i]?"":m.optString("participantID");at[i]=PairedProtocol.time(m);
             line[i]=ChatText.reactionLine(out[i]?"You":senderFirst(m,c),PairedProtocol.body(m));
             ev[i]=PairedProtocol.event(m,c);if(!ev[i].isEmpty())line[i]=ev[i];
             // An effect sent on its own (an iPhone's "(sent with Confetti)" with no text) is a quiet line you can tap to replay.
@@ -1071,6 +1074,7 @@ public class PairedActivity extends Activity {
         for(int i=0;i<n;i++){JSONObject m=messages.get(i);String mid=m.optString("messageID");boolean isNew=motionSeen.add(mid);
             boolean sep=InboxOrder.separator(i==0?0:at[i-1],at[i],zone);
             if(sep){TextView s=text(separatorStamp(at[i]),13,muted,false);s.setGravity(Gravity.CENTER);s.setPadding(0,dp(i==0?8:20),0,dp(10));items.addView(s,new LinearLayout.LayoutParams(-1,-2));}
+            if(CallLines.isCall(m)){if(!sep&&i>0)gap(items,8);items.addView(callLine(m),new LinearLayout.LayoutParams(-1,-2));continue;}
             // Group and chat events ("Sam left", "Now end-to-end encrypted") are centered notes.
             if(!ev[i].isEmpty()){if(!sep&&i>0)gap(items,8);TextView t=text(ev[i],12,muted,false);t.setGravity(Gravity.CENTER);t.setPadding(dp(24),dp(4),dp(24),dp(4));items.addView(t,new LinearLayout.LayoutParams(-1,-2));continue;}
             // iPhone reactions sent as text ("Loved an image") become one quiet line instead of a bubble.
@@ -3497,7 +3501,37 @@ public class PairedActivity extends Activity {
     /** Someone you can start a conversation with: from your phone's contacts, Google's list, or a chat you're in. */
     private static final class Person{final String name,number,formatted,hex,folded,digits;
         Person(String name,String number,String formatted,String hex){this.name=name;this.number=number;this.formatted=formatted;this.hex=hex;folded=ContactSearch.fold(name);digits=ChatText.digits(number);}}
-    private static final int CONTACTS_PERMISSION=81;
+    private static final int CONTACTS_PERMISSION=81,CALL_LOG_PERMISSION=97;
+    // ---- Calls in chats: a quiet line for each call with the person, from the phone's call log (never sent anywhere) ----
+    /** Calls with the person in the open chat (callsChat), newest last. */
+    private List<JSONObject> chatCalls=new ArrayList<>();private String callsChat="",callsSeen="";private android.database.ContentObserver callWatch;
+    private boolean callsOn(){return getSharedPreferences("paired",MODE_PRIVATE).getBoolean("show_calls",true)&&checkSelfPermission(Manifest.permission.READ_CALL_LOG)==PackageManager.PERMISSION_GRANTED;}
+    /** Reads this chat's calls from the call log in the background, then redraws the chat if they changed. One-on-one chats only. */
+    private void loadCalls(String chat){if(!chat.equals(callsChat)){chatCalls=new ArrayList<>();callsChat=chat;callsSeen="";}
+        JSONObject c=store.chat(chat);String number=c==null||PairedProtocol.other(c)==null?"":PairedProtocol.number(PairedProtocol.other(c));if(!callsOn()||number.isEmpty())return;
+        decoder.execute(()->{List<JSONObject> found=new ArrayList<>();StringBuilder key=new StringBuilder();
+            try(android.database.Cursor q=getContentResolver().query(android.provider.CallLog.Calls.CONTENT_URI,new String[]{android.provider.CallLog.Calls._ID,android.provider.CallLog.Calls.NUMBER,android.provider.CallLog.Calls.DATE,
+                    android.provider.CallLog.Calls.DURATION,android.provider.CallLog.Calls.TYPE,android.provider.CallLog.Calls.FEATURES},null,null,android.provider.CallLog.Calls.DATE+" DESC")){
+                int read=0;while(q!=null&&q.moveToNext()&&read++<3000&&found.size()<300){String n=q.getString(1);if(!CallLines.sameNumber(n,number))continue;
+                    found.add(0,CallLines.item(q.getLong(0),q.getLong(2),q.getInt(4),q.getLong(3),(q.getInt(5)&android.provider.CallLog.Calls.FEATURES_VIDEO)!=0,n));key.append(q.getLong(0)).append(':').append(q.getLong(3)).append(',');}}
+            catch(Exception e){Diagnostics.note("Couldn't read the call log");}
+            String k=key.toString();runOnUiThread(()->{if(!chat.equals(callsChat)||k.equals(callsSeen))return;chatCalls=found;callsSeen=k;if(screen.equals("chat")&&chat.equals(chatId))renderMessages(false);});});}
+    /** Messages with calls slotted in where they happened (calls before the oldest message drawn are left out). */
+    static List<JSONObject> withCalls(List<JSONObject> messages,List<JSONObject> calls,long from){List<JSONObject> out=new ArrayList<>(messages.size()+calls.size());int j=0;
+        List<JSONObject> shown=new ArrayList<>();for(JSONObject call:calls)if(PairedProtocol.time(call)>=from)shown.add(call);
+        for(JSONObject m:messages){long t=PairedProtocol.time(m);while(j<shown.size()&&PairedProtocol.time(shown.get(j))<=t)out.add(shown.get(j++));out.add(m);}
+        while(j<shown.size())out.add(shown.get(j++));return out;}
+    /** "Outgoing call · 4 min 12 sec · 3:42 PM", centered like a note; missed calls in red. Tap to call back. */
+    private View callLine(JSONObject call){int type=call.optInt("callType");boolean missed=CallLines.missed(type);int tone=missed?danger:muted;String when=timeOfDay(PairedProtocol.time(call));
+        LinearLayout r=row();r.setGravity(Gravity.CENTER);r.setPadding(dp(16),dp(5),dp(16),dp(5));
+        ImageView ic=new ImageView(this);ic.setImageResource(call.optBoolean("video")?R.drawable.ic_videocam:R.drawable.ic_call);ic.setImageTintList(ColorStateList.valueOf(tone));r.addView(ic,new LinearLayout.LayoutParams(dp(15),dp(15)));
+        TextView t=text(CallLines.label(call)+" · "+when,12,tone,false);t.setPadding(dp(6),0,0,0);r.addView(t);
+        String number=call.optString("number");r.setContentDescription(CallLines.label(call)+", "+when+". Tap to call back.");pressable(r);
+        r.setOnClickListener(v->{try{startActivity(new Intent(Intent.ACTION_DIAL,Uri.parse("tel:"+Uri.encode(number))));}catch(Exception e){toast("No phone app is available.");}});return r;}
+    /** While a chat's open, a call ending (it lands in the call log) shows up in it straight away. */
+    private void watchCalls(boolean on){android.content.ContentResolver r=getContentResolver();if(callWatch!=null){try{r.unregisterContentObserver(callWatch);}catch(Exception ignored){}callWatch=null;}
+        if(!on||!callsOn())return;callWatch=new android.database.ContentObserver(ui){@Override public void onChange(boolean self){if(screen.equals("chat")&&!chatId.isEmpty())loadCalls(chatId);}};
+        try{r.registerContentObserver(android.provider.CallLog.Calls.CONTENT_URI,true,callWatch);}catch(Exception e){callWatch=null;}}
     private void renderContacts(){if(items==null||!screen.equals("newchat"))return;items.removeAllViews();String q=contactQuery.trim(),number=ChatText.normalizeNumber(q);
         if(!groupMode&&q.isEmpty()){LinearLayout g=row();g.setPadding(dp(8),dp(10),dp(8),dp(10));pressable(g);View face=new FrameLayout(this);face.setBackground(oval(fab));
             TextView plus=text("👥",20,onFab,false);plus.setGravity(Gravity.CENTER);((FrameLayout)face).addView(plus,new FrameLayout.LayoutParams(-1,-1));g.addView(face,new LinearLayout.LayoutParams(dp(44),dp(44)));
@@ -3707,6 +3741,8 @@ public class PairedActivity extends Activity {
     @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] results){super.onRequestPermissionsResult(request,permissions,results);GivenNames.forget();
         if(request==77){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)startRecording();else toast("Message Center needs the microphone to record voice messages.");}
         if(request==79){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)startDictation();else toast("Message Center needs the microphone for speech to text.");}
+        if(request==CALL_LOG_PERMISSION){boolean yes=results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED;
+            toast(yes?"Calls will show in your chats.":"Calls can't show in chats without access to your call log.");if(yes)watchCalls(true);if(screen.equals("settings"))settings();return;}
         if(request==ARRIVAL_PERMISSION){boolean any=false;for(int r:results)if(r==PackageManager.PERMISSION_GRANTED)any=true;if(any)arrivalText(arrivalChat);else toast("Location is needed to text them when you arrive.");return;}
         if(request==ARRIVAL_BACKGROUND){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)arrivalText(arrivalChat);else toast("Choose “Allow all the time” for Location, so the text can go while your phone is in your pocket.");return;}
         if(request==LOCATION_PERMISSION){boolean any=false;for(int r:results)if(r==PackageManager.PERMISSION_GRANTED)any=true;if(any)shareLocation();else toast("Location permission is needed to share where you are.");return;}
@@ -3893,7 +3929,7 @@ public class PairedActivity extends Activity {
     private static String settingsTitle(String page){switch(page){case "messages":return "Messages";case "media":return "Photos & media";case "notifications":return "Notifications";
         case "automation":return "Automation";case "appearance":return "Appearance";case "connection":return "Connection";case "data":return "Data & about";default:return "Settings";}}
     /** Words people might search for that a setting's own words don't say. */
-    private static String settingKeywords(String title){switch(title){case "Theme":return "dark light black mode night colors";case "Text size":return "font bigger smaller larger";case "Unread count":return "badge number total inbox";
+    private static String settingKeywords(String title){switch(title){case "Theme":return "dark light black mode night colors";case "Text size":return "font bigger smaller larger";case "Unread count":return "badge number total inbox";case "Calls in chats":return "phone call log duration missed";
         case "Undo send":return "unsend delay take back cancel";case "Typing indicators":return "typing privacy";case "Read receipts":return "seen read privacy";case "Bubbles":return "floating chat heads";
         case "Busy auto-reply":return "away driving automatic reply";case "Notifications":return "sound vibration alerts";case "Background activity":return "battery optimization";
         case "Back up app data":return "backup export save";case "Restore from a backup":return "import backup";case "Photo quality":return "pictures compress size";
@@ -3961,6 +3997,8 @@ public class PairedActivity extends Activity {
             LinearLayout show=settingsGroup(content,"What chats show");
             settingSwitch(show,R.drawable.ic_sparkle,0xffa855f7,"Message effects","Balloons, Slam, invisible ink and other effects iPhones send, and phrases like “Happy birthday”",effectsOn(),on->prefs.edit().putBoolean("message_effects",on).apply());
             settingSwitch(show,R.drawable.ic_link,0xff14b8a6,"Link previews","Only for contacts and chats you've written in",linkPreviewsOn(),on->prefs.edit().putBoolean("link_previews",on).apply());
+            settingSwitch(show,R.drawable.ic_call,0xff22c55e,"Calls in chats","A line for each call with the person and how long it lasted. Only on this phone, never sent",callsOn(),on->{
+                prefs.edit().putBoolean("show_calls",on).apply();if(on&&checkSelfPermission(Manifest.permission.READ_CALL_LOG)!=PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{Manifest.permission.READ_CALL_LOG},CALL_LOG_PERMISSION);});
             settingSwitch(show,R.drawable.ic_tag,0xfff59e0b,"Separate promotions","Texts from businesses and short codes go in Promotions",promotionsSeparate(),on->prefs.edit().putBoolean("promotions_separate",on).apply());
             if(!Avatars.canUsePhonePhotos(this))settingRow(show,R.drawable.ic_contact,0xff22c55e,"Use names and photos from contacts","Full first names (like \"Hannah Kay\") and contact photos",null,()->{if(shouldShowRequestPermissionRationale(Manifest.permission.READ_CONTACTS)||!prefs.getBoolean("asked_contacts",false)){prefs.edit().putBoolean("asked_contacts",true).apply();requestPermissions(new String[]{Manifest.permission.READ_CONTACTS},CONTACTS_PERMISSION);}
                 else startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())));});

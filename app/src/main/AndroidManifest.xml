@@ -16,6 +16,8 @@
     <!-- Keeps a video compressing for sending if the screen goes off (only while it compresses). -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- Calls in chats (off until you allow it): calls with the person show as quiet lines in their chat. -->
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <!-- Text on arrival: noticing you've arrived somewhere while the phone is in your pocket (only places you set up). -->
