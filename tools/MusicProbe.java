@@ -30,7 +30,24 @@ public final class MusicProbe {
             "episodes",
         };
         java.util.List<String> all = new java.util.ArrayList<>();
+        // Raw answers ("raw:URL", "post:URL|JSON") and songs by name ("song:Title|Artist|Album") straight to Spotify.
+        boolean namedOnly = true;
+        for (String a : links) if (!a.startsWith("raw:") && !a.startsWith("post:") && !a.startsWith("song:")) namedOnly = false;
+        int songs = 0, exact = 0;
+        for (String a : links) {
+            if (a.startsWith("raw:")) { String r = net.get(a.substring(4), false); System.out.println("RAW " + a.substring(4) + "\n    " + (r == null ? "nothing" : r.substring(0, Math.min(1500, r.length())).replace("\n", " "))); }
+            else if (a.startsWith("post:")) { String[] p = a.substring(5).split("\\|", 2); String r = net.post(p[0], p[1], new java.util.HashMap<>()); System.out.println("POST " + p[0] + "\n    " + (r == null ? "nothing" : r.substring(0, Math.min(1500, r.length())))); }
+            else if (a.startsWith("song:")) {
+                String[] p = a.substring(5).split("\\|");
+                MusicLinks.Item item = new MusicLinks.Item(MusicLinks.Kind.SONG); item.title = p[0]; item.artist = p.length > 1 ? p[1] : ""; item.album = p.length > 2 ? p[2] : "";
+                long t = System.currentTimeMillis(); MusicLinks.Match m = MusicLinks.find(item, MusicLinks.App.SPOTIFY, net, "us"); songs++; if (m != null && m.exact()) exact++;
+                System.out.println("SONG " + p[0] + " by " + item.artist + " → Spotify " + m + " (" + (System.currentTimeMillis() - t) + " ms)");
+            }
+        }
+        if (songs > 0) System.out.println("SPOTIFY EXACT " + exact + " of " + songs);
+        if (namedOnly) return;
         for (String url : links) {
+            if (url.startsWith("raw:") || url.startsWith("post:") || url.startsWith("song:")) continue;
             if (!url.equals("episodes")) { all.add(url); continue; }
             // An episode of each show, found on its page.
             String page = net.get("https://open.spotify.com/show/3IM0lmZxpFAY7CwMuv9H4g", true);
