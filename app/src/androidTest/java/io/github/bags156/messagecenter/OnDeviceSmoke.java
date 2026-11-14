@@ -1003,6 +1003,33 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(box[0].length()==0&&described(a,"Clear search")==null,"The ✕ didn't empty the search box (or stayed)");
         check(viewsWithDescription(a,"Data & about")>0,"Clearing the search didn't bring the settings pages back");
         onMainCall(()->method("inbox").invoke(a));waitForIdleSync();}
+    /**
+     * A contact's birthday shows at the top of their chat ("Bea turns 30 today · Say happy birthday")
+     * and as a cake by their name in the list; a tracking number in a message gets a Track card.
+     */
+    private void checkBirthdayAndTracking(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();
+        getUiAutomation().grantRuntimePermission(ctx.getPackageName(),android.Manifest.permission.READ_CONTACTS);
+        java.time.LocalDate today=java.time.LocalDate.now();java.util.Map<String,Birthdays.Birthday> map=new java.util.HashMap<>();
+        map.put(ContactSearch.key("+15557770122"),new Birthdays.Birthday(today.getYear()-30,today.getMonthValue(),today.getDayOfMonth()));Birthdays.setForChecks(map);
+        try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'bday-chat',name:'Bea Birthday',type:'RCS',lastMessageTimestamp:"+System.currentTimeMillis()*1000+",participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'bb',number:'+15557770122'},firstName:'Bea',fullName:'Bea Birthday'}]}"));
+            store.message(new JSONObject().put("messageID","bday-parcel").put("conversationID","bday-chat").put("participantID","bb").put("timestamp",System.currentTimeMillis()*1000)
+                .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","Your gift ships UPS 1Z999AA10123456784")))),0,true);
+            // A message she then edited (in Google Messages): the same message again with other words.
+            for(String words:new String[]{"Dinner at 6?","Dinner at 7?"})store.message(new JSONObject().put("messageID","bday-edit").put("conversationID","bday-chat").put("participantID","bb").put("timestamp",System.currentTimeMillis()*1000-60_000_000L)
+                .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content",words)))),0,true);}
+        try{onMainCall(()->method("thread",String.class).invoke(a,"bday-chat"));waitForIdleSync();Thread.sleep(400);
+            check(described(a,"Bea turns 30 today")!=null,"Bea's chat doesn't say she turns 30 today");
+            check(onScreen("Say happy birthday")!=null,"No \"Say happy birthday\" on the birthday note");
+            check(described(a,"Track UPS package 1Z999AA10123456784")!=null,"A message with a UPS tracking number has no Track card");shoot("shot-birthday-track");
+            check(onScreen("Dinner at 7?")!=null&&onScreen("Edited")!=null,"An edited message doesn't show its new words with \"Edited\"");
+            pressText("Say happy birthday");Thread.sleep(300);String[] box={""};
+            runOnMainSync(()->{try{box[0]=((android.widget.EditText)field("composer").get(a)).getText().toString();}catch(Exception e){throw new RuntimeException(e);}});
+            check(box[0].startsWith("Happy birthday!"),"\"Say happy birthday\" didn't put it in the message box ("+box[0]+")");
+            runOnMainSync(()->{try{((android.widget.EditText)field("composer").get(a)).setText("");}catch(Exception e){throw new RuntimeException(e);}});
+            onMainCall(()->method("inbox").invoke(a));waitForIdleSync();Thread.sleep(300);
+            int[] cakes={0};runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(found,"Bea Birthday 🎂",android.view.View.FIND_VIEWS_WITH_TEXT);cakes[0]=found.size();});
+            check(cakes[0]>0,"No cake by Bea's name in the list on her birthday");}
+        finally{Birthdays.setForChecks(new java.util.HashMap<>());onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("bday-chat");}}}
     private void checkThemeAll(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();ChatSettings settings=new ChatSettings(ctx);
         settings.themeAll("default",true);settings.setTheme("smoke","berry");
         try{onMainCall(()->method("chooseTheme",String.class).invoke(a,""));check(waitForText("Color for all chats",3000,true),"Chat color for all chats didn't open");shoot("shot-theme-all");
@@ -1993,6 +2020,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkSongPlaying((PairedActivity)activity);
         checkChatReminder((PairedActivity)activity);
         checkSearchClear((PairedActivity)activity);
+        checkBirthdayAndTracking((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();

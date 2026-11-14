@@ -180,7 +180,7 @@ public class PairedActivity extends Activity {
     /** Tells ChatBubbles which chat you're in (its Details and Shared count), so that chat's bubble steps aside. */
     private void reportChatOnScreen(){if(bubble())return;boolean inChat=screen.equals("chat")||screen.equals("details")||screen.equals("media")||screen.equals("notes")||screen.equals("note");
         ChatBubbles.showing(this,started&&inChat?chatId:"");}
-    @Override protected void onResume(){super.onResume();resumed=true;MusicApps.updated=()->{if(resumed&&screen.equals("chat"))renderMessages(false);};timeFormat=null;dateFormat=null;PairedService.screenVisible(true);refreshDraft();if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
+    @Override protected void onResume(){super.onResume();resumed=true;Birthdays.loaded=()->{if(!resumed)return;if(screen.equals("inbox"))renderInbox();else if(screen.equals("chat"))renderBirthday();};MusicApps.updated=()->{if(resumed&&screen.equals("chat"))renderMessages(false);};timeFormat=null;dateFormat=null;PairedService.screenVisible(true);refreshDraft();if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
         PhotoText.indexDownloaded(this,false);watchCalls(true);if(screen.equals("chat")&&!chatId.isEmpty())loadCalls(chatId);
         if(PairedService.ready()&&screen.equals("pair")){CookieManager.getInstance().removeAllCookies(null);inbox();askNotifications();}
         else if(!bubble()&&!PairedService.emoji().isEmpty()&&login==null)pairing();
@@ -505,7 +505,8 @@ public class PairedActivity extends Activity {
         pressable(entry);
         entry.addView(avatar(c,46));
         LinearLayout middle=vertical();middle.setPadding(dp(14),0,dp(8),0);
-        TextView title=text(PairedProtocol.title(c),16,ink,unread);title.setTextSize(16.5f*textScale);title.setSingleLine(true);title.setEllipsize(TextUtils.TruncateAt.END);middle.addView(title);
+        Birthdays.Birthday bday=Birthdays.forChat(this,c);boolean cake=bday!=null&&Birthdays.daysUntil(bday,java.time.LocalDate.now())==0;
+        TextView title=text(PairedProtocol.title(c)+(cake?" \uD83C\uDF82":""),16,ink,unread);title.setTextSize(16.5f*textScale);title.setSingleLine(true);title.setEllipsize(TextUtils.TruncateAt.END);middle.addView(title);
         String snippet=Effects.preview(ChatText.withoutMediaEmoji(PairedProtocol.string(c.optJSONObject("latestMessage"),"displayContent")));boolean[] mine={PairedProtocol.latestFromMe(c)};
         // Google leaves the preview empty for some events (drafts, some reactions); fall back to the newest synced message.
         if(snippet.isEmpty()){JSONObject last=latestStored(id);if(last!=null)snippet=previewOf(last,c,mine);}
@@ -849,6 +850,7 @@ public class PairedActivity extends Activity {
         ImageView more=icon(R.drawable.ic_more,ink,"More options",null);pressable(more);more.setOnClickListener(this::chatMenu);bar.addView(more);
         root.addView(bar,new LinearLayout.LayoutParams(-1,dp(64)));connection();
         pinBar=vertical();root.addView(pinBar,new LinearLayout.LayoutParams(-1,-2));pinShown=0;renderPinBar();
+        birthdayBar=vertical();root.addView(birthdayBar,new LinearLayout.LayoutParams(-1,-2));renderBirthday();
         if(c!=null){View who2=whoIsThisCard(c);if(who2!=null)root.addView(who2);}
         scroll=new ScrollView(this);scroll.setVerticalScrollBarEnabled(false);items=vertical();items.setPadding(dp(12),dp(8),dp(12),dp(8));
         // A short chat sits at the bottom, just above the message box, like any messaging app.
@@ -1291,8 +1293,10 @@ public class PairedActivity extends Activity {
             if(added){text.setText(sp);text.setHighlightColor(Color.TRANSPARENT);text.setMovementMethod(LinkMovementMethod.getInstance());text.setOnLongClickListener(v->{messageSheet(m);return true;});}}
         if(text.getMovementMethod()!=null)holdLinks(text,m);
         b.setOnLongClickListener(v->{messageSheet(m);return true;});b.setOnClickListener(v->tapped(m,b));if(text.getMovementMethod()!=null)text.setOnClickListener(v->tapped(m,b));
+        if(m.optBoolean("_edited")){TextView ed=text("Edited",11,muted,false);ed.setPadding(dp(14),0,dp(14),dp(2));ed.setGravity(outgoing?Gravity.END:Gravity.START);wrap.addView(ed,new LinearLayout.LayoutParams(-1,-2));}
         line.addView(b,new LinearLayout.LayoutParams(-2,-2));wrap.addView(line,new LinearLayout.LayoutParams(-1,-2));bubbleViews.put(m.optString("messageID"),b);
         String url=linkPreviewsOn()&&(outgoing||chatTrusted)?ChatText.firstUrl(fallback!=null?fallback:body):"";if(!url.isEmpty()){gap(wrap,4);wrap.addView(linkCard(url,outgoing,m),new LinearLayout.LayoutParams(-1,-2));}
+        else{List<SmartText.Hit> parcels=SmartText.tracking(fallback!=null?fallback:body);if(!parcels.isEmpty()){gap(wrap,4);wrap.addView(trackCard(parcels.get(0),outgoing,m),new LinearLayout.LayoutParams(-1,-2));}}
         return wrap;
     }
     /**
@@ -1594,6 +1598,10 @@ public class PairedActivity extends Activity {
             pinShown=0;renderPinBar();});
         String typed=PairedProtocol.text(m),plain=ChatText.replyFallbackBody(typed)!=null?ChatText.replyFallbackBody(typed):typed;
         if(!plain.isEmpty())sheetAction(content,"Copy text",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Message",plain));});
+        // Google lets RCS messages be edited for 15 minutes, but only in its own app (not linked devices like this one).
+        if(!plain.isEmpty()&&c!=null&&PairedProtocol.outgoing(m,c)&&PairedProtocol.rcs(c)&&System.currentTimeMillis()-PairedProtocol.time(m)<15*60_000L
+            &&getPackageManager().getLaunchIntentForPackage(MessageListener.GOOGLE_MESSAGES)!=null)
+            sheetAction(content,"Edit in Google Messages",()->{d[0].dismiss();editInGoogleMessages(c,plain);});
         // Links in the message can be copied on their own (one, or each of the first three).
         List<String> links=new ArrayList<>(new java.util.LinkedHashSet<>(ChatText.urls(plain)));
         for(String link:links.subList(0,Math.min(3,links.size())))sheetAction(content,links.size()==1?"Copy link":"Copy link: "+ChatText.shortLink(link),()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Link",link));});
@@ -1818,6 +1826,28 @@ public class PairedActivity extends Activity {
         requestMemberPhotos(c,()->{if(screen.equals("details")&&chatId.equals(id))details();});}
     // ---- Pinned messages and "Who's this?" (both under a chat's header) ----
     private ChatPins pins;private LinearLayout pinBar;private int pinShown;
+    private LinearLayout birthdayBar;
+    /**
+     * Google only lets messages be edited in its own Messages app, so: the words are copied, and
+     * Google Messages opens on the chat (a group, in the app), to hold the message there and tap Edit.
+     */
+    private void editInGoogleMessages(JSONObject c,String words){getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Message",words));
+        JSONObject other=PairedProtocol.other(c);Intent open=other!=null?new Intent(Intent.ACTION_SENDTO,Uri.parse("smsto:"+PairedProtocol.number(other))).setPackage(MessageListener.GOOGLE_MESSAGES)
+            :getPackageManager().getLaunchIntentForPackage(MessageListener.GOOGLE_MESSAGES);
+        try{startActivity(open);toast("Copied. In Google Messages, hold your message and tap Edit (the pencil). The change shows here too.");}
+        catch(Exception e){toast("Google Messages couldn't be opened.");}}
+    /** "Hannah turns 30 today · Say happy birthday": from their contact, in a one-to-one chat; ✕ hides it until next year. */
+    private void renderBirthday(){if(birthdayBar==null)return;birthdayBar.removeAllViews();birthdayBar.setVisibility(View.GONE);
+        JSONObject c=store.chat(chatId);Birthdays.Birthday b=Birthdays.forChat(this,c);if(b==null)return;
+        java.time.LocalDate today=java.time.LocalDate.now();int days=Birthdays.daysUntil(b,today);String id=chatId,hidden="bday_hidden:"+id+":"+today.plusDays(days).getYear();
+        android.content.SharedPreferences prefs=getSharedPreferences("paired",MODE_PRIVATE);if(prefs.getBoolean(hidden,false))return;
+        String label=Birthdays.label(PairedProtocol.firstName(PairedProtocol.other(c)),b,today);if(label==null)return;
+        LinearLayout r=row();r.setGravity(Gravity.CENTER_VERTICAL);r.setPadding(dp(12),dp(6),0,dp(6));r.setBackground(shape(surface,16));
+        TextView cake=text("\uD83C\uDF82",18,ink,false);r.addView(cake);TextView t=text(label,15,ink,days==0);t.setPadding(dp(10),0,dp(4),0);r.addView(t,new LinearLayout.LayoutParams(0,-2,1));
+        if(days==0){TextView say=text("Say happy birthday",14,chatSettings.theme(id).accent(dark),true);say.setPadding(dp(8),dp(8),dp(8),dp(8));pressable(say);
+            say.setOnClickListener(v->{if(composer==null)return;composer.setText("Happy birthday! \uD83C\uDF89");composer.setSelection(composer.length());composer.requestFocus();});r.addView(say);}
+        r.addView(icon(R.drawable.ic_close,muted,"Hide birthday note",()->{prefs.edit().putBoolean(hidden,true).apply();renderBirthday();}));
+        r.setContentDescription(label);LinearLayout.LayoutParams rl=new LinearLayout.LayoutParams(-1,-2);rl.setMargins(dp(10),dp(4),dp(10),dp(4));birthdayBar.addView(r,rl);birthdayBar.setVisibility(View.VISIBLE);}
     /** A pinned message in a line: its words, or what it is when it's only a photo or file. */
     private String pinText(JSONObject m){String body=displayBody(m).trim();if(!body.isEmpty())return body;
         for(JSONObject media:PairedProtocol.media(m)){String kind=PairedProtocol.mediaKind(media);return kind.equals("image")?"Photo":kind.equals("video")?"Video":kind.equals("audio")?"Voice message":"File";}
@@ -2829,7 +2859,9 @@ public class PairedActivity extends Activity {
     private String rowKey(JSONObject c){if(PairedProtocol.string(c.optJSONObject("latestMessage"),"displayContent").isEmpty())return null;
         String id=c.optString("conversationID");long when=PairedProtocol.time(c);
         return store.savedText(c)+'\n'+folder+'|'+chatSettings.unread(c)+'|'+chatSettings.pinned(c)+'|'+chatSettings.muted(id)+'|'+chatSettings.snoozed(id)+'|'+dark+'|'+textScale
-            +'|'+(when>0?inboxStamp(when):"")+'|'+PairedProtocol.title(c)+'|'+Avatars.changes()+'|'+drafts.getOrDefault(id,"");}
+            +'|'+(when>0?inboxStamp(when):"")+'|'+PairedProtocol.title(c)+'|'+Avatars.changes()+'|'+drafts.getOrDefault(id,"")+'|'+birthdayMark(c);}
+    /** The day's cake (or not) by a name in the list, for the row cache: a new day redraws a birthday row. */
+    private String birthdayMark(JSONObject c){Birthdays.Birthday b=Birthdays.forChat(this,c);return b==null?(Birthdays.ready()?"":"?"):Birthdays.daysUntil(b,java.time.LocalDate.now())==0?"cake":"";}
     private View swipeableChat(JSONObject c){View row=inboxRow(c);if(folder==3)return row;String id=c.optString("conversationID");boolean unread=chatSettings.unread(c),archived=folder==2;
         SwipeRow s=new SwipeRow(this,row,swipeHint(unread?"Mark read":"Mark unread",0xff3b6fd8,true),swipeHint(archived?"Unarchive":"Archive",0xff2e7d5b,false),dp(96),dp(160));
         s.onSwipeLeft(()->archive(c,!archived));
@@ -3169,6 +3201,21 @@ public class PairedActivity extends Activity {
                 new AlertDialog.Builder(this).setMessage("Delete "+codes.size()+" old verification code "+(codes.size()==1?"message":"messages")+" from Google Messages on your phone?")
                     .setNegativeButton("Cancel",null).setPositiveButton("Delete",(d,w)->{toast("Deleting "+codes.size()+"…");deleteNext(codes,0,0);}).show();});}));
         menuSheet("Delete old verification codes",labels,actions);}
+    /** Under a message with a tracking number: the carrier and number, and Track (opens the carrier's tracking page). Hold for the number. */
+    private View trackCard(SmartText.Hit h,boolean outgoing,JSONObject m){LinearLayout line=row();line.setGravity(outgoing?Gravity.END:Gravity.START);
+        String carrier=h.kind.equals("ups")?"UPS":h.kind.equals("usps")?"USPS":h.kind.equals("fedex")?"FedEx":h.kind.equals("amazon")?"Amazon":"Package";
+        LinearLayout card=row();card.setBackground(shape(surface,18));card.setPadding(dp(12),dp(10),dp(14),dp(10));pressable(card);
+        card.addView(menuChip(R.drawable.ic_package,0xffb45309),new LinearLayout.LayoutParams(dp(32),dp(32)));
+        LinearLayout texts=vertical();texts.setPadding(dp(12),0,dp(12),0);texts.addView(text(carrier+" package",14,ink,true));
+        TextView number=text(h.value,12,muted,false);number.setSingleLine(true);number.setEllipsize(TextUtils.TruncateAt.MIDDLE);texts.addView(number);card.addView(texts,new LinearLayout.LayoutParams(0,-2,1));
+        card.addView(text("Track \u203a",14,chatSettings.theme(chatId).accent(dark),true));
+        card.setContentDescription("Track "+carrier+" package "+h.value);
+        card.setOnClickListener(v->{try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(SmartText.trackingUrl(h))));}catch(Exception e){toast("No browser is installed.");}});
+        card.setOnLongClickListener(v->{ClipboardManager clip=getSystemService(ClipboardManager.class);
+            menuSheet(carrier+" "+h.value,java.util.Arrays.asList("Track package","Copy tracking number","Message options\u2026"),java.util.Arrays.<Runnable>asList(
+                ()->{try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(SmartText.trackingUrl(h))));}catch(Exception e){toast("No browser is installed.");}},
+                ()->{clip.setPrimaryClip(ClipData.newPlainText("Tracking number",h.value));toast("Copied");},()->messageSheet(m)));return true;});
+        line.addView(card,new LinearLayout.LayoutParams(Math.round(getResources().getDisplayMetrics().widthPixels*0.66f),-2));return line;}
     private void smartTap(SmartText.Hit h,JSONObject m,JSONObject c){
         if(h.kind.equals("date")){String who=c==null?"":PairedProtocol.title(c);
             Intent add=new Intent(Intent.ACTION_INSERT).setData(android.provider.CalendarContract.Events.CONTENT_URI)
