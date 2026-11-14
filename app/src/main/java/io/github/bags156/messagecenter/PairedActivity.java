@@ -1217,7 +1217,9 @@ public class PairedActivity extends Activity {
             labels.add("Text "+title);actions.add(()->startChat(number));labels.add("Copy number");actions.add(()->clip.setPrimaryClip(ClipData.newPlainText("Phone number",number)));}
         else{title=ChatText.shortLink(u);labels.add("Open link");actions.add(()->openLink(u));labels.add("Copy link");actions.add(()->clip.setPrimaryClip(ClipData.newPlainText("Link",u)));
             labels.add("Share link");actions.add(()->startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT,u),"Share link")));
-            MusicLinks.Link music=MusicApps.link(u);if(music!=null){boolean podcast=MusicApps.podcast(music);
+            MusicLinks.Link music=MusicApps.link(u);if(music!=null){boolean podcast=MusicApps.podcast(music);MusicLinks.App mine=MusicApps.chosen(this,podcast);
+                JSONObject known=mine==null?null:MusicApps.peek(this,u,mine);String page=known==null?"":known.optString("universal");
+                if(!page.isEmpty()){labels.add("Open on song.link (every app)");actions.add(()->openLink(page));}
                 labels.add(podcast?"Choose podcast app\u2026":"Choose music app\u2026");actions.add(()->chooseMusicApp(podcast,chosen->renderMessages(false)));}}
         labels.add("Message options\u2026");actions.add(()->messageSheet(m));
         menuSheet(title,labels,actions);}
@@ -4051,8 +4053,15 @@ public class PairedActivity extends Activity {
                 int sel=composer.getSelectionStart(),end=at+url.length();composer.getText().replace(at,end,to);
                 if(sel>=end)composer.setSelection(Math.min(composer.length(),sel+to.length()-url.length()));
                 musicFrom=url;musicTo=to;showMusicNote("Changed to "+theirs.label+" for "+name+": the same song",true);}
+            // No exact match: never a link they can't use. The song's song.link page opens it in their app if it's there, and plays it anywhere if not.
+            else if(here&&at>=0&&!res.optString("universal").isEmpty()&&musicFallback()){String to=res.optString("universal");
+                int sel=composer.getSelectionStart(),end=at+url.length();composer.getText().replace(at,end,to);
+                if(sel>=end)composer.setSelection(Math.min(composer.length(),sel+to.length()-url.length()));
+                musicFrom=url;musicTo=to;showMusicNote("No exact "+theirs.label+" link, so it goes as a song.link page: "+name+" can open it in "+theirs.label+" if it's there, or play it anywhere",true);}
             else if(here&&at>=0)showMusicNote(res.optString("how").equals("error")?"Couldn't reach "+theirs.label+", so the link goes as it is":"Couldn't find an exact "+theirs.label+" link, so yours goes as it is",false);
             if(sendAfterMusic){sendAfterMusic=false;if(here)send();}});}
+    /** Whether a song with no exact match goes as its song.link page (Settings → Apps; on unless turned off). */
+    private boolean musicFallback(){return getSharedPreferences("paired",MODE_PRIVATE).getBoolean("music_songlink",true);}
     private void showMusicNote(String text,boolean undo){if(musicNote==null)return;musicNoteText.setText(text);musicUndo.setVisibility(undo?View.VISIBLE:View.GONE);musicNote.setVisibility(View.VISIBLE);musicNote.setContentDescription(text);}
     private void hideMusicNote(){if(musicNote!=null)musicNote.setVisibility(View.GONE);}
     /** Back to the link as you pasted it (and it stays that way in this message). */
@@ -4217,6 +4226,7 @@ public class PairedActivity extends Activity {
         case "apps":{
             LinearLayout apps=settingsGroup(content,"Music and podcasts");
             settingRow(apps,R.drawable.ic_play,0xff22c55e,"Music app","Songs from any service open here: “Open in…” under the link",MusicApps.label(this,false),()->chooseMusicApp(false,a->{if(screen.equals("settings"))settings();}));
+            settingSwitch(apps,R.drawable.ic_link,0xff14b8a6,"Universal links when there's no match","A song you send that isn't on the other person's app goes as its song.link page, which opens in any app",musicFallback(),on->prefs.edit().putBoolean("music_songlink",on).apply());
             settingRow(apps,R.drawable.ic_mic,0xffa855f7,"Podcast app","Shows and episodes from any app open here",MusicApps.label(this,true),()->chooseMusicApp(true,a->{if(screen.equals("settings"))settings();}));
             LinearLayout places=settingsGroup(content,"Addresses and dates");
             settingRow(places,R.drawable.ic_place,0xffef4444,"Maps app for addresses","Tap an address in a message to open it",mapsAppLabel(),()->chooseMapsApp(pkg->{if(screen.equals("settings"))settings();}));

@@ -69,6 +69,19 @@ public class MusicLinksTest {
         assertNull(MusicLinks.parse("spotify:track:abc"));
     }
 
+    @Test public void readsAndMakesSongLinkPages() {
+        MusicLinks.Link l = MusicLinks.parse("https://song.link/y/oI2PxA4zfgc");
+        assertEquals(MusicLinks.App.YOUTUBE_MUSIC, l.app); assertEquals(MusicLinks.Kind.SONG, l.kind); assertEquals("oI2PxA4zfgc", l.id);
+        assertEquals(MusicLinks.App.SPOTIFY, MusicLinks.parse("https://song.link/s/0VjIjW4GlUZAMYd2vXMi3b").app);
+        assertEquals("1785425958", MusicLinks.parse("https://song.link/i/1785425958").id);
+        assertNull("a custom song.link page isn't one service's song", MusicLinks.parse("https://song.link/some-artist-song"));
+        assertEquals("https://song.link/y/oI2PxA4zfgc", MusicLinks.songLink(MusicLinks.parse("https://music.youtube.com/watch?v=oI2PxA4zfgc&si=x"), null));
+        assertEquals("https://song.link/s/0VjIjW4GlUZAMYd2vXMi3b", MusicLinks.songLink(MusicLinks.parse("https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b"), null));
+        assertEquals("from the Apple Music match when song.link can't read the link's service", "https://song.link/i/1785425958",
+            MusicLinks.songLink(MusicLinks.parse("https://tidal.com/browse/track/1"), "https://music.apple.com/us/album/i-cant-explain/1785425955?i=1785425958"));
+        assertNull("albums have no song page", MusicLinks.songLink(MusicLinks.parse("https://open.spotify.com/album/4yP0hdKOZPNshxUOjY0cZj"), null));
+    }
+
     @Test public void matchesNamesTheWayStoresWriteThem() {
         assertTrue(MusicLinks.sameName("Blinding Lights", "blinding lights"));
         assertTrue(MusicLinks.sameName("Mr. Brightside", "Mr Brightside"));

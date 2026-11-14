@@ -189,6 +189,18 @@ final class MusicLinks {
             }
             case "on.soundcloud.com":
                 return p.isEmpty() ? null : new Link(App.SOUNDCLOUD, null, "", "", "", url);
+            // song.link's pages for one service's song ("/s/" Spotify, "/i/" Apple, "/y/" YouTube): that song.
+            case "song.link": case "odesli.co": {
+                if (p.size() == 2 && p.get(1).matches("[A-Za-z0-9_-]{5,40}")) {
+                    switch (p.get(0)) {
+                        case "s": return new Link(App.SPOTIFY, Kind.SONG, p.get(1), "", "", url);
+                        case "i": return p.get(1).matches("\\d+") ? new Link(App.APPLE_MUSIC, Kind.SONG, p.get(1), "", "", url) : null;
+                        case "y": return new Link(App.YOUTUBE_MUSIC, Kind.SONG, p.get(1), "", "", url);
+                        default: return null;
+                    }
+                }
+                return null;
+            }
             case "pca.st": case "pocketcasts.com": case "play.pocketcasts.com": {
                 if (p.isEmpty()) return null;
                 if (p.get(0).equals("podcast") && p.size() >= 2) return new Link(App.POCKET_CASTS, Kind.SHOW, p.get(p.size() - 1), "", "", url);
@@ -491,6 +503,21 @@ final class MusicLinks {
             if (url != null) return new Match(url, "", "exact");
         } catch (Exception e) { note("find " + target + ": " + e); }
         return search(item, target);
+    }
+
+    /**
+     * The song's song.link page: one link that opens it in whatever app someone uses (or plays it on
+     * the web when their app doesn't have it). From the link's own service when song.link reads it
+     * (Spotify, Apple Music, YouTube Music), else from the Apple Music match. Songs only; null if neither.
+     */
+    static String songLink(Link source, String appleMatch) {
+        if (source != null && source.kind == Kind.SONG && !source.id.isEmpty()) {
+            if (source.app == App.SPOTIFY) return "https://song.link/s/" + source.id;
+            if (source.app == App.YOUTUBE_MUSIC) return "https://song.link/y/" + source.id;
+            if (source.app == App.APPLE_MUSIC) return "https://song.link/i/" + source.id;
+        }
+        Link apple = appleMatch == null ? null : parse(appleMatch);
+        return apple != null && apple.app == App.APPLE_MUSIC && apple.kind == Kind.SONG ? "https://song.link/i/" + apple.id : null;
     }
 
     /** The app's own search, with the name in it. */
