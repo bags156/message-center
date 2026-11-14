@@ -34,7 +34,7 @@ public final class MusicProbe {
             if (!url.equals("episodes")) { all.add(url); continue; }
             // An episode of each show, found on its page.
             String page = net.get("https://open.spotify.com/show/3IM0lmZxpFAY7CwMuv9H4g", true);
-            java.util.regex.Matcher m = java.util.regex.Pattern.compile("/episode/([A-Za-z0-9]{22})").matcher(page == null ? "" : page);
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("(?:/episode/|spotify:episode:)([A-Za-z0-9]{22})").matcher(page == null ? "" : page);
             if (m.find()) all.add("https://open.spotify.com/episode/" + m.group(1)); else System.out.println("NOTE no Spotify episode on the show page");
             org.json.JSONObject j = MusicLinks.json(net.get("https://itunes.apple.com/lookup?id=1200361736&entity=podcastEpisode&limit=3", false));
             if (j != null && j.optJSONArray("results") != null && j.getJSONArray("results").length() > 1) all.add(j.getJSONArray("results").getJSONObject(1).optString("trackViewUrl"));

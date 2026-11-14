@@ -77,6 +77,10 @@ public class MusicLinksTest {
         assertTrue(MusicLinks.sameName("Señorita", "Senorita"));
         assertTrue(MusicLinks.sameName("Save Your Tears (feat. Ariana Grande)", "Save Your Tears"));
         assertFalse(MusicLinks.sameName("Blinding Lights", "Blinding"));
+        assertFalse("a live version isn't the original", MusicLinks.sameName("Mr. Brightside (Live At Connect / 2004)", "Mr. Brightside"));
+        assertFalse("nor a remix", MusicLinks.sameName("Blinding Lights", "Blinding Lights (Remix)"));
+        assertTrue(MusicLinks.sameName("Blinding Lights - Remix", "Blinding Lights (Remixed)"));
+        assertTrue("a remaster is the same song", MusicLinks.sameName("Come Together - Remastered 2009", "Come Together"));
         assertTrue(MusicLinks.sameArtist("The Weeknd & Ariana Grande", "The Weeknd"));
         assertTrue(MusicLinks.sameArtist("Simon & Garfunkel", "Simon & Garfunkel"));
         assertTrue(MusicLinks.sameArtist("Beyoncé", "Beyonce"));

@@ -659,6 +659,9 @@ final class MusicLinks {
                     JSONObject j = json(brainz(net, "release?limit=3&query=" + enc("barcode:" + item.upc)));
                     JSONArray r = j == null ? null : j.optJSONArray("releases");
                     if (r != null && r.length() > 0) release = r.optJSONObject(0).optString("id");
+                    String link = release == null ? null : linkFor(json(brainz(net, "release/" + release + "?inc=url-rels")), target, Kind.ALBUM);
+                    if (link != null) return link;
+                    release = null; // that pressing has no link: try the album's other releases
                 }
                 if (release == null) {
                     String q = "release:\"" + core(item.title, false).replace("\"", " ") + "\"" + (item.artist.isEmpty() ? "" : " AND artist:\"" + firstArtist(item.artist).replace("\"", " ") + "\"");
@@ -899,15 +902,26 @@ final class MusicLinks {
     static String core(String s, boolean normalize) {
         String t = s == null ? "" : s;
         t = t.replaceAll("\\s*[\\(\\[][^\\)\\]]*[\\)\\]]", " ");
-        t = t.replaceAll("(?i)\\s+[-–—]\\s+[^-–—]*\\b(remaster(ed)?|version|edit|mix|live|mono|stereo|single|ep|deluxe|anniversary|acoustic|radio|explicit|clean|bonus|from)\\b.*$", "");
+        t = t.replaceAll("(?i)\\s+[-–—]\\s+[^-–—]*\\b(remaster(ed)?|remix(ed)?|version|edit|mix|live|mono|stereo|single|ep|deluxe|anniversary|acoustic|radio|explicit|clean|bonus|from)\\b.*$", "");
         t = t.replaceAll("(?i)\\s+(feat\\.?|ft\\.?|featuring|with)\\s+.*$", "").trim();
         if (t.isEmpty()) t = s == null ? "" : s;
         return normalize ? norm(t) : t.trim();
     }
 
+    /** Same name, and the same version: "Blinding Lights (Remix)" or "Mr. Brightside (Live)" isn't the original. */
     static boolean sameName(String a, String b) {
         String x = core(a, true), y = core(b, true);
-        return !x.isEmpty() && (x.equals(y) || norm(a).equals(norm(b)));
+        return !x.isEmpty() && (x.equals(y) || norm(a).equals(norm(b))) && versions(a).equals(versions(b));
+    }
+
+    private static final Pattern VERSION = Pattern.compile("(?i)\\b(live|remix(?:ed)?|acoustic|demo|instrumental|karaoke|cover|sped up|slowed|unplugged|a ?cappella|8d)\\b");
+
+    /** The kinds of other version a title says it is ("live", "remix"), in order. */
+    static java.util.Set<String> versions(String title) {
+        java.util.Set<String> out = new java.util.TreeSet<>();
+        Matcher m = VERSION.matcher(title == null ? "" : title);
+        while (m.find()) out.add(m.group(1).toLowerCase(Locale.ROOT).replace("remixed", "remix").replace(" ", ""));
+        return out;
     }
 
     /** found names the wanted artist (or, when it's a group credit, its first artist). */
