@@ -1725,7 +1725,7 @@ public class PairedActivity extends Activity {
             for(JSONObject g:groups){StringBuilder words=new StringBuilder(PairedProtocol.title(g));for(JSONObject p:PairedProtocol.members(g))words.append(' ').append(PairedProtocol.name(p));
                 if(want.isEmpty()||words.toString().toLowerCase(Locale.ROOT).contains(want))list.addView(groupRow(g,d));}
             if(list.getChildCount()==0){TextView none=text("No group matches",15,muted,false);none.setPadding(dp(8),dp(16),dp(8),dp(16));list.addView(none);}};
-        if(groups.size()>8){EditText search=input("Search these groups");search.setSingleLine(true);search.setContentDescription("Search these groups");
+        if(groups.size()>8){EditText search=input("Search these groups");search.setBackground(shape(surface,18));search.setSingleLine(true);search.setContentDescription("Search these groups");
             search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int b,int c){}public void onTextChanged(CharSequence s,int a,int b,int c){fill.accept(s.toString());}public void afterTextChanged(Editable e){}});
             LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(-1,-2);sl.bottomMargin=dp(8);content.addView(search,sl);}
         fill.accept("");int tall=Math.round(getResources().getDisplayMetrics().heightPixels*0.6f);content.addView(sc,new LinearLayout.LayoutParams(-1,Math.min(tall,groups.size()*dp(52)+dp(8))));
