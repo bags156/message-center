@@ -380,6 +380,7 @@ final class MusicLinks {
     private static Item spotify(Link l, Net net) throws Exception {
         String type = l.kind == Kind.SONG ? "track" : l.kind.word;
         String html = net.get("https://open.spotify.com/" + type + "/" + l.id, true);
+        if (html != null && log != null) { Map<String, String> meta = metaTags(html); note("spotify title=" + pageTitle(html) + " | og:title=" + meta.get("og:title") + " | og:description=" + meta.get("og:description") + " | musician=" + meta.get("music:musician_description")); }
         Item i = html == null ? null : spotifyPage(l.kind, html);
         if (i != null) return i;
         JSONObject j = json(net.get("https://open.spotify.com/oembed?url=" + enc("https://open.spotify.com/" + type + "/" + l.id), false));
@@ -394,7 +395,7 @@ final class MusicLinks {
         String title = pageTitle(html), og = meta.getOrDefault("og:title", ""), desc = meta.getOrDefault("og:description", "");
         Item i = new Item(kind);
         Matcher m;
-        if (kind == Kind.SONG && (m = Pattern.compile("^(.+) - song(?: and lyrics)? by (.+?) \\| Spotify$").matcher(title)).find()) { i.title = m.group(1).trim(); i.artist = m.group(2).trim(); }
+        if (kind == Kind.SONG && (m = Pattern.compile("^(.+) - (?i:song)\\b[^|]*? by (.+?) \\| Spotify$").matcher(title)).find()) { i.title = m.group(1).trim(); i.artist = m.group(2).trim(); }
         else if (kind == Kind.ALBUM && (m = Pattern.compile("^(.+) - (?:Album|Single|EP|Compilation) by (.+?) \\| Spotify$").matcher(title)).find()) { i.title = m.group(1).trim(); i.artist = m.group(2).trim(); }
         else if (kind.podcast() && (m = Pattern.compile("^(.+?) \\| Podcast on Spotify$").matcher(title)).find()) i.title = m.group(1).trim();
         else if ((m = Pattern.compile("^(.+?) \\| Spotify$").matcher(title)).find()) i.title = m.group(1).trim();
@@ -442,6 +443,7 @@ final class MusicLinks {
         if (html == null) return null;
         Map<String, String> meta = metaTags(html);
         String title = meta.getOrDefault("og:title", ""); if (title.isEmpty()) title = pageTitle(html);
+        note("page " + l.app + " title=" + pageTitle(html) + " | og:title=" + meta.get("og:title") + " | og:description=" + meta.get("og:description"));
         return fromTitle(l.kind, title, meta.getOrDefault("og:description", ""), meta.getOrDefault("music:musician_description", ""));
     }
 
@@ -552,8 +554,10 @@ final class MusicLinks {
             case ARTIST: path = "search/artist"; q = t; break;
             default: return null;
         }
-        JSONObject j = json(net.get(DEEZER + path + "?limit=15&q=" + enc(q), false));
+        String reply = net.get(DEEZER + path + "?limit=15&q=" + enc(q), false);
+        JSONObject j = json(reply);
         JSONArray d = j == null ? null : j.optJSONArray("data");
+        note("deezer search " + q + " → " + (reply == null ? "no reply" : d == null ? reply.substring(0, Math.min(200, reply.length())) : d.length() + " results"));
         if (d == null) return null;
         JSONObject best = null; long bestGap = Long.MAX_VALUE;
         for (int n = 0; n < d.length(); n++) {
@@ -585,13 +589,17 @@ final class MusicLinks {
 
     // MusicBrainz asks apps to send at most one request a second.
     private static long lastBrainz;
+    static long brainzGap = 1100; // tests: 0
     private static String brainz(Net net, String path) throws Exception {
         synchronized (MusicLinks.class) {
-            long wait = lastBrainz + 1100 - System.currentTimeMillis();
+            long wait = lastBrainz + brainzGap - System.currentTimeMillis();
             if (wait > 0) Thread.sleep(wait);
             lastBrainz = System.currentTimeMillis();
         }
-        return net.get(MB + path + (path.contains("?") ? "&" : "?") + "fmt=json", false);
+        String url = MB + path + (path.contains("?") ? "&" : "?") + "fmt=json";
+        String reply = net.get(url, false);
+        note("musicbrainz " + path + " → " + (reply == null ? "nothing" : reply.length() + " chars"));
+        return reply;
     }
 
     /** The link MusicBrainz has for this song (album, artist) on that service, or null. */
@@ -949,7 +957,11 @@ final class MusicLinks {
 
         @Override public String get(String url, boolean page) throws Exception {
             HttpURLConnection c = open(url, page);
-            try { return c.getResponseCode() >= 400 ? null : read(c, page ? 900 * 1024 : 3 * 1024 * 1024); } finally { c.disconnect(); }
+            try {
+                int code = c.getResponseCode();
+                if (code >= 400) { note("get " + code + " " + url); return null; }
+                return read(c, page ? 900 * 1024 : 3 * 1024 * 1024);
+            } finally { c.disconnect(); }
         }
 
         @Override public String post(String url, String json, Map<String, String> headers) throws Exception {

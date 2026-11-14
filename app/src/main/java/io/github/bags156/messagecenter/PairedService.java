@@ -259,7 +259,7 @@ public final class PairedService extends Service {
                 case "CONVERSATION" -> {if(applyChat(new JSONObject(payload)))changed(kind);}
                 case "MESSAGE" -> {
                     JSONObject envelope=new JSONObject(payload),message=envelope.getJSONObject("message");
-                    boolean existed=store.message(message,0,true);touch(message);fullArrived(message);prefetchPhotos(message);
+                    boolean existed=store.message(message,0,true);touch(message);fullArrived(message);prefetchPhotos(message);if(!existed)musicArrived(message);
                     if(attachmentOutbox.reconcile(message)){keepSentCopy(this,attachmentOutbox,message);attachmentOutbox.retireCompleted();changed("MEDIA_OUTBOX");main.post(this::flushMediaOutbox);}
                     long arrivedAt=System.currentTimeMillis();
                     if(PairedProtocol.outgoing(message)&&outbox.copyOfSent(message))autoResend.sentHere(message.optString("messageID"),arrivedAt);
@@ -490,6 +490,11 @@ public final class PairedService extends Service {
             if(!PhotoPrefetch.wanted(message,media,now,full,saver)||MediaCache.file(this,media,false).isFile())continue;
             if(MediaCache.hasFull(media)){Diagnostics.note("Fetching an arriving photo");MediaCache.fetch(this,media,false,(file,error)->{});}
             else if(ready)requestFullMedia(media,false,(v,e)->{});}}
+    /** A song (or podcast) link just arrived from someone you know: find it in your app now, so it's ready when you open the chat. */
+    private void musicArrived(JSONObject message){
+        if(PairedProtocol.outgoing(message)||System.currentTimeMillis()-message.optLong("timestamp")/1000>2L*24*60*60*1000)return;
+        JSONObject chat=store.chat(message.optString("conversationID"));if(chat==null||!PairedProtocol.allKnown(chat))return;
+        try{MusicApps.arrived(this,PairedProtocol.text(message));}catch(Exception ignored){}}
     /** Android's Data Saver is on and this connection is metered: don't download what wasn't asked for. */
     private boolean dataSaverOn(){try{android.net.ConnectivityManager cm=getSystemService(android.net.ConnectivityManager.class);
         return cm.isActiveNetworkMetered()&&cm.getRestrictBackgroundStatus()==android.net.ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED;}catch(Exception e){return false;}}
