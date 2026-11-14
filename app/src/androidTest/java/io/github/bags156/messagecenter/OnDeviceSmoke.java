@@ -952,7 +952,8 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(box[0].equals("Listen: "+spotify),"Song playing didn't put the playing song's link in the message box ("+box[0]+")");
             check(described(a,"Added Blinding Lights by The Weeknd")!=null,"No note saying which song was added");shoot("shot-song-playing");
             runOnMainSync(()->{try{((android.widget.EditText)composer.get(a)).setText("");}catch(Exception e){throw new RuntimeException(e);}});}
-        finally{runOnMainSync(()->{if(player[0]!=null)player[0].release();});shell("cmd notification disallow_listener "+component);
+        // (Access stays on: taking it back away stops the app, as Android does when a permission is withdrawn.)
+        finally{runOnMainSync(()->{if(player[0]!=null)player[0].release();});
             onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("song-playing");}}}
     /**
      * Holding a chat offers "Remind me in 1 hour": it sets a reminder for the chat an hour out; when

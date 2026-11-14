@@ -169,7 +169,10 @@ jobs:
           set -e
       - name: Collect Android diagnostics
         if: always()
-        run: '"$ANDROID_HOME/platform-tools/adb" logcat -d -s AndroidRuntime > android-runtime.txt || true'
+        run: |
+          "$ANDROID_HOME/platform-tools/adb" logcat -d -s AndroidRuntime > android-runtime.txt || true
+          # The app's crashes, in the log itself (the report file can't always be downloaded).
+          grep -A 40 "FATAL EXCEPTION" android-runtime.txt | head -80 | sed 's/^/CRASH /' || true
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
