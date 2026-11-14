@@ -847,7 +847,12 @@ public final class OnDeviceSmoke extends Instrumentation {
             // A redraw: the new card has its picture in the same moment, nothing to blink.
             boolean[] kept={false};runOnMainSync(()->{try{method("renderMessages",boolean.class).invoke(a,false);}catch(Exception e){throw new RuntimeException(e);}
                 android.view.View card=linkCardIn(a);if(card!=null)for(android.widget.ImageView i:viewsOf(card,android.widget.ImageView.class)){kept[0]=i!=hero[0]&&i.getDrawable()!=null;break;}});
-            check(kept[0],"A redraw drew the link preview without its picture for a moment (it blinks)");}
+            check(kept[0],"A redraw drew the link preview without its picture for a moment (it blinks)");
+            // Holding the preview offers the link's options, and Copy link copies it.
+            android.view.View[] card={null};runOnMainSync(()->card[0]=linkCardIn(a));android.graphics.Rect cr=placed(card[0]);hold(cr.exactCenterX(),cr.exactCenterY());
+            check(onTop("Copy link")&&onTop("Share link"),"Holding a link preview didn't offer to copy or share the link");pressText("Copy link");Thread.sleep(300);
+            String[] copied={null};runOnMainSync(()->{android.content.ClipData clip=a.getSystemService(android.content.ClipboardManager.class).getPrimaryClip();if(clip!=null&&clip.getItemCount()>0)copied[0]=String.valueOf(clip.getItemAt(0).getText());});
+            check(url.equals(copied[0]),"Copy link from a preview didn't copy the link ("+copied[0]+")");}
         finally{runOnMainSync(()->a.getWindow().getDecorView().getViewTreeObserver().removeOnPreDrawListener(watch));onMainCall(()->method("inbox").invoke(a));waitForIdleSync();
             saved.delete();pic.delete();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("link-steady");}}}
     /** The newest raw contact the shell just added: the highest "_id=12" it lists (arguments can't hold spaces, so no "DESC"). */

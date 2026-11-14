@@ -1254,7 +1254,7 @@ public class PairedActivity extends Activity {
         if(text.getMovementMethod()!=null)holdLinks(text,m);
         b.setOnLongClickListener(v->{messageSheet(m);return true;});b.setOnClickListener(v->tapped(m,b));if(text.getMovementMethod()!=null)text.setOnClickListener(v->tapped(m,b));
         line.addView(b,new LinearLayout.LayoutParams(-2,-2));wrap.addView(line,new LinearLayout.LayoutParams(-1,-2));bubbleViews.put(m.optString("messageID"),b);
-        String url=linkPreviewsOn()&&(outgoing||chatTrusted)?ChatText.firstUrl(fallback!=null?fallback:body):"";if(!url.isEmpty()){gap(wrap,4);wrap.addView(linkCard(url,outgoing),new LinearLayout.LayoutParams(-1,-2));}
+        String url=linkPreviewsOn()&&(outgoing||chatTrusted)?ChatText.firstUrl(fallback!=null?fallback:body):"";if(!url.isEmpty()){gap(wrap,4);wrap.addView(linkCard(url,outgoing,m),new LinearLayout.LayoutParams(-1,-2));}
         return wrap;
     }
     /**
@@ -3922,7 +3922,7 @@ public class PairedActivity extends Activity {
     // Links
     private boolean linkPreviewsOn(){return getSharedPreferences("paired",MODE_PRIVATE).getBoolean("link_previews",true);}
     /** Title and picture for the first link in a message, under its bubble; tap opens the link. */
-    private View linkCard(String url,boolean outgoing){LinearLayout line=row();line.setGravity(outgoing?Gravity.END:Gravity.START);line.setVisibility(View.GONE);
+    private View linkCard(String url,boolean outgoing,JSONObject m){LinearLayout line=row();line.setGravity(outgoing?Gravity.END:Gravity.START);line.setVisibility(View.GONE);
         LinearLayout card=vertical();card.setBackground(shape(surface,18));card.setOutlineProvider(new ViewOutlineProvider(){@Override public void getOutline(View v,Outline o){o.setRoundRect(0,0,v.getWidth(),v.getHeight(),dp(18));}});card.setClipToOutline(true);
         int width=Math.round(getResources().getDisplayMetrics().widthPixels*0.66f);line.addView(card,new LinearLayout.LayoutParams(width,-2));
         LinkPreviews.Done fill=p->{card.removeAllViews();String image=p.optString("image");int iw=p.optInt("imageW"),ih=p.optInt("imageH");
@@ -3943,8 +3943,10 @@ public class PairedActivity extends Activity {
             LinearLayout texts=vertical();TextView title=text(p.optString("title"),15,ink,true);title.setMaxLines(2);title.setEllipsize(TextUtils.TruncateAt.END);texts.addView(title);
             String desc=p.optString("description");if(!desc.isEmpty()&&!desc.equals(p.optString("title"))){TextView d=text(desc,13,ink,false);d.setAlpha(0.8f);d.setMaxLines(2);d.setEllipsize(TextUtils.TruncateAt.END);d.setPadding(0,dp(2),0,0);texts.addView(d);}
             String site=p.optString("site");TextView sv=text(site.isEmpty()?ChatText.domain(url):site,13,muted,false);sv.setPadding(0,dp(2),0,0);texts.addView(sv);
-            body.addView(texts,new LinearLayout.LayoutParams(0,-2,1));card.addView(body);card.setContentDescription("Link preview: "+p.optString("title"));line.setVisibility(View.VISIBLE);};
+            body.addView(texts,new LinearLayout.LayoutParams(0,-2,1));card.addView(body);card.setContentDescription("Link preview: "+p.optString("title")+". Tap to open, hold to copy or share.");line.setVisibility(View.VISIBLE);};
         card.setOnClickListener(v->{try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));}catch(Exception e){toast("No browser is available.");}});
+        // Holding the preview: the same choices as holding the link in the text (copy, share, open, the message's options).
+        card.setOnLongClickListener(v->{linkSheet(url,m);return true;});
         JSONObject ready=LinkPreviews.peekSaved(this,url);if(ready!=null){if(!ready.optString("title").isEmpty())fill.done(ready);}else LinkPreviews.load(this,url,fill);
         return line;}
     private ScrollView settingsScroll;private int pendingSettingsY;
