@@ -18,8 +18,8 @@ import java.util.List;
 /**
  * Suggested replies ("Sounds good!", "On my way") from Android's own text classifier: part of the
  * phone, on the phone, the same one that suggests replies in notifications. Nothing is sent
- * anywhere, and no library is added (the app stays fully open source). Some phones' Android has no
- * reply model; then there are simply no suggestions. Call off the main thread.
+ * anywhere, and no library is added (the app stays fully open source). Many phones' Android has no
+ * reply model; then {@link ReplyRules} suggests replies to common English messages. Call off the main thread.
  */
 final class SmartReplies {
     private SmartReplies() {}
@@ -53,8 +53,11 @@ final class SmartReplies {
             }
             out.addAll(seen);
         } catch (Exception e) {
-            // No classifier, or it can't (an unsupported language): no suggestions.
+            // No classifier, or it can't (an unsupported language).
         }
+        // Many phones' Android has no reply model: then simple built-in replies for common English messages.
+        if (out.isEmpty() && !recent.isEmpty() && "en".equals(java.util.Locale.getDefault().getLanguage()))
+            out.addAll(ReplyRules.suggest(PairedProtocol.text(recent.get(recent.size() - 1))));
         return out.size() > 3 ? out.subList(0, 3) : out;
     }
 }

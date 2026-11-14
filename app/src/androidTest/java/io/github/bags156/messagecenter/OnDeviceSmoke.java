@@ -1038,9 +1038,9 @@ public final class OnDeviceSmoke extends Instrumentation {
             finally{if(!had)vault.clear();}}
         finally{Birthdays.setForChecks(new java.util.HashMap<>());onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("bday-chat");}}}
     /**
-     * Suggested replies and Translate. Both come from Android itself, and some phones (and test
-     * emulators) have no reply or translation model, so this checks nothing breaks and says what
-     * this one did, rather than requiring suggestions.
+     * Suggested replies and Translate. Replies come from Android where the phone has a reply model,
+     * else the built-in ones (this test phone has none, so those show). Translation depends on the
+     * phone, so this checks nothing breaks and notes what this one did.
      */
     private void checkSuggestionsAndTranslate(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();long now=System.currentTimeMillis();
         try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'sr-chat',name:'Sam Suggest',type:'RCS',lastMessageTimestamp:"+now*1000+",participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'ss',number:'+15557770133'},fullName:'Sam Suggest',firstName:'Sam'}]}"));
@@ -1059,6 +1059,7 @@ public final class OnDeviceSmoke extends Instrumentation {
                 java.util.List<android.view.textclassifier.ConversationAction> got=tc.suggestConversationActions(new android.view.textclassifier.ConversationActions.Request.Builder(conv).build()).getConversationActions();
                 StringBuilder kinds=new StringBuilder();for(android.view.textclassifier.ConversationAction x:got)kinds.append(x.getType()).append(' ');raw=got.size()+" ("+kinds.toString().trim()+")";}catch(Exception e){raw=e.getClass().getSimpleName();}
             note("PROBE suggested replies "+(chip==null?"none":"shown")+"; asked plainly: "+raw+"; classifier "+(tc==android.view.textclassifier.TextClassifier.NO_OP?"none":tc.getClass().getSimpleName())+"; Spanish detected as "+langs+"; on-device translation pairs "+caps);
+            check(chip!=null,"No suggested replies to \"Want to grab lunch tomorrow?\"");
             if(chip!=null){String reply=chip.getContentDescription().toString().substring("Suggested reply: ".length());runOnMainSync(chip::performClick);Thread.sleep(200);String[] box={""};
                 runOnMainSync(()->{try{box[0]=((android.widget.EditText)field("composer").get(a)).getText().toString();}catch(Exception e){throw new RuntimeException(e);}});
                 check(box[0].equals(reply),"Tapping a suggested reply didn't put it in the message box ("+box[0]+")");
