@@ -164,6 +164,30 @@ public class MusicLinksTest {
         assertEquals("USUG11904206", song.isrc);
     }
 
+    @Test public void writesDuetCreditsBothWays() {
+        assertEquals(java.util.Arrays.asList("Kendrick Lamar & SZA", "Kendrick Lamar, SZA", "Kendrick Lamar"), MusicLinks.credits("Kendrick Lamar & SZA"));
+        assertEquals(java.util.Arrays.asList("Shaboozey"), MusicLinks.credits("Shaboozey"));
+        assertEquals(java.util.Arrays.asList("Calvin Harris feat. Rihanna", "Calvin Harris, Rihanna", "Calvin Harris"), MusicLinks.credits("Calvin Harris feat. Rihanna"));
+    }
+
+    @Test public void asksListenBrainzBeforeAnythingSlower() throws Exception {
+        Fake net = new Fake().on(MusicLinks.LB + "spotify-id-from-metadata/json?artist_name=Kendrick%20Lamar%2C%20SZA&release_name=&", "[{\"spotify_track_ids\":[\"2CGNAOSuO1MEFCbBRgUzjd\"]}]");
+        MusicLinks.Item song = new MusicLinks.Item(MusicLinks.Kind.SONG); song.title = "luther"; song.artist = "Kendrick Lamar & SZA";
+        assertEquals("https://open.spotify.com/track/2CGNAOSuO1MEFCbBRgUzjd", MusicLinks.find(song, MusicLinks.App.SPOTIFY, net, "us").url);
+        assertTrue("found before Deezer or MusicBrainz were asked", net.asked.stream().allMatch(u -> u.startsWith(MusicLinks.LB)));
+    }
+
+    @Test public void stopsAskingMusicBrainzWhenTimeRunsOut() throws Exception {
+        Fake net = new Fake().on(MusicLinks.MB, o("recordings", a()));
+        MusicLinks.Item song = new MusicLinks.Item(MusicLinks.Kind.SONG); song.title = "Rare"; song.artist = "Nobody"; song.isrc = "XX0000000000"; song.codesAsked = true;
+        MusicLinks.deadline.set(System.currentTimeMillis() - 1); MusicLinks.ranOut.set(false);
+        try {
+            MusicLinks.Match m = MusicLinks.find(song, MusicLinks.App.TIDAL, net, "us");
+            assertEquals("search", m.how); assertTrue("it's known to be unfinished", MusicLinks.ranOut.get());
+            assertTrue(net.asked.stream().noneMatch(u -> u.startsWith(MusicLinks.MB)));
+        } finally { MusicLinks.deadline.set(0L); MusicLinks.ranOut.set(false); }
+    }
+
     @Test public void findsSpotifySongsThroughListenBrainzFirst() throws Exception {
         Fake net = new Fake()
             .on(MusicLinks.DEEZER + "search/track", o("data", a(o("id", 1, "title", "A Bar Song (Tipsy)", "duration", 171, "artist", o("name", "Shaboozey"), "album", o("title", "Where I've Been, Isn't Where I'm Going")))))

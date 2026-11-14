@@ -1,7 +1,7 @@
-Message Center 1.5.46.
+Message Center 1.5.47.
 
-- No more song links someone can't play. When you send a song to someone and their app doesn't have it (or it can't be found there), it now goes as the song's song.link page instead of your link. That one page opens the song in their app if it's there, and lets them play it on any other service if it isn't. A note above the message box says so, with Undo. You can turn this off in Settings → Apps → Universal links when there's no match.
-- Exact matches still swap in directly, as before.
-- song.link links you receive get "Open in…" too, and holding a song's preview offers "Open on song.link (every app)" when your app doesn't have the exact song.
+- ⊕ → Song playing: puts a link to the song playing on your phone into the message box, whether it's playing in Spotify, YouTube Music or any other app. Sent to someone who uses another app, it changes to theirs like any song you paste. The first time, Android asks you to turn on notification access for "Message Center: song playing". Android warns that this could read notifications; Message Center doesn't. It only asks Android what's playing, when you tap Song playing.
+- Spotify lookups are much faster. Message Center now asks ListenBrainz first (usually a fraction of a second), and tries duet credits both ways ("Kendrick Lamar & SZA" and "Kendrick Lamar, SZA").
+- What you're waiting on never queues behind songs arriving in the background. If the slow last resort (MusicBrainz) would take more than about 3 seconds, the button shows a search right away and switches to the exact song when it's found.
 
 Install over the existing app through Obtainium. Your pairing, conversations and settings are retained.

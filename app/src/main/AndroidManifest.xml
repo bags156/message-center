@@ -91,6 +91,13 @@
         <activity android:name=".VideoPlayerActivity" android:exported="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden" />
         <service android:name=".PairedService" android:exported="false" android:foregroundServiceType="remoteMessaging" />
+        <!-- ⊕ → Song playing: Android only says what's playing to an app with notification access. It ignores notifications. -->
+        <service android:name=".NowPlayingAccess" android:label="Message Center: song playing" android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
         <service android:name=".TranscribeService" android:exported="false" android:foregroundServiceType="microphone|shortService" />
         <!-- Decodes pictures the phone's own decoders refuse (iPhone Genmoji) in a sandbox with no access to the app's data. -->
         <service android:name=".HevcDecoderService" android:exported="false" android:process=":picture_decoder" android:isolatedProcess="true" />

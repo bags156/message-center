@@ -180,7 +180,7 @@ public class PairedActivity extends Activity {
     /** Tells ChatBubbles which chat you're in (its Details and Shared count), so that chat's bubble steps aside. */
     private void reportChatOnScreen(){if(bubble())return;boolean inChat=screen.equals("chat")||screen.equals("details")||screen.equals("media")||screen.equals("notes")||screen.equals("note");
         ChatBubbles.showing(this,started&&inChat?chatId:"");}
-    @Override protected void onResume(){super.onResume();resumed=true;timeFormat=null;dateFormat=null;PairedService.screenVisible(true);refreshDraft();if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
+    @Override protected void onResume(){super.onResume();resumed=true;MusicApps.updated=()->{if(resumed&&screen.equals("chat"))renderMessages(false);};timeFormat=null;dateFormat=null;PairedService.screenVisible(true);refreshDraft();if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
         PhotoText.indexDownloaded(this,false);watchCalls(true);if(screen.equals("chat")&&!chatId.isEmpty())loadCalls(chatId);
         if(PairedService.ready()&&screen.equals("pair")){CookieManager.getInstance().removeAllCookies(null);inbox();askNotifications();}
         else if(!bubble()&&!PairedService.emoji().isEmpty()&&login==null)pairing();
@@ -189,7 +189,7 @@ public class PairedActivity extends Activity {
             if(screen.equals("chat")){renderMessages(false);if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();if(!bubble())PairedService.clearNotification(this,chatId);}
             else if(screen.equals("inbox")){if(batteryCard!=null&&!showBatteryCard()){root.removeView(batteryCard);batteryCard=null;}renderInbox();refreshInbox(false);
                 if(!bubble()&&PairedService.ready()&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED)askContactPhotos();}}}
-    @Override protected void onPause(){saveNote();watchCalls(false);if(resumed)PairedService.screenVisible(false);resumed=false;if(dictation!=null)stopDictation();remember();if(inline!=null)inline.pause();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&!playingId.isEmpty())pauseVoice();if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
+    @Override protected void onPause(){MusicApps.updated=null;saveNote();watchCalls(false);if(resumed)PairedService.screenVisible(false);resumed=false;if(dictation!=null)stopDictation();remember();if(inline!=null)inline.pause();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&!playingId.isEmpty())pauseVoice();if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
     @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);if(focused)refreshDraft();if(focused&&store!=null){markReadIfAllowed();updateReceiptStatus();}}
     /** Picks up a draft typed in the other window (bubble or full app) so you carry on where you left off. */
     private void refreshDraft(){if(composer==null||drafts==null||chatId.isEmpty()||!screen.equals("chat"))return;String stored=drafts.getOrDefault(chatId,"");
@@ -2477,7 +2477,26 @@ public class PairedActivity extends Activity {
         b.show();
     }
     private static final int TAKE_PHOTO=43;private File pendingCapture;
-    /** ⊕ button: a panel with Photos & videos (Android's photo picker, no storage permission), Camera, Files, Location, Contact and Text on arrival. */
+    /**
+     * ⊕ → Song playing: a link to the song playing on this phone (in Spotify, YouTube Music, or any
+     * app) goes into the message box; sent to someone on another app, it then changes to theirs.
+     * The first time, Android's notification access has to be turned on (only to see what's playing).
+     */
+    private void shareNowPlaying(){
+        if(!NowPlaying.allowed(this)){new AlertDialog.Builder(this).setTitle("See what's playing")
+            .setMessage("Android only tells an app which song is playing if it has notification access. Turn it on for \"Message Center: song playing\". Android will warn that it could read your notifications; Message Center only asks what's playing, when you tap Song playing.")
+            .setPositiveButton("Turn on",(x,y)->{Intent open=new Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS).putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,NowPlaying.access(this).flattenToString());
+                try{startActivity(open);}catch(Exception e){try{startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));}catch(Exception ignored){toast("Open Android's settings → Notifications → Device & app notifications.");}}})
+            .setNegativeButton("Cancel",null).show();return;}
+        NowPlaying.Song song=NowPlaying.current(this);if(song==null){toast("Nothing is playing right now.");return;}
+        String id=chatId,label=song.title+(song.artist.isEmpty()?"":" by "+song.artist);MusicLinks.App mine=MusicApps.chosen(this,false);
+        showMusicNote("Finding "+label+"\u2026",false);
+        new Thread(()->{String link=NowPlaying.link(getApplicationContext(),song,mine);ui.post(()->{
+            if(composer==null||!screen.equals("chat")||!chatId.equals(id))return;
+            if(link==null){showMusicNote("Couldn't find a link for "+label,false);return;}
+            Editable box=composer.getText();box.append((box.length()>0&&!Character.isWhitespace(box.charAt(box.length()-1))?" ":"")+link);composer.setSelection(composer.length());
+            showMusicNote("Added "+label,false);});},"song-playing").start();}
+    /** ⊕ button: a panel with Photos & videos (Android's photo picker, no storage permission), Camera, Files, Location, Contact, Text on arrival and Song playing. */
     private void attach(){LinearLayout content=vertical();Dialog[] d=new Dialog[1];LinearLayout tiles=row();tiles.setGravity(Gravity.CENTER);
         attachTile(tiles,R.drawable.ic_gallery,"Photos & videos",()->{d[0].dismiss();pickMedia();});
         attachTile(tiles,R.drawable.ic_camera,"Camera",()->{d[0].dismiss();takePhoto();});
@@ -2487,8 +2506,9 @@ public class PairedActivity extends Activity {
         LinearLayout more=row();more.setGravity(Gravity.CENTER);
         attachTile(more,R.drawable.ic_contact,"Contact",()->{d[0].dismiss();pickContact();});
         attachTile(more,R.drawable.ic_arrive,"Text on arrival",()->{d[0].dismiss();arrivalText(chatId);});
-        // Spaces keep the tiles the same size as the ones in the row above.
-        for(int k=0;k<2;k++)more.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
+        attachTile(more,R.drawable.ic_play,"Song playing",()->{d[0].dismiss();shareNowPlaying();});
+        // A space keeps the tiles the same size as the ones in the row above.
+        more.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
         content.addView(more,new LinearLayout.LayoutParams(-1,-2));d[0]=sheet(content);}
     private static final int PICK_CONTACT=87,SHARE_CONTACT_PERMISSION=88;
     /**
@@ -4046,7 +4066,7 @@ public class PairedActivity extends Activity {
         JSONObject c=store.chat(id);JSONObject other=c==null?null:PairedProtocol.other(c);if(other==null)return;
         MusicLinks.App theirs=MusicApps.theirs(chatSettings,store,id);if(theirs==null||theirs==from)return;
         String name=PairedProtocol.firstName(other);musicPending=url;musicPendingApp=theirs.label;showMusicNote("Finding it on "+theirs.label+" for "+name+"\u2026",false);
-        MusicApps.find(this,url,theirs,res->{if(!url.equals(musicPending))return;musicPending="";
+        MusicApps.find(this,url,theirs,7000,res->{if(!url.equals(musicPending))return;musicPending="";
             boolean here=composer!=null&&screen.equals("chat")&&chatId.equals(id);
             String now=here?composer.getText().toString():"";int at=now.indexOf(url);
             if(here&&at>=0&&res.optString("how").equals("exact")&&!res.optString("url").isEmpty()){String to=res.optString("url");
