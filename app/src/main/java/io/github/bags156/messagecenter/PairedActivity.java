@@ -586,20 +586,35 @@ public class PairedActivity extends Activity {
     private void openBubble(String id){String problem=PairedService.showBubble(this,id);if(!problem.isEmpty())toast(problem);}
     private void togglePin(JSONObject c){String id=c.optString("conversationID");boolean now=!chatSettings.pinned(c);chatSettings.setPinned(id,now);decoder.execute(()->Nudges.reschedule(this));
         toast(now?"Pinned to the top of Message Center":"Unpinned");if(screen.equals("inbox"))renderInbox();}
-    private void chooseTheme(String id){
-        LinearLayout list=vertical();Dialog[] dialog=new Dialog[1];TextView heading=text("Chat theme",18,ink,true);heading.setPadding(dp(8),0,dp(8),dp(6));list.addView(heading);
-        String current=chatSettings.theme(id).key;
+    /**
+     * Colors for one chat, or (id "") for every chat. A chat can follow the all-chats colors ("Same as all
+     * chats") or have its own, and its own colors can be made everyone's.
+     */
+    private void chooseTheme(String id){boolean all=id.isEmpty();
+        LinearLayout list=vertical();Dialog[] dialog=new Dialog[1];TextView heading=text(all?"Color for all chats":"Chat theme",18,ink,true);heading.setPadding(dp(8),0,dp(8),dp(6));list.addView(heading);
+        if(all){TextView sub=text("Any chat can still have its own: ⋮ → Theme in that chat.",13,muted,false);sub.setPadding(dp(8),0,dp(8),dp(8));list.addView(sub);}
+        boolean own=!all&&chatSettings.ownTheme(id);String current=own||all?chatSettings.theme(id).key:"";
+        // This chat follows the colors every chat uses (until you pick its own).
+        if(!all){ChatTheme every=ChatTheme.of(chatSettings.allTheme());LinearLayout r=row();r.setPadding(dp(16),dp(10),dp(16),dp(10));pressable(r);
+            View swatch=new View(this);GradientDrawable sw=oval(every.bubble(dark));sw.setStroke(dp(3),every.accent(dark));swatch.setBackground(sw);r.addView(swatch,new LinearLayout.LayoutParams(dp(32),dp(32)));
+            TextView label=text("Same as all chats · "+every.label,16,ink,!own);label.setPadding(dp(16),0,0,0);r.addView(label,new LinearLayout.LayoutParams(0,-2,1));
+            if(!own)r.addView(text("✓",18,every.accent(dark),true));
+            r.setOnClickListener(v->{chatSettings.sameAsAll(id);dialog[0].dismiss();themeChanged(id);});list.addView(r);}
         for(ChatTheme t:ChatTheme.ALL){LinearLayout r=row();r.setPadding(dp(16),dp(10),dp(16),dp(10));pressable(r);
             View swatch=new View(this);GradientDrawable sw=oval(t.bubble(dark));sw.setStroke(dp(3),t.accent(dark));swatch.setBackground(sw);r.addView(swatch,new LinearLayout.LayoutParams(dp(32),dp(32)));
             TextView label=text(t.label,16,ink,t.key.equals(current));label.setPadding(dp(16),0,0,0);r.addView(label,new LinearLayout.LayoutParams(0,-2,1));
             if(t.key.equals(current))r.addView(text("✓",18,t.accent(dark),true));
-            r.setOnClickListener(v->{chatSettings.setTheme(id,t.key);dialog[0].dismiss();if(screen.equals("chat")&&chatId.equals(id))thread(id);else if(screen.equals("details"))details();});list.addView(r);}
+            r.setOnClickListener(v->{dialog[0].dismiss();if(all)applyThemeToAll(t.key,"");else{chatSettings.setTheme(id,t.key);themeChanged(id);}});list.addView(r);}
         // Custom: any color, picked on the next sheet.
-        {ChatTheme mine=chatSettings.theme(id);boolean on=mine.custom();LinearLayout r=row();r.setPadding(dp(16),dp(10),dp(16),dp(10));pressable(r);
+        {ChatTheme mine=chatSettings.theme(id);boolean on=(own||all)&&mine.custom();LinearLayout r=row();r.setPadding(dp(16),dp(10),dp(16),dp(10));pressable(r);
             View swatch=new View(this);GradientDrawable sw;if(on){sw=oval(mine.bubble(dark));sw.setStroke(dp(3),mine.accent(dark));}else{sw=new GradientDrawable();sw.setShape(GradientDrawable.OVAL);sw.setGradientType(GradientDrawable.SWEEP_GRADIENT);sw.setColors(RAINBOW);}
             swatch.setBackground(sw);r.addView(swatch,new LinearLayout.LayoutParams(dp(32),dp(32)));
             TextView label=text("Custom…",16,ink,on);label.setPadding(dp(16),0,0,0);r.addView(label,new LinearLayout.LayoutParams(0,-2,1));if(on)r.addView(text("✓",18,mine.accent(dark),true));
             r.setOnClickListener(v->{dialog[0].dismiss();customTheme(id);});list.addView(r);}
+        if(all){dialog[0]=sheet(list);return;}
+        // This chat's colors for every chat.
+        if(own){ChatTheme mine=chatSettings.theme(id);TextView everyone=text("Use "+mine.label+" for all chats",15,BLUE,true);everyone.setPadding(dp(16),dp(12),dp(16),dp(12));pressable(everyone);
+            everyone.setOnClickListener(v->{dialog[0].dismiss();applyThemeToAll(mine.key,id);});list.addView(everyone);}
         TextView bgHeading=text("Background",18,ink,true);bgHeading.setPadding(dp(8),dp(14),dp(8),dp(8));list.addView(bgHeading);
         HorizontalScrollView strip=new HorizontalScrollView(this);strip.setHorizontalScrollBarEnabled(false);LinearLayout tiles=row();tiles.setPadding(dp(8),0,dp(8),dp(8));strip.addView(tiles);list.addView(strip);
         String currentBg=chatSettings.background(id);
@@ -607,6 +622,18 @@ public class PairedActivity extends Activity {
         for(String[] stock:STOCK_BACKGROUNDS){String value="stock:"+stock[0];tiles.addView(backgroundTile(stock[0],stock[1],currentBg.equals(value),()->{dialog[0].dismiss();setChatBackground(id,value);}));}
         tiles.addView(backgroundTile("photo:"+id,"Your photo…",currentBg.equals("photo"),()->{dialog[0].dismiss();pickBackgroundPhoto(id);}));
         dialog[0]=sheet(list);}
+    /** Redraws what shows a chat's colors after they change ("" = all chats). */
+    private void themeChanged(String id){if(screen.equals("chat")&&(id.isEmpty()||chatId.equals(id)))thread(chatId);else if(screen.equals("details"))details();else if(screen.equals("settings"))settings();}
+    /**
+     * Colors for every chat. If some chats have their own, asks whether those switch too (from a chat's
+     * "Use … for all chats", that chat itself just follows along). Any chat can still be changed after.
+     */
+    private void applyThemeToAll(String key,String fromChat){List<String> others=chatSettings.ownThemes();others.remove(fromChat);String name=ChatTheme.of(key).label;
+        Runnable done=()->{if(!fromChat.isEmpty())chatSettings.sameAsAll(fromChat);toast("All chats now use "+name+".");themeChanged("");};
+        if(others.isEmpty()){chatSettings.themeAll(key,false);done.run();return;}
+        new AlertDialog.Builder(this).setTitle("Use "+name+" for all chats?").setMessage(others.size()+(others.size()==1?" chat has its own colors.":" chats have their own colors.")+" Change "+(others.size()==1?"it":"them")+" to "+name+" too?")
+            .setPositiveButton("Change all",(d,w)->{chatSettings.themeAll(key,true);done.run();})
+            .setNegativeButton("Keep theirs",(d,w)->{chatSettings.themeAll(key,false);done.run();}).setNeutralButton("Cancel",null).show();}
     private static final int[] RAINBOW={0xffff3b30,0xffffcc00,0xff34c759,0xff00c7be,0xff007aff,0xffaf52de,0xffff2d55,0xffff3b30};
     /** A rounded slider track in these colors, left to right. */
     private GradientDrawable track(int... colors){GradientDrawable d=new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,colors);d.setCornerRadius(dp(7));return d;}
@@ -631,7 +658,7 @@ public class PairedActivity extends Activity {
      */
     private void customTheme(String id){ChatTheme now=chatSettings.theme(id);int start=now.custom()?ChatTheme.customColor(now.key):now.bubble(dark);
         int[] picked={start};boolean[] syncing={false};Dialog[] dialog=new Dialog[1];
-        LinearLayout content=vertical();TextView heading=text("Custom color",18,ink,true);heading.setPadding(dp(8),0,dp(8),dp(10));content.addView(heading);
+        LinearLayout content=vertical();TextView heading=text(id.isEmpty()?"Custom color for all chats":"Custom color",18,ink,true);heading.setPadding(dp(8),0,dp(8),dp(10));content.addView(heading);
         // A sample chat in this chat's colors: their bubble, yours, and the send button.
         LinearLayout sample=vertical();sample.setPadding(dp(14),dp(14),dp(14),dp(12));sample.setBackground(shape(bg,20));
         TextView theirs=text("What color is this?",15,ink,false);theirs.setPadding(dp(14),dp(9),dp(14),dp(9));theirs.setBackground(shape(surface,18));
@@ -670,8 +697,8 @@ public class PairedActivity extends Activity {
         LinearLayout buttons=row();buttons.setGravity(Gravity.END);
         buttons.addView(button("Cancel",false,()->dialog[0].dismiss()));
         LinearLayout.LayoutParams ul=new LinearLayout.LayoutParams(-2,-2);ul.setMarginStart(dp(10));
-        buttons.addView(button("Use color",true,()->{chatSettings.setTheme(id,ChatTheme.custom(picked[0],dark).key);rememberCustomColor(picked[0]);dialog[0].dismiss();
-            if(screen.equals("chat")&&chatId.equals(id))thread(id);else if(screen.equals("details"))details();}),ul);
+        buttons.addView(button("Use color",true,()->{String key=ChatTheme.custom(picked[0],dark).key;rememberCustomColor(picked[0]);dialog[0].dismiss();
+            if(id.isEmpty())applyThemeToAll(key,"");else{chatSettings.setTheme(id,key);themeChanged(id);}}),ul);
         LinearLayout.LayoutParams bul=new LinearLayout.LayoutParams(-1,-2);bul.topMargin=dp(18);content.addView(buttons,bul);
         refresh.run();ScrollView scroller=new ScrollView(this);scroller.addView(content);
         dialog[0]=sheet(scroller,WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE|WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN);}
@@ -3929,7 +3956,7 @@ public class PairedActivity extends Activity {
     private static String settingsTitle(String page){switch(page){case "messages":return "Messages";case "media":return "Photos & media";case "notifications":return "Notifications";
         case "automation":return "Automation";case "appearance":return "Appearance";case "connection":return "Connection";case "data":return "Data & about";default:return "Settings";}}
     /** Words people might search for that a setting's own words don't say. */
-    private static String settingKeywords(String title){switch(title){case "Theme":return "dark light black mode night colors";case "Text size":return "font bigger smaller larger";case "Unread count":return "badge number total inbox";case "Calls in chats":return "phone call log duration missed";
+    private static String settingKeywords(String title){switch(title){case "Theme":return "dark light black mode night colors";case "Text size":return "font bigger smaller larger";case "Unread count":return "badge number total inbox";case "Chat color":return "theme bubble colour all chats every conversation";case "Calls in chats":return "phone call log duration missed";
         case "Undo send":return "unsend delay take back cancel";case "Typing indicators":return "typing privacy";case "Read receipts":return "seen read privacy";case "Bubbles":return "floating chat heads";
         case "Busy auto-reply":return "away driving automatic reply";case "Notifications":return "sound vibration alerts";case "Background activity":return "battery optimization";
         case "Back up app data":return "backup export save";case "Restore from a backup":return "import backup";case "Photo quality":return "pictures compress size";
@@ -4059,6 +4086,7 @@ public class PairedActivity extends Activity {
             String themeMode=prefs.getString("theme","system");
             settingRow(looks,R.drawable.ic_palette,0xffec4899,"Theme",themeMode.equals("black")?"True black for OLED screens: those pixels switch off":null,themeMode.equals("light")?"Light":themeMode.equals("dark")?"Dark":themeMode.equals("black")?"Black":"Match phone",
                 ()->menuSheet("Theme",java.util.Arrays.asList("Match phone","Light","Dark","Black (saves battery on OLED)"),java.util.Arrays.<Runnable>asList(()->{appTheme("system");settings();},()->{appTheme("light");settings();},()->{appTheme("dark");settings();},()->{appTheme("black");settings();})));
+            settingRow(looks,R.drawable.ic_chat,0xff3b82f6,"Chat color","For every chat. Any chat can still have its own (⋮ → Theme in that chat)",ChatTheme.of(chatSettings.allTheme()).label,()->chooseTheme(""));
             settingSwitch(looks,R.drawable.ic_done_all,0xff0ea5e9,"Unread count","How many messages are unread, next to Messages at the top",unreadCountOn(),on->prefs.edit().putBoolean("inbox_unread_count",on).apply());
             settingRow(looks,R.drawable.ic_text_size,0xff8b5cf6,"Text size",null,scaleLabel(textScale),()->{float[] sizes={0.9f,1f,1.15f,1.3f};List<Runnable> actions=new ArrayList<>();
                 for(float f:sizes)actions.add(()->{prefs.edit().putFloat("text_scale",f).apply();settings();});

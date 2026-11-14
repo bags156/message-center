@@ -795,6 +795,28 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(waitForChatText(a,"Outgoing call",2000,false),"Turning calls off didn't hide them");}
         finally{prefs.edit().putBoolean("show_calls",true).commit();shell("content delete --uri content://call_log/calls --where number='+15557770188'");shell("content delete --uri content://call_log/calls --where number='5557770188'");
             onMainCall(()->method("inbox").invoke(a));waitForIdleSync();}}
+    /**
+     * One color for all chats (Settings → Appearance → Chat color): chats without their own follow it;
+     * a chat with its own is asked about (Keep theirs / Change all); any chat can still get its own
+     * after, and go back with "Same as all chats".
+     */
+    private void checkThemeAll(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();ChatSettings settings=new ChatSettings(ctx);
+        settings.themeAll("default",true);settings.setTheme("smoke","berry");
+        try{onMainCall(()->method("chooseTheme",String.class).invoke(a,""));check(waitForText("Color for all chats",3000,true),"Chat color for all chats didn't open");shoot("shot-theme-all");
+            pressText("Ocean");check(waitForText("Use Ocean for all chats?",3000,true),"It didn't ask about the chat with its own colors");pressText("Keep theirs");
+            check(waitForText("Use Ocean for all chats?",3000,false),"The question didn't close");
+            check("ocean".equals(settings.theme("swipe-check").key),"A chat without its own colors didn't follow all chats ("+settings.theme("swipe-check").key+")");
+            check("berry".equals(settings.theme("smoke").key),"Keep theirs changed a chat's own colors");
+            onMainCall(()->method("chooseTheme",String.class).invoke(a,""));check(waitForText("Color for all chats",3000,true),"Chat color didn't open again");
+            pressText("Forest");pressText("Change all");check(waitForText("Use Forest for all chats?",3000,false),"The question didn't close");
+            check("forest".equals(settings.theme("smoke").key)&&!settings.ownTheme("smoke"),"Change all didn't switch the chat that had its own colors");
+            // One chat can still be changed after, and go back.
+            onMainCall(()->method("thread",String.class).invoke(a,"swipe-check"));waitForIdleSync();
+            onMainCall(()->method("chooseTheme",String.class).invoke(a,"swipe-check"));check(waitForText("Same as all chats · Forest",3000,true),"A chat's theme doesn't offer following all chats");
+            pressText("Rose");waitForIdleSync();check("rose".equals(settings.theme("swipe-check").key)&&"forest".equals(settings.theme("smoke").key),"Changing one chat after didn't change just that chat");
+            onMainCall(()->method("chooseTheme",String.class).invoke(a,"swipe-check"));pressText("Same as all chats · Forest");waitForIdleSync();
+            check(!settings.ownTheme("swipe-check")&&"forest".equals(settings.theme("swipe-check").key),"Same as all chats didn't take the chat back to the all-chats colors");}
+        finally{settings.themeAll("default",true);getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);Thread.sleep(300);onMainCall(()->method("inbox").invoke(a));waitForIdleSync();}}
     private android.view.View linkCardIn(PairedActivity a){java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();
         a.getWindow().getDecorView().findViewsWithText(found,"Link preview",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);for(android.view.View v:found)if(v.isShown())return v;return null;}
     /**
@@ -1755,6 +1777,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkCustomTheme((PairedActivity)activity);
         checkUnreadCount((PairedActivity)activity);
         checkCallLines((PairedActivity)activity);
+        checkThemeAll((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();

@@ -16,6 +16,8 @@ final class ChatSettings {
     void snoozeReply(String id,long time){prefs.edit().putLong("reply-later:"+id,time).apply();}
     private final SharedPreferences prefs;
     ChatSettings(Context context) { prefs = context.getSharedPreferences("chat-settings", Context.MODE_PRIVATE); }
+    /** For unit tests: kept in the given storage. */
+    ChatSettings(SharedPreferences prefs) { this.prefs = prefs; }
 
     boolean pinned(JSONObject chat) {
         String id = chat.optString("conversationID");
@@ -29,8 +31,34 @@ final class ChatSettings {
     }
     void setPinned(String id, boolean pinned) { prefs.edit().putString("pin:" + id, pinned ? "1" : "0").apply(); }
 
-    ChatTheme theme(String id) { return ChatTheme.of(prefs.getString("theme:" + id, "default")); }
-    void setTheme(String id, String key) { prefs.edit().putString("theme:" + id, key).apply(); }
+    /** A chat's colors: its own if you gave it some, otherwise the ones every chat uses. "" is that all-chats choice. */
+    ChatTheme theme(String id) {
+        String own = id == null || id.isEmpty() ? null : prefs.getString("theme:" + id, null);
+        return ChatTheme.of(own != null ? own : allTheme());
+    }
+    /** The colors every chat uses unless it has its own (Settings → Appearance → Chat color). */
+    String allTheme() { return prefs.getString("theme_all", "default"); }
+    /** Whether this chat has colors of its own (rather than the all-chats ones). */
+    boolean ownTheme(String id) { return id != null && !id.isEmpty() && prefs.contains("theme:" + id); }
+    /** Gives a chat its own colors; "" sets the colors for all chats (those with their own keep them). */
+    void setTheme(String id, String key) {
+        if (id == null || id.isEmpty()) prefs.edit().putString("theme_all", key).apply();
+        else prefs.edit().putString("theme:" + id, key).apply();
+    }
+    /** Back to the colors every chat uses. */
+    void sameAsAll(String id) { prefs.edit().remove("theme:" + id).apply(); }
+    /** The chats that have colors of their own. */
+    java.util.List<String> ownThemes() {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (String k : prefs.getAll().keySet()) if (k.startsWith("theme:")) out.add(k.substring("theme:".length()));
+        return out;
+    }
+    /** Colors for all chats; with ownToo, chats that had their own switch as well (any can still be changed after). */
+    void themeAll(String key, boolean ownToo) {
+        SharedPreferences.Editor e = prefs.edit().putString("theme_all", key);
+        if (ownToo) for (String id : ownThemes()) e.remove("theme:" + id);
+        e.apply();
+    }
 
     /** Whether opening this chat marks it read on the phone (which sends RCS read receipts). Off unless turned on for this chat. */
     boolean receipts(String id) { return prefs.getBoolean("receipts:" + id, false); }
