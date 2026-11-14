@@ -1,7 +1,6 @@
-Message Center 1.5.48.
+Message Center 1.5.49.
 
-- Hold a chat in the list → "Remind me in 1 hour". An hour later a banner pops up with who it's about and their latest message, and tapping it opens the chat. The banner has "Again in 1 hour" if you still can't get to it.
-- Holding the chat again shows when the reminder is set for, and lets you remove it.
-- Reminders follow Settings → Notifications → What notifications show, like message notifications.
+- Holding a chat in the list opens a cleaner menu, in the same style as the ⋮ menu inside a chat. It shows who the chat is with at the top, then four buttons for what you do most: Pin, Read or Unread, Mute and Archive. Below are short lists with icons: Remind me in 1 hour, Snooze notifications, Needs a reply, Open as bubble and Details. Block and Delete are set apart at the bottom in red.
+- Chat theme and read receipts moved out of this menu. They're in the chat's Details and its ⋮ menu.
 
 Install over the existing app through Obtainium. Your pairing, conversations and settings are retained.
