@@ -1088,7 +1088,7 @@ public class PairedActivity extends Activity {
             ValueAnimator a=ValueAnimator.ofFloat(blur,0f);a.setDuration(420);a.addUpdateListener(x->{float r=(float)x.getAnimatedValue();content.setRenderEffect(r<0.5f?null:android.graphics.RenderEffect.createBlurEffect(r,r,android.graphics.Shader.TileMode.DECAL));});
             a.addListener(new android.animation.AnimatorListenerAdapter(){@Override public void onAnimationEnd(android.animation.Animator an){content.setRenderEffect(null);}});a.start();box.postDelayed(later,INK_SHOWN_MS);});
         cover.setOnLongClickListener(v->{messageSheet(m);return true;});return box;}
-    private void renderMessages(boolean bottom){if(items==null||!screen.equals("chat"))return;long perfAll=Perf.start(),perf=perfAll;refreshSavedAttachments();voiceCards.clear();voiceOrder.clear();
+    private void renderMessages(boolean bottom){if(items==null||!screen.equals("chat"))return;ui.post(this::updateQuickRow);long perfAll=Perf.start(),perf=perfAll;refreshSavedAttachments();voiceCards.clear();voiceOrder.clear();
         ScrollView sv=scroll;View content=sv.getChildAt(0);int y,before;boolean atBottom;Spot spot;
         // If the last redraw hasn't been laid out yet, its new views have no positions; keep aiming where it was aiming.
         if(placing!=null&&placingIn==sv){sv.getViewTreeObserver().removeOnPreDrawListener(placing);placing=null;y=placeY;before=placeBefore;atBottom=bottom||placeBottom;spot=atBottom?null:placeSpot;}
@@ -1293,8 +1293,15 @@ public class PairedActivity extends Activity {
             if(added){text.setText(sp);text.setHighlightColor(Color.TRANSPARENT);text.setMovementMethod(LinkMovementMethod.getInstance());text.setOnLongClickListener(v->{messageSheet(m);return true;});}}
         if(text.getMovementMethod()!=null)holdLinks(text,m);
         b.setOnLongClickListener(v->{messageSheet(m);return true;});b.setOnClickListener(v->tapped(m,b));if(text.getMovementMethod()!=null)text.setOnClickListener(v->tapped(m,b));
+        String[] tr=translations.get(m.optString("messageID"));View translated=null;
+        if(tr!=null){String mid=m.optString("messageID");boolean original=showingOriginal.contains(mid);LinearLayout box=vertical();box.setPadding(dp(14),dp(4),dp(14),dp(2));
+            TextView head=text(original?"Show translation":"Translated from "+tr[1]+" \u00b7 Show original",11,muted,false);head.setGravity(outgoing?Gravity.END:Gravity.START);box.addView(head);
+            if(!original){TextView said=text(tr[0],15,ink,false);said.setGravity(outgoing?Gravity.END:Gravity.START);said.setTextIsSelectable(true);box.addView(said);}
+            box.setContentDescription(original?"Show translation":"Translated from "+tr[1]+": "+tr[0]);box.setOnClickListener(v->{if(!showingOriginal.remove(mid))showingOriginal.add(mid);renderMessages(false);});
+            translated=box;}
         if(m.optBoolean("_edited")){TextView ed=text("Edited",11,muted,false);ed.setPadding(dp(14),0,dp(14),dp(2));ed.setGravity(outgoing?Gravity.END:Gravity.START);wrap.addView(ed,new LinearLayout.LayoutParams(-1,-2));}
         line.addView(b,new LinearLayout.LayoutParams(-2,-2));wrap.addView(line,new LinearLayout.LayoutParams(-1,-2));bubbleViews.put(m.optString("messageID"),b);
+        if(translated!=null)wrap.addView(translated,new LinearLayout.LayoutParams(-1,-2));
         String url=linkPreviewsOn()&&(outgoing||chatTrusted)?ChatText.firstUrl(fallback!=null?fallback:body):"";if(!url.isEmpty()){gap(wrap,4);wrap.addView(linkCard(url,outgoing,m),new LinearLayout.LayoutParams(-1,-2));}
         else{List<SmartText.Hit> parcels=SmartText.tracking(fallback!=null?fallback:body);if(!parcels.isEmpty()){gap(wrap,4);wrap.addView(trackCard(parcels.get(0),outgoing,m),new LinearLayout.LayoutParams(-1,-2));}}
         return wrap;
@@ -1598,6 +1605,7 @@ public class PairedActivity extends Activity {
             pinShown=0;renderPinBar();});
         String typed=PairedProtocol.text(m),plain=ChatText.replyFallbackBody(typed)!=null?ChatText.replyFallbackBody(typed):typed;
         if(!plain.isEmpty())sheetAction(content,"Copy text",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Message",plain));});
+        if(!plain.isEmpty())sheetAction(content,!translations.containsKey(m.optString("messageID"))?"Translate":showingOriginal.contains(m.optString("messageID"))?"Show translation":"Show original",()->{d[0].dismiss();translate(m,plain);});
         // Google lets RCS messages be edited for 15 minutes, but only in its own app (not linked devices like this one).
         if(!plain.isEmpty()&&c!=null&&PairedProtocol.outgoing(m,c)&&PairedProtocol.rcs(c)&&System.currentTimeMillis()-PairedProtocol.time(m)<15*60_000L
             &&getPackageManager().getLaunchIntentForPackage(MessageListener.GOOGLE_MESSAGES)!=null)
@@ -1836,6 +1844,16 @@ public class PairedActivity extends Activity {
             :getPackageManager().getLaunchIntentForPackage(MessageListener.GOOGLE_MESSAGES);
         try{startActivity(open);toast("Copied. In Google Messages, hold your message and tap Edit (the pencil). The change shows here too.");}
         catch(Exception e){toast("Google Messages couldn't be opened.");}}
+    // Translations of messages (messageID → {words, the language they were in}), and the ones showing their original instead.
+    private final Map<String,String[]> translations=new HashMap<>();private final java.util.Set<String> showingOriginal=new java.util.HashSet<>();
+    /** Android's on-device translation, shown under the message; where the phone has none, the words go to its translation app's pop-up. */
+    private void translate(JSONObject m,String words){String id=m.optString("messageID");
+        if(translations.containsKey(id)){if(!showingOriginal.remove(id))showingOriginal.add(id);renderMessages(false);return;}
+        toast("Translating\u2026");
+        decoder.execute(()->{Translation.Result r=Translation.onDevice(this,words);ui.post(()->{
+            if(r!=null&&r.same){toast("This is already in "+r.from+".");return;}
+            if(r!=null){translations.put(id,new String[]{r.text,r.from});renderMessages(false);return;}
+            if(!Translation.handOff(this,words))toast("Android on this phone can't translate that, and there's no translation app. Google Translate can.");});});}
     /** "Hannah turns 30 today · Say happy birthday": from their contact, in a one-to-one chat; ✕ hides it until next year. */
     private void renderBirthday(){if(birthdayBar==null)return;birthdayBar.removeAllViews();birthdayBar.setVisibility(View.GONE);
         JSONObject c=store.chat(chatId);Birthdays.Birthday b=Birthdays.forChat(this,c);if(b==null)return;
@@ -3235,9 +3253,24 @@ public class PairedActivity extends Activity {
             for(JSONObject p:PairedProtocol.members(c)){String first=PairedProtocol.firstName(p);if(first.isEmpty()||!first.toLowerCase(Locale.ROOT).startsWith(part))continue;
                 quickRow.addView(quickChip("@"+first,()->{String now=composer.getText().toString();int end=Math.min(cursor,now.length());String next=now.substring(0,start)+"@"+first+" "+now.substring(end);composer.setText(next);composer.setSelection(Math.min(next.length(),start+first.length()+2));},null));}
             quickScroll.setVisibility(quickRow.getChildCount()>0?View.VISIBLE:View.GONE);return;}
-        boolean show=composer.hasFocus()&&t.trim().isEmpty()&&quickRepliesOn();quickScroll.setVisibility(show?View.VISIBLE:View.GONE);if(!show)return;
-        quickRow.removeAllViews();for(String q:quickReplies())quickRow.addView(quickChip(q,()->{composer.setText(q);composer.setSelection(q.length());},()->removeQuickReply(q)));
+        List<String> smart=t.trim().isEmpty()&&smartRepliesOn()?smartReplies(c):new ArrayList<>();boolean saved=composer.hasFocus()&&t.trim().isEmpty()&&quickRepliesOn();
+        boolean show=saved||!smart.isEmpty();quickScroll.setVisibility(show?View.VISIBLE:View.GONE);if(!show)return;
+        quickRow.removeAllViews();int accent=chatSettings.theme(chatId).accent(dark);
+        for(String r:smart){View chip=quickChip(r,()->{composer.setText(r);composer.setSelection(r.length());composer.requestFocus();},null);((TextView)chip).setTextColor(accent);chip.setContentDescription("Suggested reply: "+r);quickRow.addView(chip);}
+        if(!saved)return;
+        for(String q:quickReplies())quickRow.addView(quickChip(q,()->{composer.setText(q);composer.setSelection(q.length());},()->removeQuickReply(q)));
         quickRow.addView(quickChip("+ Add",this::addQuickReply,null));}
+    private boolean smartRepliesOn(){return getSharedPreferences("paired",MODE_PRIVATE).getBoolean("smart_replies",true);}
+    // Suggested replies per chat, for the newest message they're replies to (worked out once, off the main thread).
+    private final Map<String,List<String>> smartFor=new HashMap<>();private final java.util.Set<String> smartAsked=new java.util.HashSet<>();
+    /** Android's suggested replies to the newest message here, if it's theirs and from the last day; empty until worked out (the row redraws then). */
+    private List<String> smartReplies(JSONObject c){if(c==null)return new ArrayList<>();String id=chatId;List<JSONObject> recent=store.messages(id,10);
+        if(recent.isEmpty())return new ArrayList<>();JSONObject last=recent.get(recent.size()-1);
+        if(PairedProtocol.outgoing(last,c)||System.currentTimeMillis()-PairedProtocol.time(last)>86_400_000L)return new ArrayList<>();
+        String key=id+"|"+last.optString("messageID");List<String> hit=smartFor.get(key);if(hit!=null)return hit;
+        if(smartAsked.add(key))decoder.execute(()->{List<String> found=SmartReplies.suggest(this,recent,c);
+            ui.post(()->{smartFor.put(key,found);if(!found.isEmpty()&&screen.equals("chat")&&chatId.equals(id))updateQuickRow();});});
+        return new ArrayList<>();}
     private boolean quickRepliesOn(){return getSharedPreferences("paired",MODE_PRIVATE).getBoolean("quick_replies_on",true);}
     private View quickChip(String label,Runnable tap,Runnable longPress){TextView chip=text(label,14,ink,false);chip.setPadding(dp(14),dp(8),dp(14),dp(8));chip.setBackground(shape(surface,18));chip.setSingleLine(true);
         chip.setOnClickListener(v->tap.run());if(longPress!=null)chip.setOnLongClickListener(v->{longPress.run();return true;});
@@ -4225,7 +4258,7 @@ public class PairedActivity extends Activity {
         // Each page, with a word on what's set there.
         String typing=prefs.getBoolean("send_typing",true)?"Typing shown":"Typing hidden",undo=undoSendOn()?"undo send "+undoSendSeconds()+" s":"no undo send";
         LinearLayout pages=settingsGroup(body,null);
-        settingRow(pages,R.drawable.ic_chat,0xff3b82f6,"Messages",typing+" · "+undo+" · quick replies, effects, previews",null,()->openSettingsPage("messages"));
+        settingRow(pages,R.drawable.ic_chat,0xff3b82f6,"Messages",typing+" · "+undo+" · suggested replies, effects, previews",null,()->openSettingsPage("messages"));
         settingRow(pages,R.drawable.ic_gallery,0xfff59e0b,"Photos & media","Photos "+PhotoQuality.label(photoQuality()).toLowerCase(Locale.ROOT)+" · videos "+PhotoQuality.label(videoQuality()).toLowerCase(Locale.ROOT)+" · text in pictures "+(PhotoText.enabled(this)?"on":"off"),null,()->openSettingsPage("media"));
         boolean allowed=checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED;int nudge=Nudges.minutes(this);
         settingRow(pages,R.drawable.ic_bell,0xff8b5cf6,"Notifications",(allowed?NotificationPrivacy.label(NotificationPrivacy.mode(this)):"Off")+" · "+(nudge<=0?"no reminders":"reminders every "+(nudge==60?"hour":(nudge/60)+" hours"))+" · alerts, bubbles",null,()->openSettingsPage("notifications"));
@@ -4247,6 +4280,7 @@ public class PairedActivity extends Activity {
             settingRow(g,R.drawable.ic_eye,0xff6366f1,"Read receipts","Chosen per chat: long-press a chat to turn them on",null,()->new AlertDialog.Builder(this).setTitle("Read receipts")
                 .setMessage("Off for every chat unless you turn them on for that chat (long-press it in the list, or tap its name at the top of the chat). When on, opening the chat here marks it read on your phone and Google Messages sends a receipt. When off, the chat isn't marked read, so it stays unread in Google Messages.\n\nGoogle Messages' own \"Send read receipts\" setting: "+(phone==1?"on.":phone==0?"off, so no receipts are sent for any chat.":"not reported yet.")+"\n\nPins and chat themes are kept in this app only; pinning here doesn't change Google Messages.").setPositiveButton("OK",null).show());
             settingRow(g,R.drawable.ic_undo,0xfff97316,"Undo send","How long you have to take a message back after tapping send",undoSendOn()?undoSendSeconds()+(undoSendSeconds()==1?" second":" seconds"):"Off",this::chooseUndoSend);
+            settingSwitch(g,R.drawable.ic_sparkle,0xffa855f7,"Suggested replies","Replies to tap above the message box and on notifications, worked out on this phone",smartRepliesOn(),on->prefs.edit().putBoolean("smart_replies",on).apply());
             settingRow(g,R.drawable.ic_send,0xff0ea5e9,"Quick replies","Saved phrases above the message box",quickRepliesOn()?quickReplies().size()+" saved":"Off",this::editQuickReplies);
             LinearLayout show=settingsGroup(content,"What chats show");
             settingSwitch(show,R.drawable.ic_sparkle,0xffa855f7,"Message effects","Balloons, Slam, invisible ink and other effects iPhones send, and phrases like “Happy birthday”",effectsOn(),on->prefs.edit().putBoolean("message_effects",on).apply());
