@@ -1711,6 +1711,25 @@ public class PairedActivity extends Activity {
     private void maybeSendTyping(CharSequence s){if(s.length()==0||!getSharedPreferences("paired",MODE_PRIVATE).getBoolean("send_typing",true))return;
         long now=System.currentTimeMillis();if(now-lastTypingSent<8000)return;JSONObject c=store.chat(chatId);if(c==null||!PairedProtocol.rcs(c))return;
         lastTypingSent=now;PairedService.sendTyping(c.toString());}
+    /** A group in a list: its picture, its name on one line, and how many are in it. Tapping opens it. */
+    private View groupRow(JSONObject g,Dialog[] closing){LinearLayout r=row();r.setPadding(dp(4),dp(7),dp(4),dp(7));pressable(r);r.addView(avatar(g,36));
+        LinearLayout texts=vertical();texts.setPadding(dp(14),0,dp(8),0);TextView name=text(PairedProtocol.title(g),16,ink,false);name.setSingleLine(true);name.setEllipsize(TextUtils.TruncateAt.END);texts.addView(name);
+        texts.addView(text((PairedProtocol.members(g).size()+1)+" people",13,muted,false));r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));
+        r.setOnClickListener(v->{if(closing!=null&&closing[0]!=null)closing[0].dismiss();thread(g.optString("conversationID"));});return r;}
+    /** Every group you share with someone, newest first, with a search box when there are many. */
+    private void groupsSheet(List<JSONObject> groups,String name){LinearLayout content=vertical();Dialog[] d=new Dialog[1];
+        TextView title=text("Groups with "+name,18,ink,true);title.setPadding(dp(8),0,dp(8),dp(2));title.setSingleLine(true);title.setEllipsize(TextUtils.TruncateAt.END);content.addView(title);
+        TextView count=text(groups.size()+" groups",13,muted,false);count.setPadding(dp(8),0,dp(8),dp(8));content.addView(count);
+        LinearLayout list=vertical();ScrollView sc=new ScrollView(this);sc.setVerticalScrollBarEnabled(false);sc.addView(list);
+        java.util.function.Consumer<String> fill=q->{list.removeAllViews();String want=q.trim().toLowerCase(Locale.ROOT);
+            for(JSONObject g:groups){StringBuilder words=new StringBuilder(PairedProtocol.title(g));for(JSONObject p:PairedProtocol.members(g))words.append(' ').append(PairedProtocol.name(p));
+                if(want.isEmpty()||words.toString().toLowerCase(Locale.ROOT).contains(want))list.addView(groupRow(g,d));}
+            if(list.getChildCount()==0){TextView none=text("No group matches",15,muted,false);none.setPadding(dp(8),dp(16),dp(8),dp(16));list.addView(none);}};
+        if(groups.size()>8){EditText search=input("Search these groups");search.setBackground(shape(surface,18));search.setSingleLine(true);search.setContentDescription("Search these groups");
+            search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int b,int c){}public void onTextChanged(CharSequence s,int a,int b,int c){fill.accept(s.toString());}public void afterTextChanged(Editable e){}});
+            LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(-1,-2);sl.bottomMargin=dp(8);content.addView(search,sl);}
+        fill.accept("");int tall=Math.round(getResources().getDisplayMetrics().heightPixels*0.6f);content.addView(sc,new LinearLayout.LayoutParams(-1,Math.min(tall,groups.size()*dp(52)+dp(8))));
+        d[0]=sheet(content,WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);}
     /** Everyone in the conversation, plus this chat's settings. */
     private void details(){JSONObject c=store.chat(chatId);if(c==null)return;remember();String id=chatId;boolean group=PairedProtocol.other(c)==null;
         base("details");header(group?"Group details":"Details",()->thread(id));
@@ -1726,11 +1745,11 @@ public class PairedActivity extends Activity {
             r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));r.setOnClickListener(v->memberActions(p));content.addView(r);}
         // One-to-one: the group chats you're both in.
         if(!group){JSONObject other=PairedProtocol.other(c);List<JSONObject> common=WhoIsThis.find(PairedProtocol.number(other),id,allChats(),null).groups;
-            if(!common.isEmpty()){gap(content,16);content.addView(text("Groups in common",14,muted,true));gap(content,4);
-                for(JSONObject g:common){LinearLayout r=row();r.setPadding(dp(4),dp(10),dp(4),dp(10));pressable(r);r.addView(avatar(g,44));
-                    LinearLayout texts=vertical();texts.setPadding(dp(16),0,dp(8),0);texts.addView(text(PairedProtocol.title(g),17,ink,false));
-                    texts.addView(text((PairedProtocol.members(g).size()+1)+" people",14,muted,false));r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));
-                    r.setOnClickListener(v->thread(g.optString("conversationID")));content.addView(r);}}}
+            // The three most recent, small; the rest (people can share dozens) in a list of their own.
+            if(!common.isEmpty()){gap(content,16);LinearLayout head=row();head.addView(text("Groups in common",14,muted,true),new LinearLayout.LayoutParams(0,-2,1));head.addView(text(String.valueOf(common.size()),14,muted,false));content.addView(head);gap(content,2);
+                for(int i=0;i<Math.min(3,common.size());i++)content.addView(groupRow(common.get(i),null));
+                if(common.size()>3){TextView all=text("See all "+common.size()+" groups",15,chatSettings.theme(id).accent(dark),true);all.setPadding(dp(4),dp(12),dp(4),dp(12));pressable(all);
+                    String name=PairedProtocol.firstName(other);all.setOnClickListener(v->groupsSheet(common,name));content.addView(all);}}}
         if(group){LinearLayout me=row();me.setPadding(dp(4),dp(10),dp(4),dp(10));me.addView(personAvatar(null,"You",44));TextView you=text("You",17,ink,false);you.setPadding(dp(16),0,0,0);me.addView(you);content.addView(me);}
         gap(content,16);notesCard(content,notesKeyFor(c),PairedProtocol.title(c),this::details);
         // What's been shared here; filled in once it's been looked up.

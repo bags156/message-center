@@ -905,6 +905,22 @@ public final class OnDeviceSmoke extends Instrumentation {
         finally{onMainCall(()->method("inbox").invoke(a));waitForIdleSync();found.delete();
             ctx.getSharedPreferences("chat-settings",0).edit().remove("music_learned:their-music").remove("music_their:their-music").commit();
             try(PairedStore store=new PairedStore(ctx)){store.deleteChat("their-music");}}}
+    /**
+     * Details doesn't fill up with groups: someone in ten groups with you shows the three newest
+     * (one line each) and "See all 10 groups", which opens all ten with a search box.
+     */
+    private void checkGroupsInCommon(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();long now=System.currentTimeMillis();
+        try(PairedStore store=new PairedStore(ctx)){
+            store.chat(new JSONObject("{conversationID:'many-groups',name:'Gia Groups',type:'RCS',lastMessageTimestamp:"+now*1000+",participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'gg',number:'+15557770155'},fullName:'Gia Groups'}]}"));
+            for(int i=0;i<10;i++)store.chat(new JSONObject("{conversationID:'shared-group-"+i+"',name:'Shared group "+i+"',type:'RCS',lastMessageTimestamp:"+(now-i*60_000L)*1000+",participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'gg',number:'+15557770155'},fullName:'Gia Groups'},{ID:{participantID:'x"+i+"',number:'+1555777020"+i+"'},fullName:'Other "+i+"'}]}"));}
+        java.util.function.Function<String,Integer> count=words->{int[] n={0};runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(found,words,android.view.View.FIND_VIEWS_WITH_TEXT);n[0]=found.size();});return n[0];};
+        try{onMainCall(()->method("thread",String.class).invoke(a,"many-groups"));waitForIdleSync();onMainCall(()->method("details").invoke(a));waitForIdleSync();
+            check(count.apply("Shared group")==3,"Details listed "+count.apply("Shared group")+" groups in common instead of the newest three");
+            check(count.apply("Shared group 0")==1&&count.apply("See all 10 groups")==1,"Details doesn't show the newest group and \"See all 10 groups\"");shoot("shot-groups-in-common");
+            pressText("See all 10 groups");check(waitForText("Groups with Gia",3000,true),"\"See all\" didn't open the list of groups");
+            check(onScreen("Shared group 9")!=null||onTop("Search these groups"),"The list of groups doesn't hold them all");shoot("shot-groups-all");
+            getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);Thread.sleep(400);}
+        finally{onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("many-groups");for(int i=0;i<10;i++)store.deleteChat("shared-group-"+i);}}}
     private void checkThemeAll(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();ChatSettings settings=new ChatSettings(ctx);
         settings.themeAll("default",true);settings.setTheme("smoke","berry");
         try{onMainCall(()->method("chooseTheme",String.class).invoke(a,""));check(waitForText("Color for all chats",3000,true),"Chat color for all chats didn't open");shoot("shot-theme-all");
@@ -1891,6 +1907,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkThemeAll((PairedActivity)activity);
         checkMusicLink((PairedActivity)activity);
         checkTheirMusic((PairedActivity)activity);
+        checkGroupsInCommon((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();
