@@ -1027,7 +1027,7 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(box[0].startsWith("Happy birthday!"),"\"Say happy birthday\" didn't put it in the message box ("+box[0]+")");
             runOnMainSync(()->{try{((android.widget.EditText)field("composer").get(a)).setText("");}catch(Exception e){throw new RuntimeException(e);}});
             // The list of chats only shows once paired: a stand-in session (as the speed check uses), removed after.
-            SessionVault vault=new SessionVault(ctx);String had=null;try{had=vault.load();}catch(Exception ignored){}if(had==null)vault.save("synthetic session for the birthday check only");
+            SessionVault vault=new SessionVault(ctx);boolean had=vault.exists();if(!had)vault.save("synthetic session for the birthday check only");
             try{onMainCall(()->method("inbox").invoke(a));waitForIdleSync();Thread.sleep(300);
             String[] bea={""};long until=android.os.SystemClock.uptimeMillis()+3000;
             do{Thread.sleep(200);runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(found,"Bea",android.view.View.FIND_VIEWS_WITH_TEXT);
@@ -1035,7 +1035,7 @@ public final class OnDeviceSmoke extends Instrumentation {
             while(!bea[0].contains("Bea Birthday \uD83C\uDF82")&&android.os.SystemClock.uptimeMillis()<until);
             shoot("shot-birthday-inbox");
             check(bea[0].contains("Bea Birthday \uD83C\uDF82"),"No cake by Bea's name in the list on her birthday (the list shows: "+bea[0]+")");}
-            finally{if(had==null)vault.clear();}}
+            finally{if(!had)vault.clear();}}
         finally{Birthdays.setForChecks(new java.util.HashMap<>());onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("bday-chat");}}}
     /**
      * Suggested replies and Translate. Both come from Android itself, and some phones (and test
