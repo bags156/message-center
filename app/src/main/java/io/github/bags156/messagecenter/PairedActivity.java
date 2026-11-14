@@ -572,7 +572,7 @@ public class PairedActivity extends Activity {
      * red. Looks like the chat's own ⋮ menu. Theme and read receipts are in Details.
      */
     private void chatOptions(JSONObject c){String id=c.optString("conversationID");boolean pinned=chatSettings.pinned(c),group=PairedProtocol.other(c)==null;
-        boolean archived=c.optString("status").contains("ARCHIVED"),blocked=folder==3,unread=chatSettings.unread(c),muted=chatSettings.muted(id);
+        boolean archived=c.optString("status").contains("ARCHIVED"),blocked=folder==3,unread=chatSettings.unread(c),isMuted=chatSettings.muted(id);
         LinearLayout content=vertical();Dialog[] d=new Dialog[1];java.util.function.Function<Runnable,Runnable> closing=r->()->{if(d[0]!=null)d[0].dismiss();r.run();};
         LinearLayout who=row();who.setPadding(dp(4),0,dp(4),dp(16));who.addView(avatar(c,52));
         LinearLayout names=vertical();names.setPadding(dp(14),0,dp(4),0);TextView title=text(PairedProtocol.title(c),19,ink,true);title.setSingleLine(true);title.setEllipsize(TextUtils.TruncateAt.END);names.addView(title);
@@ -583,7 +583,7 @@ public class PairedActivity extends Activity {
             LinearLayout tiles=row();
             menuTile(tiles,R.drawable.ic_pin,pinned?"Unpin":"Pin",closing.apply(()->togglePin(c)));
             menuTile(tiles,unread?R.drawable.ic_done_all:R.drawable.ic_chat,unread?"Read":"Unread",closing.apply(()->{if(unread){chatSettings.setMarkedUnread(id,false);chatSettings.markSeen(id,PairedProtocol.time(c));renderInbox();}else toggleUnread(id);}));
-            menuTile(tiles,muted?R.drawable.ic_volume_on:R.drawable.ic_volume_off,muted?"Unmute":"Mute",closing.apply(()->toggleMute(id)));
+            menuTile(tiles,isMuted?R.drawable.ic_volume_on:R.drawable.ic_volume_off,isMuted?"Unmute":"Mute",closing.apply(()->toggleMute(id)));
             menuTile(tiles,R.drawable.ic_archive,archived?"Unarchive":"Archive",closing.apply(()->archive(c,!archived)));
             content.addView(tiles,new LinearLayout.LayoutParams(-1,-2));gap(content,14);
             LinearLayout later=menuGroup(content);JSONObject reminder=Reminders.forChat(this,id);
@@ -600,6 +600,11 @@ public class PairedActivity extends Activity {
         menuRow(risky,R.drawable.ic_delete,0xffdc2626,"Delete conversation\u2026",null,true,closing.apply(()->deleteChat(c)));
         content.setPadding(dp(3),0,dp(3),dp(8));ScrollView sc=new ScrollView(this);sc.setVerticalScrollBarEnabled(false);sc.addView(content);
         d[0]=sheet(sc,WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING|WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);}
+    /** A banner at that time about the chat, with its latest message (what notifications may show permitting). */
+    private void remindChat(JSONObject c,long at){String id=c.optString("conversationID");JSONObject last=store.latestIncoming(id);
+        String said=last==null?"":displayBody(last),who=last!=null&&PairedProtocol.other(c)==null?senderFirst(last,c)+": ":"";
+        Reminders.add(this,id,"",PairedProtocol.title(c),said.isEmpty()?"Tap to open the chat":who+said,at);
+        toast(getSystemService(android.app.AlarmManager.class).canScheduleExactAlarms()?"I'll remind you at "+timeOnly(at):"Reminder set. Allow \"Alarms & reminders\" for exact timing.");}
     private void openBubble(String id){String problem=PairedService.showBubble(this,id);if(!problem.isEmpty())toast(problem);}
     private void togglePin(JSONObject c){String id=c.optString("conversationID");boolean now=!chatSettings.pinned(c);chatSettings.setPinned(id,now);decoder.execute(()->Nudges.reschedule(this));
         toast(now?"Pinned to the top of Message Center":"Unpinned");if(screen.equals("inbox"))renderInbox();}
