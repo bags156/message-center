@@ -1044,7 +1044,7 @@ public final class OnDeviceSmoke extends Instrumentation {
      */
     private void checkSuggestionsAndTranslate(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();long now=System.currentTimeMillis();
         try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'sr-chat',name:'Sam Suggest',type:'RCS',lastMessageTimestamp:"+now*1000+",participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'ss',number:'+15557770133'},fullName:'Sam Suggest',firstName:'Sam'}]}"));
-            String[][] said={{"sr-1","¿Dónde estás? Te espero en la puerta del cine."},{"sr-2","Want to grab lunch tomorrow?"}};
+            String[][] said={{"sr-1","Hey, are you free this weekend?"},{"sr-2","Want to grab lunch tomorrow?"}};
             for(int i=0;i<said.length;i++)store.message(new JSONObject().put("messageID",said[i][0]).put("conversationID","sr-chat").put("participantID","ss").put("timestamp",(now-60_000L+i*1000)*1000)
                 .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content",said[i][1])))),0,true);}
         try{onMainCall(()->method("thread",String.class).invoke(a,"sr-chat"));waitForIdleSync();
@@ -1054,13 +1054,20 @@ public final class OnDeviceSmoke extends Instrumentation {
             android.view.textclassifier.TextClassifier tc=ctx.getSystemService(android.view.textclassifier.TextClassificationManager.class).getTextClassifier();
             String langs="?";try{android.view.textclassifier.TextLanguage l=tc.detectLanguage(new android.view.textclassifier.TextLanguage.Request.Builder("¿Dónde estás? Te espero en la puerta del cine.").build());langs=l.getLocaleHypothesisCount()>0?l.getLocale(0).toLanguageTag():"none";}catch(Exception e){langs=e.getClass().getSimpleName();}
             int caps=-1;try{caps=ctx.getSystemService(android.view.translation.TranslationManager.class).getOnDeviceTranslationCapabilities(android.view.translation.TranslationSpec.DATA_FORMAT_TEXT,android.view.translation.TranslationSpec.DATA_FORMAT_TEXT).size();}catch(Exception e){}
-            note("PROBE suggested replies "+(chip==null?"none":"shown")+"; classifier "+(tc==android.view.textclassifier.TextClassifier.NO_OP?"none":tc.getClass().getSimpleName())+"; Spanish detected as "+langs+"; on-device translation pairs "+caps);
+            String raw;try{java.util.List<android.view.textclassifier.ConversationActions.Message> conv=new java.util.ArrayList<>();
+                conv.add(new android.view.textclassifier.ConversationActions.Message.Builder(new android.app.Person.Builder().setKey("ss").setName("Sam").build()).setText("Want to grab lunch tomorrow?").build());
+                java.util.List<android.view.textclassifier.ConversationAction> got=tc.suggestConversationActions(new android.view.textclassifier.ConversationActions.Request.Builder(conv).build()).getConversationActions();
+                StringBuilder kinds=new StringBuilder();for(android.view.textclassifier.ConversationAction x:got)kinds.append(x.getType()).append(' ');raw=got.size()+" ("+kinds.toString().trim()+")";}catch(Exception e){raw=e.getClass().getSimpleName();}
+            note("PROBE suggested replies "+(chip==null?"none":"shown")+"; asked plainly: "+raw+"; classifier "+(tc==android.view.textclassifier.TextClassifier.NO_OP?"none":tc.getClass().getSimpleName())+"; Spanish detected as "+langs+"; on-device translation pairs "+caps);
             if(chip!=null){String reply=chip.getContentDescription().toString().substring("Suggested reply: ".length());runOnMainSync(chip::performClick);Thread.sleep(200);String[] box={""};
                 runOnMainSync(()->{try{box[0]=((android.widget.EditText)field("composer").get(a)).getText().toString();}catch(Exception e){throw new RuntimeException(e);}});
                 check(box[0].equals(reply),"Tapping a suggested reply didn't put it in the message box ("+box[0]+")");
                 runOnMainSync(()->{try{((android.widget.EditText)field("composer").get(a)).setText("");}catch(Exception e){throw new RuntimeException(e);}});}
             shoot("shot-suggested-replies");
-            JSONObject spanish;try(PairedStore store=new PairedStore(ctx)){spanish=store.message("sr-1");}
+            // A message in Spanish, to translate.
+            JSONObject spanish=new JSONObject().put("messageID","sr-es").put("conversationID","sr-chat").put("participantID","ss").put("timestamp",System.currentTimeMillis()*1000)
+                .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","¿Dónde estás? Te espero en la puerta del cine."))));
+            try(PairedStore store=new PairedStore(ctx)){store.message(spanish,0,true);}onMainCall(()->method("renderMessages",boolean.class).invoke(a,true));waitForIdleSync();
             onMainCall(()->method("translate",JSONObject.class,String.class).invoke(a,spanish,PairedProtocol.text(spanish)));
             until=android.os.SystemClock.uptimeMillis()+45000;boolean shown=false;
             while(android.os.SystemClock.uptimeMillis()<until&&!(shown=described(a,"Translated from")!=null))Thread.sleep(300);
