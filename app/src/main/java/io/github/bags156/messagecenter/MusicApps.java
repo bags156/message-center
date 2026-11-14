@@ -32,7 +32,11 @@ final class MusicApps {
 
     interface Done { void done(JSONObject result); }
 
-    private static final ExecutorService pool = Executors.newSingleThreadExecutor(); // one at a time: MusicBrainz asks for a request a second
+    // What you're waiting on (a song you pasted, an "Open in…" on screen) has its own lane, so it never
+    // waits behind the lookups for songs arriving in the background.
+    private static final ExecutorService now = Executors.newFixedThreadPool(2), later = Executors.newSingleThreadExecutor();
+    /** Runs on the main thread when an unfinished answer (shown already) has been finished. */
+    static volatile Runnable updated;
     private static final Handler main = new Handler(Looper.getMainLooper());
     private static final Map<String, JSONObject> memory = new HashMap<>();
     private static final Map<String, List<Done>> waiting = new HashMap<>();
@@ -97,8 +101,15 @@ final class MusicApps {
         switch (how) { case "exact": case "show": return 30 * DAY; case "search": return 3 * DAY; case "none": return DAY; default: return 0; }
     }
 
-    /** Finds it in the background; done (if any) runs on the main thread. */
-    static void find(Context context, String url, MusicLinks.App app, Done done) {
+    /** Finds it; done (if any) runs on the main thread. Someone waiting (done given) gets an answer within about 3 seconds. */
+    static void find(Context context, String url, MusicLinks.App app, Done done) { find(context, url, app, 3000, done); }
+
+    /**
+     * budgetMs: how long the slow part (MusicBrainz) may take before an unfinished answer is given
+     * (marked "partial": the app's search, or the song.link page); it's then finished in the
+     * background, saved, and updated runs. Without done it all happens in the background lane.
+     */
+    static void find(Context context, String url, MusicLinks.App app, long budgetMs, Done done) {
         Context c = context.getApplicationContext();
         JSONObject ready = peek(c, url, app);
         if (ready != null) { if (done != null) main.post(() -> done.done(ready)); return; }
@@ -108,22 +119,28 @@ final class MusicApps {
             if (list != null) { if (done != null) list.add(done); return; }
             list = new ArrayList<>(); if (done != null) list.add(done); waiting.put(k, list);
         }
-        pool.execute(() -> {
-            JSONObject result = lookUp(c, url, app);
-            boolean failed = "error".equals(result.optString("how"));
-            if (!failed) save(c, url, app, result);
+        (done == null ? later : now).execute(() -> {
+            JSONObject result = lookUp(c, url, app, done == null ? 0 : budgetMs);
+            boolean failed = "error".equals(result.optString("how")), partial = result.optBoolean("partial");
+            if (!failed && !partial) save(c, url, app, result);
             List<Done> list;
-            synchronized (memory) {
-                if (!failed) memory.put(k, result);
-                list = waiting.remove(k);
-            }
+            synchronized (memory) { if (!failed) memory.put(k, result); list = waiting.remove(k); }
             if (list != null) for (Done d : list) main.post(() -> d.done(result));
+            if (partial) later.execute(() -> {
+                JSONObject full = lookUp(c, url, app, 0);
+                if ("error".equals(full.optString("how"))) { synchronized (memory) { memory.remove(k); } return; }
+                save(c, url, app, full);
+                synchronized (memory) { memory.put(k, full); }
+                Runnable u = updated;
+                if (u != null && !full.optString("how").equals(result.optString("how"))) main.post(u);
+            });
         });
     }
 
-    private static JSONObject lookUp(Context c, String url, MusicLinks.App app) {
+    private static JSONObject lookUp(Context c, String url, MusicLinks.App app, long budgetMs) {
         JSONObject out = new JSONObject();
         long start = System.currentTimeMillis();
+        MusicLinks.deadline.set(budgetMs > 0 ? start + budgetMs : 0L); MusicLinks.ranOut.set(false);
         try {
             MusicLinks.Net net = new MusicLinks.Http("MessageCenter/" + version(c) + " ( https://github.com/bags156/message-center )");
             out.put("at", start).put("v", 2);
@@ -140,12 +157,13 @@ final class MusicApps {
                 if (page == null && app != MusicLinks.App.APPLE_MUSIC) { MusicLinks.Match apple = MusicLinks.find(item, MusicLinks.App.APPLE_MUSIC, net, java.util.Locale.getDefault().getCountry()); page = MusicLinks.songLink(null, apple != null && apple.exact() ? apple.url : null); }
                 if (page != null) out.put("universal", page);
             }
+            if (MusicLinks.ranOut.get() && !out.optString("how").equals("exact")) out.put("partial", true);
             // For the problem report: how it went, never what the song was.
             Diagnostics.note("Music link: " + (link == null ? "?" : link.app.name()) + " → " + app.name() + " " + out.optString("how") + " in " + (System.currentTimeMillis() - start) + " ms");
         } catch (Exception e) {
             try { out.put("how", "error"); } catch (Exception ignored) {}
             Diagnostics.note("Music link lookup failed: " + e.getClass().getSimpleName());
-        }
+        } finally { MusicLinks.deadline.set(0L); }
         return out;
     }
 

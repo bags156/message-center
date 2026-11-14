@@ -639,16 +639,39 @@ final class MusicLinks {
      */
     private static String spotifyFind(Item item, Net net) throws Exception {
         if (item.kind != Kind.SONG) return brainzFind(item, App.SPOTIFY, net);
-        addCodes(item, net);
-        String full = item.artist, first = firstArtist(item.artist);
-        String[][] tries = {{full, item.album}, {full, ""}, {first, ""}};
         java.util.Set<String> asked = new java.util.HashSet<>();
-        for (String[] t : tries) {
-            if (t[0].isEmpty() || !asked.add(t[0] + "|" + t[1])) continue;
-            String id = listenBrainz(net, "spotify-id-from-metadata/json?artist_name=" + enc(t[0]) + "&release_name=" + enc(t[1]) + "&track_name=" + enc(item.title));
+        // By the names the link gave (most songs end here, in a fraction of a second)...
+        for (String artist : credits(item.artist))
+            for (String album : item.album.isEmpty() ? new String[]{""} : new String[]{item.album, ""}) {
+                String id = askListenBrainz(net, asked, artist, album, item.title);
+                if (id != null) return "https://open.spotify.com/track/" + id;
+            }
+        // ...then with the album Deezer has it on (a YouTube Music link doesn't say), then MusicBrainz.
+        String before = item.album;
+        addCodes(item, net);
+        if (!item.album.equals(before)) {
+            String id = askListenBrainz(net, asked, item.artist, item.album, item.title);
             if (id != null) return "https://open.spotify.com/track/" + id;
         }
         return brainzFind(item, App.SPOTIFY, net);
+    }
+
+    /** The ways a credit may be written: as given, "A & B" as "A, B" (Spotify's way), and the first artist alone. */
+    static List<String> credits(String artist) {
+        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
+        String a = artist == null ? "" : artist.trim();
+        if (!a.isEmpty()) {
+            out.add(a);
+            out.add(a.replaceAll("\\s+(?:&|and|x)\\s+", ", ").replaceAll("\\s+(?:feat\\.?|ft\\.?|featuring|with)\\s+", ", "));
+            out.add(firstArtist(a));
+        }
+        out.remove("");
+        return new ArrayList<>(out);
+    }
+
+    private static String askListenBrainz(Net net, java.util.Set<String> asked, String artist, String album, String title) throws Exception {
+        if (artist.isEmpty() || !asked.add(norm(artist) + "|" + norm(album))) return null;
+        return listenBrainz(net, "spotify-id-from-metadata/json?artist_name=" + enc(artist) + "&release_name=" + enc(album) + "&track_name=" + enc(title));
     }
 
     /** The first Spotify track ID ListenBrainz gives for a question, or null. */
@@ -664,15 +687,27 @@ final class MusicLinks {
         return null;
     }
 
-    // MusicBrainz asks apps to send at most one request a second.
+    /**
+     * When someone is waiting: the time (ms) past which MusicBrainz isn't asked any more (0: no limit).
+     * Running out sets ranOut, so the answer is known to be unfinished and can be finished later.
+     */
+    static final ThreadLocal<Long> deadline = ThreadLocal.withInitial(() -> 0L);
+    static final ThreadLocal<Boolean> ranOut = ThreadLocal.withInitial(() -> false);
+    static boolean pastDeadline(long at) { long limit = deadline.get(); if (limit > 0 && at > limit) { ranOut.set(true); return true; } return false; }
+
+    // MusicBrainz asks apps to send at most one request a second: each request takes the next free second
+    // (reserved, not waited for under a lock, so a background lookup's wait doesn't hold up another).
     private static long lastBrainz;
     static long brainzGap = 1100; // tests: 0
     private static String brainz(Net net, String path) throws Exception {
+        long slot;
         synchronized (MusicLinks.class) {
-            long wait = lastBrainz + brainzGap - System.currentTimeMillis();
-            if (wait > 0) Thread.sleep(wait);
-            lastBrainz = System.currentTimeMillis();
+            slot = Math.max(System.currentTimeMillis(), lastBrainz + brainzGap);
+            if (pastDeadline(slot)) throw new java.io.IOException("No time left for MusicBrainz");
+            lastBrainz = slot;
         }
+        long wait = slot - System.currentTimeMillis();
+        if (wait > 0) Thread.sleep(wait);
         String url = MB + path + (path.contains("?") ? "&" : "?") + "fmt=json";
         String reply = net.get(url, false);
         note("musicbrainz " + path + " → " + (reply == null ? "nothing" : reply.length() + " chars"));
@@ -1032,7 +1067,7 @@ final class MusicLinks {
                 HttpURLConnection c = open(url, page);
                 try {
                     int code = c.getResponseCode();
-                    if ((code == 503 || code == 429) && attempt < 2) { note("get " + code + " (busy, again) " + url); Thread.sleep(1500L * (attempt + 1)); continue; }
+                    if ((code == 503 || code == 429) && attempt < 2 && !pastDeadline(System.currentTimeMillis() + 1500L * (attempt + 1))) { note("get " + code + " (busy, again) " + url); Thread.sleep(1500L * (attempt + 1)); continue; }
                     if (code >= 400) { note("get " + code + " " + url); return null; }
                     return read(c, page ? 900 * 1024 : 3 * 1024 * 1024);
                 } finally { c.disconnect(); }

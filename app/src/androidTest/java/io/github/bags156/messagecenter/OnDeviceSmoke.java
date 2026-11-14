@@ -930,6 +930,30 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(onScreen("Shared group 9")!=null||onTop("Search these groups"),"The list of groups doesn't hold them all");shoot("shot-groups-all");
             getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);Thread.sleep(400);}
         finally{onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("many-groups");for(int i=0;i<10;i++)store.deleteChat("shared-group-"+i);}}}
+    /**
+     * ⊕ → Song playing puts a link to the song that's playing into the message box: a player (made
+     * here) plays a song whose ID is a Spotify track, so the link is that track, with no lookup.
+     */
+    private void checkSongPlaying(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();String spotify="https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b";
+        String component=ctx.getPackageName()+"/"+NowPlayingAccess.class.getName();shell("cmd notification allow_listener "+component);
+        for(int i=0;i<20&&!NowPlaying.allowed(ctx);i++)Thread.sleep(150);
+        check(NowPlaying.allowed(ctx),"Couldn't give the check notification access to see what's playing");
+        android.media.session.MediaSession[] player={null};
+        runOnMainSync(()->{player[0]=new android.media.session.MediaSession(ctx,"song-check");
+            player[0].setMetadata(new android.media.MediaMetadata.Builder().putString(android.media.MediaMetadata.METADATA_KEY_TITLE,"Blinding Lights").putString(android.media.MediaMetadata.METADATA_KEY_ARTIST,"The Weeknd")
+                .putString(android.media.MediaMetadata.METADATA_KEY_MEDIA_ID,"spotify:track:0VjIjW4GlUZAMYd2vXMi3b").build());
+            player[0].setPlaybackState(new android.media.session.PlaybackState.Builder().setState(android.media.session.PlaybackState.STATE_PLAYING,0,1f).build());player[0].setActive(true);});
+        try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'song-playing',name:'Pia Player',type:'RCS',participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'pp',number:'+15557770144'},fullName:'Pia Player'}]}"));}
+        java.lang.reflect.Field composer=field("composer");
+        try{onMainCall(()->method("thread",String.class).invoke(a,"song-playing"));waitForIdleSync();
+            runOnMainSync(()->{try{((android.widget.EditText)composer.get(a)).setText("Listen:");}catch(Exception e){throw new RuntimeException(e);}});
+            onMainCall(()->method("shareNowPlaying").invoke(a));
+            String[] box={""};for(int i=0;i<40;i++){Thread.sleep(100);runOnMainSync(()->{try{box[0]=((android.widget.EditText)composer.get(a)).getText().toString();}catch(Exception e){throw new RuntimeException(e);}});if(box[0].contains(spotify))break;}
+            check(box[0].equals("Listen: "+spotify),"Song playing didn't put the playing song's link in the message box ("+box[0]+")");
+            check(described(a,"Added Blinding Lights by The Weeknd")!=null,"No note saying which song was added");shoot("shot-song-playing");
+            runOnMainSync(()->{try{((android.widget.EditText)composer.get(a)).setText("");}catch(Exception e){throw new RuntimeException(e);}});}
+        finally{runOnMainSync(()->{if(player[0]!=null)player[0].release();});shell("cmd notification disallow_listener "+component);
+            onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("song-playing");}}}
     private void checkThemeAll(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();ChatSettings settings=new ChatSettings(ctx);
         settings.themeAll("default",true);settings.setTheme("smoke","berry");
         try{onMainCall(()->method("chooseTheme",String.class).invoke(a,""));check(waitForText("Color for all chats",3000,true),"Chat color for all chats didn't open");shoot("shot-theme-all");
@@ -1917,6 +1941,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkMusicLink((PairedActivity)activity);
         checkTheirMusic((PairedActivity)activity);
         checkGroupsInCommon((PairedActivity)activity);
+        checkSongPlaying((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();
