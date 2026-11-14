@@ -985,7 +985,6 @@ public final class OnDeviceSmoke extends Instrumentation {
             JSONObject again=Reminders.forChat(ctx,"remind-chat");
             check(again!=null&&!again.optString("id").equals(fired[0])&&again.optLong("at")>System.currentTimeMillis()+3_500_000L,"\"Again in 1 hour\" didn't set the reminder an hour out again ("+again+")");}
         finally{JSONObject left=Reminders.forChat(ctx,"remind-chat");if(left!=null)Reminders.remove(ctx,left.optString("id"));if(fired[0]!=null)nm.cancel("reminder:"+fired[0],2);
-            getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);Thread.sleep(200);
             onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("remind-chat");}}}
     private void checkThemeAll(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();ChatSettings settings=new ChatSettings(ctx);
         settings.themeAll("default",true);settings.setTheme("smoke","berry");
