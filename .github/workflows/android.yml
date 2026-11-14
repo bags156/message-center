@@ -103,7 +103,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/music"
           curl -fsSL -o "$RUNNER_TEMP/music/json.jar" https://repo1.maven.org/maven2/org/json/json/20240303/json-20240303.jar
           javac -nowarn -d "$RUNNER_TEMP/music" -cp "$RUNNER_TEMP/music/json.jar" app/src/main/java/io/github/bags156/messagecenter/MusicLinks.java tools/MusicProbe.java
-          java -cp "$RUNNER_TEMP/music:$RUNNER_TEMP/music/json.jar" io.github.bags156.messagecenter.MusicProbe | sed 's/^/MUSIC /'
+          java -cp "$RUNNER_TEMP/music:$RUNNER_TEMP/music/json.jar" io.github.bags156.messagecenter.MusicProbe "https://music.youtube.com/watch?v=bu7MdYXJe1s&si=56IgSi3bsaPK1Cyc&drli=1" | sed 's/^/MUSIC /'
 
   device-smoke:
     needs: build
