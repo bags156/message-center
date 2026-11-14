@@ -1030,6 +1030,34 @@ public final class OnDeviceSmoke extends Instrumentation {
             int[] cakes={0};runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(found,"Bea Birthday 🎂",android.view.View.FIND_VIEWS_WITH_TEXT);cakes[0]=found.size();});
             check(cakes[0]>0,"No cake by Bea's name in the list on her birthday");}
         finally{Birthdays.setForChecks(new java.util.HashMap<>());onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("bday-chat");}}}
+    /**
+     * Suggested replies and Translate. Both come from Android itself, and some phones (and test
+     * emulators) have no reply or translation model, so this checks nothing breaks and says what
+     * this one did, rather than requiring suggestions.
+     */
+    private void checkSuggestionsAndTranslate(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();long now=System.currentTimeMillis();
+        try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'sr-chat',name:'Sam Suggest',type:'RCS',lastMessageTimestamp:"+now*1000+",participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'ss',number:'+15557770133'},fullName:'Sam Suggest',firstName:'Sam'}]}"));
+            String[][] said={{"sr-1","¿Dónde estás? Te espero en la puerta del cine."},{"sr-2","Want to grab lunch tomorrow?"}};
+            for(int i=0;i<said.length;i++)store.message(new JSONObject().put("messageID",said[i][0]).put("conversationID","sr-chat").put("participantID","ss").put("timestamp",(now-60_000L+i*1000)*1000)
+                .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content",said[i][1])))),0,true);}
+        try{onMainCall(()->method("thread",String.class).invoke(a,"sr-chat"));waitForIdleSync();
+            long until=android.os.SystemClock.uptimeMillis()+4000;while(described(a,"Suggested reply:")==null&&android.os.SystemClock.uptimeMillis()<until)Thread.sleep(200);
+            android.view.View chip=described(a,"Suggested reply:");android.util.Log.i("OnDeviceSmoke","Suggested replies: "+(chip==null?"none on this device":"shown"));
+            if(chip!=null){String reply=chip.getContentDescription().toString().substring("Suggested reply: ".length());runOnMainSync(chip::performClick);Thread.sleep(200);String[] box={""};
+                runOnMainSync(()->{try{box[0]=((android.widget.EditText)field("composer").get(a)).getText().toString();}catch(Exception e){throw new RuntimeException(e);}});
+                check(box[0].equals(reply),"Tapping a suggested reply didn't put it in the message box ("+box[0]+")");
+                runOnMainSync(()->{try{((android.widget.EditText)field("composer").get(a)).setText("");}catch(Exception e){throw new RuntimeException(e);}});}
+            shoot("shot-suggested-replies");
+            JSONObject spanish;try(PairedStore store=new PairedStore(ctx)){spanish=store.message("sr-1");}
+            onMainCall(()->method("translate",JSONObject.class,String.class).invoke(a,spanish,PairedProtocol.text(spanish)));
+            until=android.os.SystemClock.uptimeMillis()+15000;boolean shown=false;
+            while(android.os.SystemClock.uptimeMillis()<until&&!(shown=described(a,"Translated from")!=null))Thread.sleep(300);
+            android.util.Log.i("OnDeviceSmoke","Translate: "+(shown?"translated on the phone":"no on-device translation here (hands off to a translation app)"));
+            if(shown){shoot("shot-translated");runOnMainSync(()->described(a,"Translated from").performClick());waitForIdleSync();
+                check(described(a,"Show translation")!=null,"Tapping a translation didn't show the original");}
+            check(!a.isFinishing(),"The chat closed after Translate");}
+        finally{Thread.sleep(500);if(!a.hasWindowFocus()){ctx.startActivity(new android.content.Intent(ctx,PairedActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK|android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));Thread.sleep(1500);}
+            onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("sr-chat");}}}
     private void checkThemeAll(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();ChatSettings settings=new ChatSettings(ctx);
         settings.themeAll("default",true);settings.setTheme("smoke","berry");
         try{onMainCall(()->method("chooseTheme",String.class).invoke(a,""));check(waitForText("Color for all chats",3000,true),"Chat color for all chats didn't open");shoot("shot-theme-all");
@@ -2021,6 +2049,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkChatReminder((PairedActivity)activity);
         checkSearchClear((PairedActivity)activity);
         checkBirthdayAndTracking((PairedActivity)activity);
+        checkSuggestionsAndTranslate((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();
