@@ -152,7 +152,7 @@ jobs:
           adb exec-out run-as io.github.bags156.messagecenter cat cache/group-bubble-preview.png > group-bubble-preview.png
           # Settings screenshots for reviewing the UI (best effort; printed small in the log too).
           set +e
-          for shot in chat-menu chat-menu-dark inbox-menu inbox-menu-dark dialog dialog-dark settings-home settings-notifications settings-search note-editor notes-list notes-list-black note-editor-black settings-black swipe-3 swipe-12 swipe-redraw swipe-after; do
+          for shot in chat-menu chat-menu-dark inbox-menu inbox-menu-dark dialog dialog-dark settings-home settings-notifications settings-apps settings-search note-editor notes-list notes-list-black note-editor-black settings-black swipe-3 swipe-12 swipe-redraw swipe-after; do
             adb exec-out run-as io.github.bags156.messagecenter cat "cache/$shot.png" > "$shot.png"
             python3 -c "import sys; from PIL import Image; im=Image.open(sys.argv[1]).convert('RGB'); im.thumbnail((486,1080)); im.save(sys.argv[2],quality=70)" "$shot.png" "$shot.jpg" 2>/dev/null || cp "$shot.png" "$shot.jpg"
             echo "SHOT_BEGIN $shot"; base64 -w 120 "$shot.jpg" | sed 's/^/SHOT /'; echo "SHOT_END"

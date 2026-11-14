@@ -378,7 +378,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         java.lang.reflect.Field current=field("settingsPage"),screen=field("screen");
         onMainCall(()->open.invoke(a));waitForIdleSync();
         StringBuilder missing=new StringBuilder();
-        for(String p:new String[]{"Messages","Photos & media","Notifications","Automation","Appearance","Connection","Data & about","Search settings"})if(viewsWithDescription(a,p)==0)missing.append(p).append(", ");
+        for(String p:new String[]{"Messages","Photos & media","Notifications","Automation","Appearance","Apps","Connection","Data & about","Search settings"})if(viewsWithDescription(a,p)==0)missing.append(p).append(", ");
         check(missing.length()==0,"The settings main page is missing: "+missing);
         check(viewsWithDescription(a,"Unread reminders")==0,"The settings main page still lists every setting");
         shoot("settings-home");
@@ -386,6 +386,13 @@ public final class OnDeviceSmoke extends Instrumentation {
         onMainCall(()->page.invoke(a,"notifications"));waitForIdleSync();
         check(viewsWithDescription(a,"Unread reminders")>0&&viewsWithDescription(a,"Keyword alerts")>0&&viewsWithDescription(a,"Typing indicators")==0,"The Notifications page doesn't hold the notification settings");
         shoot("settings-notifications");
+        // Which apps things open in have their own page, not Appearance's.
+        onMainCall(()->page.invoke(a,"apps"));waitForIdleSync();
+        check(viewsWithDescription(a,"Music app")>0&&viewsWithDescription(a,"Podcast app")>0&&viewsWithDescription(a,"Maps app for addresses")>0&&viewsWithDescription(a,"Calendar app for dates")>0,"The Apps page doesn't hold the music, podcast, maps and calendar apps");
+        shoot("settings-apps");
+        onMainCall(()->page.invoke(a,"appearance"));waitForIdleSync();
+        check(viewsWithDescription(a,"Music app")==0&&viewsWithDescription(a,"Maps app for addresses")==0,"Appearance still lists the app choices");
+        onMainCall(()->page.invoke(a,"notifications"));waitForIdleSync();
         runOnMainSync(a::onBackPressed);waitForIdleSync();
         String[] where={"",""};onMainCall(()->{where[0]=(String)screen.get(a);where[1]=(String)current.get(a);return null;});
         check("settings".equals(where[0])&&where[1].isEmpty(),"Back from a settings page didn't return to the main settings page ("+where[0]+", "+where[1]+")");
@@ -396,6 +403,8 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(viewsWithDescription(a,"Theme")>0,"Searching settings for \"dark\" didn't find Theme");
         runOnMainSync(()->search[0].setText("undo"));waitForIdleSync();
         check(viewsWithDescription(a,"Undo send")>0&&viewsWithDescription(a,"Theme")==0,"Searching settings for \"undo\" didn't narrow to Undo send");
+        runOnMainSync(()->search[0].setText("spotify"));waitForIdleSync();
+        check(viewsWithDescription(a,"Music app")>0,"Searching settings for \"spotify\" didn't find Music app");
         shoot("settings-search");
         runOnMainSync(()->search[0].setText(""));waitForIdleSync();
         check(viewsWithDescription(a,"Data & about")>0,"Clearing the settings search didn't bring the pages back");

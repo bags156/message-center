@@ -20,7 +20,7 @@ import java.util.concurrent.Executors;
 
 /**
  * The music and podcast apps you listen with (chosen the first time you tap "Open in…" under a
- * song, or in Settings → Messages), and where each shared song, album, artist, or podcast is in
+ * song, or in Settings → Apps), and where each shared song, album, artist, or podcast is in
  * them. Each link is looked up once, in the background, when it arrives or is first shown, and
  * the answer is kept: a month for an exact match, three days for a search (a song out today may
  * be listed exactly later), a day when nothing was found. A failed connection isn't kept.

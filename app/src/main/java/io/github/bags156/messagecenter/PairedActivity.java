@@ -3997,19 +3997,19 @@ public class PairedActivity extends Activity {
         labels.add(podcast?"Leave podcast links as they are":"Leave music links as they are");actions.add(()->{MusicApps.choose(this,podcast,null);if(then!=null)then.accept(null);});
         menuSheet(podcast?"Open podcasts in":"Open music in",labels,actions);}
     private ScrollView settingsScroll;private int pendingSettingsY;
-    /** Which settings page is showing: "" for the main page, else messages, media, notifications, automation, appearance, connection or data. */
+    /** Which settings page is showing: "" for the main page, else messages, media, notifications, automation, appearance, apps, connection or data. */
     private String settingsPage="",settingsQuery="",settingsShown=null;private boolean keepSettingsPage;
     /** While searching settings: what was typed (rows that don't match aren't added), and the page being searched. */
     private String settingsFilter,settingsFilterPage="";private final List<View[]> settingsGroups=new ArrayList<>();
-    private static final String[] SETTINGS_PAGES={"messages","media","notifications","automation","appearance","connection","data"};
+    private static final String[] SETTINGS_PAGES={"messages","media","notifications","automation","appearance","apps","connection","data"};
     private static String settingsTitle(String page){switch(page){case "messages":return "Messages";case "media":return "Photos & media";case "notifications":return "Notifications";
-        case "automation":return "Automation";case "appearance":return "Appearance";case "connection":return "Connection";case "data":return "Data & about";default:return "Settings";}}
+        case "automation":return "Automation";case "appearance":return "Appearance";case "apps":return "Apps";case "connection":return "Connection";case "data":return "Data & about";default:return "Settings";}}
     /** Words people might search for that a setting's own words don't say. */
     private static String settingKeywords(String title){switch(title){case "Theme":return "dark light black mode night colors";case "Text size":return "font bigger smaller larger";case "Unread count":return "badge number total inbox";case "Chat color":return "theme bubble colour all chats every conversation";case "Calls in chats":return "phone call log duration missed";
         case "Undo send":return "unsend delay take back cancel";case "Typing indicators":return "typing privacy";case "Read receipts":return "seen read privacy";case "Bubbles":return "floating chat heads";
         case "Busy auto-reply":return "away driving automatic reply";case "Notifications":return "sound vibration alerts";case "Background activity":return "battery optimization";
         case "Back up app data":return "backup export save";case "Restore from a backup":return "import backup";case "Photo quality":return "pictures compress size";
-        case "Video quality":return "compress size";case "What notifications show":return "privacy preview";case "On the lock screen":return "lock screen locked preview privacy hide unlock";default:return "";}}
+        case "Video quality":return "compress size";case "Music app":return "spotify apple youtube tidal deezer amazon soundcloud song songs convert links open in";case "Podcast app":return "pocket casts antennapod podcast addict show episode";case "Maps app for addresses":return "google maps waze directions";case "Calendar app for dates":return "event schedule";case "What notifications show":return "privacy preview";case "On the lock screen":return "lock screen locked preview privacy hide unlock";default:return "";}}
     /** Opens settings at the main page, from anywhere. */
     private void openSettings(){settingsPage="";settingsQuery="";settings();}
     private void openSettingsPage(String page){settingsPage=page;settingsQuery="";keepSettingsPage=true;settings();}
@@ -4056,7 +4056,9 @@ public class PairedActivity extends Activity {
         long arUntil=PairedService.autoReplyUntil(this);int arrivals=Arrivals.all(this).size();
         settingRow(pages,R.drawable.ic_bolt,0xff14b8a6,"Automation",(arUntil>System.currentTimeMillis()?"Busy reply on":"Busy reply off")+" · "+(arrivals>0?arrivals+" arrival "+(arrivals==1?"text":"texts"):"arrival texts")+" · codes",null,()->openSettingsPage("automation"));
         String themeMode=prefs.getString("theme","system");
-        settingRow(pages,R.drawable.ic_palette,0xffec4899,"Appearance",(themeMode.equals("light")?"Light":themeMode.equals("dark")?"Dark":themeMode.equals("black")?"Black":"Matches phone")+" · text "+scaleLabel(textScale).toLowerCase(Locale.ROOT)+" · maps & calendar apps",null,()->openSettingsPage("appearance"));
+        settingRow(pages,R.drawable.ic_palette,0xffec4899,"Appearance",(themeMode.equals("light")?"Light":themeMode.equals("dark")?"Dark":themeMode.equals("black")?"Black":"Matches phone")+" · text "+scaleLabel(textScale).toLowerCase(Locale.ROOT)+" · chat color",null,()->openSettingsPage("appearance"));
+        MusicLinks.App music=MusicApps.chosen(this,false);
+        settingRow(pages,R.drawable.ic_app,0xff0ea5e9,"Apps",(music!=null?"Music in "+music.label+" · podcasts":"Music, podcasts")+", maps & calendar",null,()->openSettingsPage("apps"));
         boolean restricted=batteryRestricted();
         settingRow(pages,R.drawable.ic_link,0xff22c55e,"Connection",restricted?"Background activity needs your OK":"Reconnect, pair again, background activity",null,()->openSettingsPage("connection"));
         settingRow(pages,R.drawable.ic_backup,0xff64748b,"Data & about","Back up, restore, report a problem, updates",null,()->openSettingsPage("data"));}
@@ -4140,11 +4142,14 @@ public class PairedActivity extends Activity {
             settingRow(looks,R.drawable.ic_text_size,0xff8b5cf6,"Text size",null,scaleLabel(textScale),()->{float[] sizes={0.9f,1f,1.15f,1.3f};List<Runnable> actions=new ArrayList<>();
                 for(float f:sizes)actions.add(()->{prefs.edit().putFloat("text_scale",f).apply();settings();});
                 menuSheet("Text size",java.util.Arrays.asList("Small","Default","Large","Larger"),actions);});
-            LinearLayout apps=settingsGroup(content,"Apps for music, addresses and dates");
+            break;}
+        case "apps":{
+            LinearLayout apps=settingsGroup(content,"Music and podcasts");
             settingRow(apps,R.drawable.ic_play,0xff22c55e,"Music app","Songs from any service open here: “Open in…” under the link",MusicApps.label(this,false),()->chooseMusicApp(false,a->{if(screen.equals("settings"))settings();}));
             settingRow(apps,R.drawable.ic_mic,0xffa855f7,"Podcast app","Shows and episodes from any app open here",MusicApps.label(this,true),()->chooseMusicApp(true,a->{if(screen.equals("settings"))settings();}));
-            settingRow(apps,R.drawable.ic_place,0xffef4444,"Maps app for addresses","Tap an address in a message to open it",mapsAppLabel(),()->chooseMapsApp(pkg->{if(screen.equals("settings"))settings();}));
-            settingRow(apps,R.drawable.ic_event,0xff3b82f6,"Calendar app for dates","Tap a date or time in a message to add it",calendarAppLabel(),()->chooseCalendarApp(pkg->{if(screen.equals("settings"))settings();}));
+            LinearLayout places=settingsGroup(content,"Addresses and dates");
+            settingRow(places,R.drawable.ic_place,0xffef4444,"Maps app for addresses","Tap an address in a message to open it",mapsAppLabel(),()->chooseMapsApp(pkg->{if(screen.equals("settings"))settings();}));
+            settingRow(places,R.drawable.ic_event,0xff3b82f6,"Calendar app for dates","Tap a date or time in a message to add it",calendarAppLabel(),()->chooseCalendarApp(pkg->{if(screen.equals("settings"))settings();}));
             break;}
         case "connection":{LinearLayout link=settingsGroup(content,"Google Messages");
             settingRow(link,R.drawable.ic_refresh,0xff22c55e,"Reconnect","Restart the connection to Google Messages. It also does this on its own when it gets stuck.",null,()->{PairedService.restart(this);new android.os.Handler().postDelayed(()->{if(screen.equals("settings"))settings();},400);});
