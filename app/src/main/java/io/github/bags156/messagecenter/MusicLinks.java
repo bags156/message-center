@@ -71,7 +71,7 @@ final class MusicLinks {
     /** The song (album, artist, show, episode) a link is for, as its service names it. */
     static final class Item {
         Kind kind; String title = "", artist = "", album = "", isrc = "", upc = "", show = "", feed = "", appleShow = "", appleShowUrl = "";
-        long ms;
+        long ms; boolean codesAsked;
         Item(Kind kind) { this.kind = kind; }
         @Override public String toString() {
             return kind + " \"" + title + "\"" + (artist.isEmpty() ? "" : " by " + artist) + (album.isEmpty() ? "" : " on " + album)
@@ -485,6 +485,7 @@ final class MusicLinks {
                 case APPLE_MUSIC: url = appleFind(item, net, cc); break;
                 case DEEZER: url = deezerFind(item, net); break;
                 case YOUTUBE_MUSIC: url = youtubeFind(item, net, cc); if (url == null) url = brainzFind(item, target, net); break;
+                case SPOTIFY: url = spotifyFind(item, net); break;
                 default: url = brainzFind(item, target, net); break;
             }
             if (url != null) return new Match(url, "", "exact");
@@ -586,15 +587,54 @@ final class MusicLinks {
     /** Adds the song's ISRC (the album's barcode) from Deezer, so MusicBrainz can look it up exactly. */
     static void addCodes(Item item, Net net) {
         try {
-            if (item.kind == Kind.SONG && item.isrc.isEmpty()) {
+            if (item.kind == Kind.SONG && item.isrc.isEmpty() && !item.codesAsked) {
+                item.codesAsked = true;
                 JSONObject hit = deezerSearch(item, net);
-                if (hit != null) { JSONObject t = json(net.get(DEEZER + "track/" + hit.optLong("id"), false)); if (t != null) item.isrc = t.optString("isrc"); }
+                if (hit != null) {
+                    JSONObject t = json(net.get(DEEZER + "track/" + hit.optLong("id"), false)); if (t != null) item.isrc = t.optString("isrc");
+                    JSONObject album = hit.optJSONObject("album"); if (item.album.isEmpty() && album != null) item.album = albumName(album.optString("title"));
+                }
             } else if (item.kind == Kind.ALBUM && item.upc.isEmpty()) {
                 JSONObject hit = deezerSearch(item, net);
                 if (hit != null) { JSONObject a = json(net.get(DEEZER + "album/" + hit.optLong("id"), false)); if (a != null) item.upc = a.optString("upc"); }
             }
         } catch (Exception e) { note("codes: " + e); }
         note("codes " + item);
+    }
+
+    static final String LB = "https://labs.api.listenbrainz.org/";
+
+    /**
+     * Spotify: ListenBrainz (MusicBrainz's sister project) keeps a copy of Spotify's catalog and
+     * answers "which Spotify song is this" by name in one quick request; MusicBrainz's own links
+     * come next (for songs ListenBrainz hasn't seen), then ListenBrainz again for the recording
+     * MusicBrainz found.
+     */
+    private static String spotifyFind(Item item, Net net) throws Exception {
+        if (item.kind != Kind.SONG) return brainzFind(item, App.SPOTIFY, net);
+        addCodes(item, net);
+        String full = item.artist, first = firstArtist(item.artist);
+        String[][] tries = {{full, item.album}, {full, ""}, {first, ""}};
+        java.util.Set<String> asked = new java.util.HashSet<>();
+        for (String[] t : tries) {
+            if (t[0].isEmpty() || !asked.add(t[0] + "|" + t[1])) continue;
+            String id = listenBrainz(net, "spotify-id-from-metadata/json?artist_name=" + enc(t[0]) + "&release_name=" + enc(t[1]) + "&track_name=" + enc(item.title));
+            if (id != null) return "https://open.spotify.com/track/" + id;
+        }
+        return brainzFind(item, App.SPOTIFY, net);
+    }
+
+    /** The first Spotify track ID ListenBrainz gives for a question, or null. */
+    private static String listenBrainz(Net net, String path) throws Exception {
+        String reply = net.get(LB + path, false);
+        note("listenbrainz " + path + " → " + (reply == null ? "nothing" : reply.substring(0, Math.min(160, reply.length()))));
+        if (reply == null || !reply.trim().startsWith("[")) return null;
+        JSONArray rows = new JSONArray(reply.trim());
+        for (int n = 0; n < rows.length(); n++) {
+            JSONObject row = rows.optJSONObject(n); JSONArray ids = row == null ? null : row.optJSONArray("spotify_track_ids");
+            if (ids != null && ids.length() > 0 && ids.optString(0).matches("[A-Za-z0-9]{22}")) return ids.optString(0);
+        }
+        return null;
     }
 
     // MusicBrainz asks apps to send at most one request a second.
@@ -636,22 +676,8 @@ final class MusicLinks {
                 JSONObject rec = json(brainz(net, "recording/" + recording + "?inc=url-rels+releases"));
                 String direct = linkFor(rec, target, Kind.SONG);
                 if (direct != null || target != App.SPOTIFY) return direct;
-                // Spotify links are mostly filed under the album: find the song in that album's track list.
-                JSONArray releases = rec == null ? null : rec.optJSONArray("releases");
-                if (releases == null) return null;
-                List<JSONObject> order = new ArrayList<>();
-                for (int n = 0; n < releases.length(); n++) {
-                    JSONObject o = releases.optJSONObject(n); if (o == null) continue;
-                    if (!item.album.isEmpty() && sameName(o.optString("title"), item.album)) order.add(0, o); else order.add(o);
-                }
-                for (int n = 0; n < Math.min(3, order.size()); n++) {
-                    JSONObject rel = json(brainz(net, "release/" + order.get(n).optString("id") + "?inc=url-rels"));
-                    String album = linkFor(rel, App.SPOTIFY, Kind.ALBUM);
-                    if (album == null) continue;
-                    String track = spotifyTrackOnAlbum(album, item, net);
-                    if (track != null) return track;
-                }
-                return null;
+                String id = listenBrainz(net, "spotify-id-from-mbid/json?recording_mbid=" + enc(recording));
+                return id == null ? null : "https://open.spotify.com/track/" + id;
             }
             case ALBUM: {
                 String release = null;
@@ -734,32 +760,6 @@ final class MusicLinks {
         }
         return null;
     }
-
-    /** The song on a Spotify album, from the album's page: each song is listed there with its link. */
-    static String spotifyTrackOnAlbum(String albumUrl, Item item, Net net) throws Exception {
-        Link album = parse(albumUrl);
-        if (album == null || album.kind != Kind.ALBUM) return null;
-        String embed = net.get("https://open.spotify.com/embed/album/" + album.id, true);
-        if (embed != null) {
-            // The embed's track list: {"uri":"spotify:track:…","title":"…",…} in some order.
-            Matcher m = Pattern.compile("\\{[^{}]*\"spotify:track:([A-Za-z0-9]{22})\"[^{}]*\\}").matcher(embed);
-            while (m.find()) {
-                Matcher t = Pattern.compile("\"title\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"").matcher(m.group());
-                if (t.find() && sameName(unescapeJson(t.group(1)), item.title)) return "https://open.spotify.com/track/" + m.group(1);
-            }
-            note("embed: no track named " + item.title + " in " + embed.length() + " chars");
-        }
-        String page = net.get("https://open.spotify.com/album/" + album.id, true);
-        if (page == null) return null;
-        // The album page's own tags list its songs in order; the song's place comes from its title in the page text.
-        List<String> songs = new ArrayList<>();
-        Matcher m = Pattern.compile("<meta[^>]+(?:name|property)=\"music:song\"[^>]+content=\"https://open\\.spotify\\.com/track/([A-Za-z0-9]{22})\"").matcher(page);
-        while (m.find()) songs.add(m.group(1));
-        note("album page: " + songs.size() + " songs tagged");
-        return null;
-    }
-
-    private static String unescapeJson(String s) { try { return new JSONObject("{\"v\":\"" + s + "\"}").getString("v"); } catch (Exception e) { return s; } }
 
     /** YouTube Music's own search (what its website uses), for the same song, album, or artist. */
     private static String youtubeFind(Item item, Net net, String cc) throws Exception {
