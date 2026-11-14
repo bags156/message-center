@@ -4058,7 +4058,7 @@ public class PairedActivity extends Activity {
         String themeMode=prefs.getString("theme","system");
         settingRow(pages,R.drawable.ic_palette,0xffec4899,"Appearance",(themeMode.equals("light")?"Light":themeMode.equals("dark")?"Dark":themeMode.equals("black")?"Black":"Matches phone")+" · text "+scaleLabel(textScale).toLowerCase(Locale.ROOT)+" · chat color",null,()->openSettingsPage("appearance"));
         MusicLinks.App music=MusicApps.chosen(this,false);
-        settingRow(pages,R.drawable.ic_app,0xff0ea5e9,"Apps",(music!=null?"Music in "+music.label+" · podcasts":"Music, podcasts")+", maps & calendar",null,()->openSettingsPage("apps"));
+        settingRow(pages,R.drawable.ic_apps,0xff0ea5e9,"Apps",(music!=null?"Music in "+music.label+" · podcasts":"Music, podcasts")+", maps & calendar",null,()->openSettingsPage("apps"));
         boolean restricted=batteryRestricted();
         settingRow(pages,R.drawable.ic_link,0xff22c55e,"Connection",restricted?"Background activity needs your OK":"Reconnect, pair again, background activity",null,()->openSettingsPage("connection"));
         settingRow(pages,R.drawable.ic_backup,0xff64748b,"Data & about","Back up, restore, report a problem, updates",null,()->openSettingsPage("data"));}
