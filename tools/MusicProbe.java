@@ -23,8 +23,23 @@ public final class MusicProbe {
             "https://www.deezer.com/us/track/908604612",
             "https://podcasts.apple.com/us/podcast/the-daily/id1200361736",
             "https://open.spotify.com/show/3IM0lmZxpFAY7CwMuv9H4g",
+            "https://music.youtube.com/watch?v=J7p4bzqLvCw",
+            "https://music.apple.com/us/album/blinding-lights/1499378108?i=1499378607",
+            "https://tidal.com/track/155054813",
+            "https://music.apple.com/us/album/after-hours/1499378108",
+            "episodes",
         };
+        java.util.List<String> all = new java.util.ArrayList<>();
         for (String url : links) {
+            if (!url.equals("episodes")) { all.add(url); continue; }
+            // An episode of each show, found on its page.
+            String page = net.get("https://open.spotify.com/show/3IM0lmZxpFAY7CwMuv9H4g", true);
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("/episode/([A-Za-z0-9]{22})").matcher(page == null ? "" : page);
+            if (m.find()) all.add("https://open.spotify.com/episode/" + m.group(1)); else System.out.println("NOTE no Spotify episode on the show page");
+            org.json.JSONObject j = MusicLinks.json(net.get("https://itunes.apple.com/lookup?id=1200361736&entity=podcastEpisode&limit=3", false));
+            if (j != null && j.optJSONArray("results") != null && j.getJSONArray("results").length() > 1) all.add(j.getJSONArray("results").getJSONObject(1).optString("trackViewUrl"));
+        }
+        for (String url : all) {
             long start = System.currentTimeMillis();
             System.out.println("LINK " + url);
             try {

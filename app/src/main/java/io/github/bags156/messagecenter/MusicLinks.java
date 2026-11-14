@@ -389,34 +389,37 @@ final class MusicLinks {
         return i;
     }
 
-    /** A Spotify page's title and tags: "Blinding Lights - song and lyrics by The Weeknd | Spotify". */
+    /**
+     * A Spotify page's tags. og:title is the name ("Blinding Lights", "The Weeknd"), though an album's
+     * is "Listen to After Hours - Album by The Weeknd | Spotify"; the page title has the artist
+     * ("Blinding Lights - song and lyrics by The Weeknd | Spotify"); the description has the rest
+     * ("The Weeknd · After Hours · Song · 2020", "Podcast Episode · The Daily · …").
+     */
     static Item spotifyPage(Kind kind, String html) {
         Map<String, String> meta = metaTags(html);
         String title = pageTitle(html), og = meta.getOrDefault("og:title", ""), desc = meta.getOrDefault("og:description", "");
         Item i = new Item(kind);
+        Pattern byArtist = Pattern.compile("^(?:Listen to )?(.+) - (?:Album|Single|EP|Compilation|(?i:song)\\b[^|]*?) by (.+?) \\| Spotify$");
         Matcher m;
-        if (kind == Kind.SONG && (m = Pattern.compile("^(.+) - (?i:song)\\b[^|]*? by (.+?) \\| Spotify$").matcher(title)).find()) { i.title = m.group(1).trim(); i.artist = m.group(2).trim(); }
-        else if (kind == Kind.ALBUM && (m = Pattern.compile("^(.+) - (?:Album|Single|EP|Compilation) by (.+?) \\| Spotify$").matcher(title)).find()) { i.title = m.group(1).trim(); i.artist = m.group(2).trim(); }
-        else if (kind.podcast() && (m = Pattern.compile("^(.+?) \\| Podcast on Spotify$").matcher(title)).find()) i.title = m.group(1).trim();
-        else if ((m = Pattern.compile("^(.+?) \\| Spotify$").matcher(title)).find()) i.title = m.group(1).trim();
-        if (i.title.isEmpty()) i.title = og;
-        if (i.artist.isEmpty() && (kind == Kind.SONG || kind == Kind.ALBUM)) {
-            String musician = meta.getOrDefault("music:musician_description", "");
-            if (!musician.isEmpty()) i.artist = musician;
-            else {
-                // "The Weeknd · After Hours · Song · 2020", or "Listen to X on Spotify. Song · The Weeknd · 2019".
-                String d = desc.replaceFirst("^Listen to .*? on Spotify\\.\\s*", "");
-                String[] parts = d.split("\\s+·\\s+");
-                if (parts.length >= 2) i.artist = parts[0].matches("(?i)song|album|single|ep") ? parts[1] : parts[0];
-            }
-        }
+        String name = og.isEmpty() ? title : og;
+        if ((m = byArtist.matcher(name)).find()) { name = m.group(1); i.artist = m.group(2).trim(); }
+        else if ((m = byArtist.matcher(title)).find()) i.artist = m.group(2).trim();
+        name = name.replaceFirst("^Listen to ", "").replaceFirst("\\s*\\|[^|]*Spotify$", "").trim();
+        if (kind == Kind.ARTIST) name = name.replaceFirst("\\s+Songs$", "");
+        i.title = name;
+        String musician = meta.getOrDefault("music:musician_description", "");
+        if (!musician.isEmpty() && (kind == Kind.SONG || kind == Kind.ALBUM)) i.artist = musician;
+        String[] parts = desc.replaceFirst("^Listen to .*? on Spotify\\.\\s*", "").split("\\s+·\\s+");
+        if (i.artist.isEmpty() && (kind == Kind.SONG || kind == Kind.ALBUM) && parts.length >= 2)
+            i.artist = parts[0].matches("(?i)song|album|single|ep") ? parts[1] : parts[0];
         if (kind == Kind.SONG) {
-            String d = desc.replaceFirst("^Listen to .*? on Spotify\\.\\s*", "");
-            String[] parts = d.split("\\s+·\\s+");
             if (parts.length >= 4 && parts[2].equalsIgnoreCase("Song")) i.album = parts[1];
             try { i.ms = Long.parseLong(meta.getOrDefault("music:duration", "0")) * 1000; } catch (Exception ignored) {}
         }
-        if (kind == Kind.EPISODE && (m = Pattern.compile("Listen to this episode from (.+?) on Spotify").matcher(desc)).find()) i.show = m.group(1).trim();
+        if (kind == Kind.EPISODE) {
+            if ((m = Pattern.compile("Listen to this episode from (.+?) on Spotify").matcher(desc)).find()) i.show = m.group(1).trim();
+            else if (parts.length >= 2 && parts[0].toLowerCase(Locale.ROOT).startsWith("podcast")) i.show = parts[1];
+        }
         return i.title.isEmpty() ? null : i;
     }
 
@@ -442,7 +445,8 @@ final class MusicLinks {
         String html = net.get(l.url, true);
         if (html == null) return null;
         Map<String, String> meta = metaTags(html);
-        String title = meta.getOrDefault("og:title", ""); if (title.isEmpty()) title = pageTitle(html);
+        String og = meta.getOrDefault("og:title", ""), tag = pageTitle(html);
+        String title = !og.isEmpty() && !(tag.toLowerCase(Locale.ROOT).contains(" by ") && !og.toLowerCase(Locale.ROOT).contains(" by ")) ? og : tag;
         note("page " + l.app + " title=" + pageTitle(html) + " | og:title=" + meta.get("og:title") + " | og:description=" + meta.get("og:description"));
         return fromTitle(l.kind, title, meta.getOrDefault("og:description", ""), meta.getOrDefault("music:musician_description", ""));
     }
@@ -558,6 +562,12 @@ final class MusicLinks {
         JSONObject j = json(reply);
         JSONArray d = j == null ? null : j.optJSONArray("data");
         note("deezer search " + q + " → " + (reply == null ? "no reply" : d == null ? reply.substring(0, Math.min(200, reply.length())) : d.length() + " results"));
+        if ((d == null || d.length() == 0) && item.kind != Kind.ARTIST) {
+            String plain = searchWords(item);
+            reply = net.get(DEEZER + path + "?limit=15&q=" + enc(plain), false);
+            j = json(reply); d = j == null ? null : j.optJSONArray("data");
+            note("deezer search " + plain + " → " + (reply == null ? "no reply" : d == null ? reply.substring(0, Math.min(200, reply.length())) : d.length() + " results"));
+        }
         if (d == null) return null;
         JSONObject best = null; long bestGap = Long.MAX_VALUE;
         for (int n = 0; n < d.length(); n++) {
@@ -618,12 +628,8 @@ final class MusicLinks {
                 }
                 if (recording == null) {
                     String q = "recording:\"" + core(item.title, false).replace("\"", " ") + "\"" + (item.artist.isEmpty() ? "" : " AND artist:\"" + firstArtist(item.artist).replace("\"", " ") + "\"");
-                    JSONObject j = json(brainz(net, "recording?limit=5&query=" + enc(q)));
-                    JSONArray r = j == null ? null : j.optJSONArray("recordings");
-                    if (r != null) for (int n = 0; n < r.length() && recording == null; n++) {
-                        JSONObject o = r.optJSONObject(n);
-                        if (o != null && sameName(o.optString("title"), item.title) && sameArtist(credit(o), item.artist)) recording = o.optString("id");
-                    }
+                    JSONObject j = json(brainz(net, "recording?limit=15&query=" + enc(q)));
+                    recording = bestRecording(j == null ? null : j.optJSONArray("recordings"), item);
                 }
                 note("recording " + recording);
                 if (recording == null) return null;
@@ -681,6 +687,29 @@ final class MusicLinks {
             }
             default: return null;
         }
+    }
+
+    /**
+     * The recording a store means, of MusicBrainz's many by that name (live ones, remixes, covers):
+     * the right title and artist, about the same length, not live or remixed unless the name says
+     * so, and the one on the most releases (the original is on the album, singles, and compilations).
+     */
+    static String bestRecording(JSONArray r, Item item) {
+        if (r == null) return null;
+        String best = null; long bestScore = Long.MIN_VALUE;
+        boolean wantsVersion = item.title.toLowerCase(Locale.ROOT).matches(".*\\b(live|remix|mix|acoustic|demo|version|edit)\\b.*");
+        for (int n = 0; n < r.length(); n++) {
+            JSONObject o = r.optJSONObject(n);
+            if (o == null || !sameName(o.optString("title"), item.title) || !sameArtist(credit(o), item.artist)) continue;
+            long score = 0;
+            JSONArray releases = o.optJSONArray("releases"); score += Math.min(60, releases == null ? 0 : releases.length());
+            if (o.optJSONArray("isrcs") != null && o.optJSONArray("isrcs").length() > 0) score += 25;
+            long length = o.optLong("length");
+            if (item.ms > 0 && length > 0) score += Math.abs(length - item.ms) <= 3000 ? 60 : Math.abs(length - item.ms) <= 10000 ? 20 : -40;
+            if (!wantsVersion && (o.optBoolean("video") || o.optString("disambiguation").toLowerCase(Locale.ROOT).matches(".*\\b(live|remix|mix|acoustic|demo|instrumental|karaoke)\\b.*"))) score -= 80;
+            if (score > bestScore) { bestScore = score; best = o.optString("id"); }
+        }
+        return best;
     }
 
     private static String credit(JSONObject o) {
@@ -956,12 +985,15 @@ final class MusicLinks {
         Http(String app) { this.app = app; }
 
         @Override public String get(String url, boolean page) throws Exception {
-            HttpURLConnection c = open(url, page);
-            try {
-                int code = c.getResponseCode();
-                if (code >= 400) { note("get " + code + " " + url); return null; }
-                return read(c, page ? 900 * 1024 : 3 * 1024 * 1024);
-            } finally { c.disconnect(); }
+            for (int attempt = 0; ; attempt++) {
+                HttpURLConnection c = open(url, page);
+                try {
+                    int code = c.getResponseCode();
+                    if ((code == 503 || code == 429) && attempt < 2) { note("get " + code + " (busy, again) " + url); Thread.sleep(1500L * (attempt + 1)); continue; }
+                    if (code >= 400) { note("get " + code + " " + url); return null; }
+                    return read(c, page ? 900 * 1024 : 3 * 1024 * 1024);
+                } finally { c.disconnect(); }
+            }
         }
 
         @Override public String post(String url, String json, Map<String, String> headers) throws Exception {
