@@ -952,8 +952,40 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(box[0].equals("Listen: "+spotify),"Song playing didn't put the playing song's link in the message box ("+box[0]+")");
             check(described(a,"Added Blinding Lights by The Weeknd")!=null,"No note saying which song was added");shoot("shot-song-playing");
             runOnMainSync(()->{try{((android.widget.EditText)composer.get(a)).setText("");}catch(Exception e){throw new RuntimeException(e);}});}
-        finally{runOnMainSync(()->{if(player[0]!=null)player[0].release();});shell("cmd notification disallow_listener "+component);
+        // (Access stays on: taking it back away stops the app, as Android does when a permission is withdrawn.)
+        finally{runOnMainSync(()->{if(player[0]!=null)player[0].release();});
             onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("song-playing");}}}
+    /**
+     * Holding a chat offers "Remind me in 1 hour": it sets a reminder for the chat an hour out; when
+     * it's due a banner (a high-importance notification) brings the chat back, with "Again in 1 hour".
+     */
+    private void checkChatReminder(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();
+        getUiAutomation().grantRuntimePermission(ctx.getPackageName(),android.Manifest.permission.POST_NOTIFICATIONS);
+        android.app.NotificationManager nm=ctx.getSystemService(android.app.NotificationManager.class);
+        try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'remind-chat',name:'Rae Remind',type:'RCS',participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'rr',number:'+15557770133'},fullName:'Rae Remind'}]}"));
+            store.message(new JSONObject().put("messageID","remind-1").put("conversationID","remind-chat").put("participantID","rr").put("timestamp",System.currentTimeMillis()*1000)
+                .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","Call me when you can")))),0,true);}
+        String[] fired={null};
+        try{onMainCall(()->method("inbox").invoke(a));waitForIdleSync();
+            JSONObject chat;try(PairedStore store=new PairedStore(ctx)){chat=store.chat("remind-chat");}
+            onMainCall(()->method("chatOptions",JSONObject.class).invoke(a,chat));
+            check(waitForText("Remind me in 1 hour",3000,true),"Holding a chat doesn't offer \"Remind me in 1 hour\"");shoot("shot-chat-remind-menu");
+            long before=System.currentTimeMillis();pressText("Remind me in 1 hour");Thread.sleep(400);
+            JSONObject set=Reminders.forChat(ctx,"remind-chat");
+            check(set!=null&&Math.abs(set.optLong("at")-(before+3_600_000L))<10_000,"\"Remind me in 1 hour\" didn't set a reminder an hour out ("+set+")");
+            // Due now: the banner.
+            fired[0]=set.optString("id");ctx.sendBroadcast(new Intent(ctx,Reminders.class).setAction(Reminders.FIRE).putExtra("id",fired[0]));
+            android.app.Notification shown=null;for(int i=0;i<30&&shown==null;i++){for(android.service.notification.StatusBarNotification sbn:nm.getActiveNotifications())if(("reminder:"+fired[0]).equals(sbn.getTag()))shown=sbn.getNotification();if(shown==null)Thread.sleep(100);}
+            check(shown!=null,"The chat reminder didn't show when due");
+            check(String.valueOf(shown.extras.getCharSequence(android.app.Notification.EXTRA_TITLE)).equals("Reminder: Rae Remind")&&String.valueOf(shown.extras.getCharSequence(android.app.Notification.EXTRA_TEXT)).contains("Call me when you can"),
+                "The chat reminder doesn't say who it's about and what they said ("+shown.extras+")");
+            check(nm.getNotificationChannel(shown.getChannelId()).getImportance()>=android.app.NotificationManager.IMPORTANCE_HIGH,"The reminder isn't a banner (its channel isn't high importance)");
+            check(shown.actions!=null&&shown.actions.length==1&&"Again in 1 hour".contentEquals(shown.actions[0].title),"The reminder has no \"Again in 1 hour\"");
+            shown.actions[0].actionIntent.send();Thread.sleep(800);
+            JSONObject again=Reminders.forChat(ctx,"remind-chat");
+            check(again!=null&&!again.optString("id").equals(fired[0])&&again.optLong("at")>System.currentTimeMillis()+3_500_000L,"\"Again in 1 hour\" didn't set the reminder an hour out again ("+again+")");}
+        finally{JSONObject left=Reminders.forChat(ctx,"remind-chat");if(left!=null)Reminders.remove(ctx,left.optString("id"));if(fired[0]!=null)nm.cancel("reminder:"+fired[0],2);
+            onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("remind-chat");}}}
     private void checkThemeAll(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();ChatSettings settings=new ChatSettings(ctx);
         settings.themeAll("default",true);settings.setTheme("smoke","berry");
         try{onMainCall(()->method("chooseTheme",String.class).invoke(a,""));check(waitForText("Color for all chats",3000,true),"Chat color for all chats didn't open");shoot("shot-theme-all");
@@ -1942,6 +1974,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkTheirMusic((PairedActivity)activity);
         checkGroupsInCommon((PairedActivity)activity);
         checkSongPlaying((PairedActivity)activity);
+        checkChatReminder((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();
