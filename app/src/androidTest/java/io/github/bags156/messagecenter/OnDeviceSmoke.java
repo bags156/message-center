@@ -898,6 +898,15 @@ public final class OnDeviceSmoke extends Instrumentation {
             runOnMainSync(()->{try{((android.view.View)field("musicUndo").get(a)).performClick();}catch(Exception e){throw new RuntimeException(e);}});Thread.sleep(600);waitForIdleSync();
             runOnMainSync(()->{try{box[0]=((android.widget.EditText)composer.get(a)).getText().toString();}catch(Exception e){throw new RuntimeException(e);}});
             check(box[0].equals("Have you heard this? "+spotify),"Undo didn't put the Spotify link back, or it changed again ("+box[0]+")");
+            // A song Theo's app doesn't have: it goes as its song.link page, never a link he can't play.
+            String ytm="https://music.youtube.com/watch?v=oI2PxA4zfgc",page="https://song.link/y/oI2PxA4zfgc";
+            java.io.File none=new java.io.File(found.getParentFile(),MediaCache.hash("APPLE_MUSIC "+ytm)+".json");
+            java.nio.file.Files.write(none.toPath(),new JSONObject().put("how","search").put("url","https://music.apple.com/us/search?term=x").put("universal",page).put("kind","SONG").put("v",2).put("at",System.currentTimeMillis()).toString().getBytes("UTF-8"));
+            try{runOnMainSync(()->{try{((android.widget.EditText)composer.get(a)).setText("This one "+ytm);}catch(Exception e){throw new RuntimeException(e);}});
+                for(int i=0;i<30;i++){Thread.sleep(100);runOnMainSync(()->{try{box[0]=((android.widget.EditText)composer.get(a)).getText().toString();}catch(Exception e){throw new RuntimeException(e);}});if(box[0].contains(page))break;}
+                check(box[0].equals("This one "+page),"A song not on Theo's app didn't go as its song.link page ("+box[0]+")");
+                check(described(a,"No exact Apple Music link, so it goes as a song.link page")!=null,"No note saying the song goes as a song.link page");shoot("shot-their-music-songlink");}
+            finally{none.delete();}
             runOnMainSync(()->{try{((android.widget.EditText)composer.get(a)).setText("");}catch(Exception e){throw new RuntimeException(e);}});
             onMainCall(()->method("details").invoke(a));waitForIdleSync();
             int[] rows={0};runOnMainSync(()->{java.util.ArrayList<android.view.View> hits=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(hits,"Their music app: Apple Music (from songs they've sent)",android.view.View.FIND_VIEWS_WITH_TEXT);rows[0]=hits.size();});

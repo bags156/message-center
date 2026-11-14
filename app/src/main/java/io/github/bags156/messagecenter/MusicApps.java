@@ -87,6 +87,7 @@ final class MusicApps {
         try {
             JSONObject saved = new JSONObject(new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8));
             if (System.currentTimeMillis() - saved.optLong("at") > keep(saved.optString("how"))) return null;
+            if (!saved.optString("how").equals("exact") && saved.optString("kind").equals("SONG") && !saved.has("universal") && !saved.has("v")) return null; // from before song.link pages
             synchronized (memory) { memory.put(k, saved); }
             return saved;
         } catch (Exception e) { return null; }
@@ -125,7 +126,7 @@ final class MusicApps {
         long start = System.currentTimeMillis();
         try {
             MusicLinks.Net net = new MusicLinks.Http("MessageCenter/" + version(c) + " ( https://github.com/bags156/message-center )");
-            out.put("at", start);
+            out.put("at", start).put("v", 2);
             MusicLinks.Link link = MusicLinks.expand(MusicLinks.parse(url), net);
             MusicLinks.Item item = link == null ? null : MusicLinks.identify(link, net);
             if (link != null && link.app == app) { out.put("how", "exact").put("url", url).put("kind", link.kind.name()); return out; }
@@ -133,6 +134,12 @@ final class MusicApps {
             out.put("kind", item == null ? (link == null || link.kind == null ? "" : link.kind.name()) : item.kind.name());
             if (m == null) out.put("how", "none");
             else out.put("how", m.how).put("url", m.url).put("alt", m.alt);
+            // Not the exact song: its song.link page still opens it anywhere (in their app if it's there).
+            if (item != null && item.kind == MusicLinks.Kind.SONG && (m == null || !m.exact())) {
+                String page = MusicLinks.songLink(link, null);
+                if (page == null && app != MusicLinks.App.APPLE_MUSIC) { MusicLinks.Match apple = MusicLinks.find(item, MusicLinks.App.APPLE_MUSIC, net, java.util.Locale.getDefault().getCountry()); page = MusicLinks.songLink(null, apple != null && apple.exact() ? apple.url : null); }
+                if (page != null) out.put("universal", page);
+            }
             // For the problem report: how it went, never what the song was.
             Diagnostics.note("Music link: " + (link == null ? "?" : link.app.name()) + " → " + app.name() + " " + out.optString("how") + " in " + (System.currentTimeMillis() - start) + " ms");
         } catch (Exception e) {
@@ -169,7 +176,9 @@ final class MusicApps {
 
     /** Someone sent a song in a one-to-one chat: that's the service they use (until they send one from another). */
     static void learn(ChatSettings settings, String chatId, String text) {
-        MusicLinks.App app = musicService(ChatText.firstUrl(text));
+        String url = ChatText.firstUrl(text);
+        if (url.matches("(?i)https?://(www\\.)?(song\\.link|odesli\\.co)/.*")) return;
+        MusicLinks.App app = musicService(url);
         if (app != null) settings.learnMusic(chatId, app.name());
     }
 
