@@ -152,7 +152,11 @@ final class PairedStore extends SQLiteOpenHelper {
             boolean existed=false;long version=0;
             try(Cursor c=db.rawQuery("SELECT version FROM items WHERE id=?",new String[]{id})){if(c.moveToFirst()){existed=true;version=c.getLong(0);}}
             if(!live && existed && version>requestVersion) {db.setTransactionSuccessful();return true;}
-            data=ReplyReferences.preserve(message(id),data);
+            JSONObject before=existed?message(id):null;
+            data=ReplyReferences.preserve(before,data);
+            // The same message with other words: it was edited (in Google Messages, by either side).
+            if(before!=null)try{String was=PairedProtocol.text(before),now=PairedProtocol.text(data);
+                if(before.optBoolean("_edited")||(live&&!was.isEmpty()&&!now.isEmpty()&&!was.equals(now)))data.put("_edited",true);}catch(Exception ignored){}
             long next=snapshot()+1;db.execSQL("UPDATE meta SET value=? WHERE id=1",new Object[]{next});
             ContentValues v=new ContentValues();v.put("id",id);v.put("chat",chat);v.put("data",data.toString());v.put("time",PairedProtocol.time(data));v.put("version",next);
             db.insertWithOnConflict("items",null,v,SQLiteDatabase.CONFLICT_REPLACE);

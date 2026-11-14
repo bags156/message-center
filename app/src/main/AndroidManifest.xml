@@ -90,6 +90,8 @@
         <provider android:name=".MediaProvider" android:authorities="io.github.bags156.messagecenter.media" android:exported="false" android:grantUriPermissions="true" />
         <activity android:name=".VideoPlayerActivity" android:exported="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden" />
+        <!-- Android Auto: chat notifications read aloud in the car, with spoken replies. -->
+        <meta-data android:name="com.google.android.gms.car.application" android:resource="@xml/automotive_app_desc" />
         <service android:name=".PairedService" android:exported="false" android:foregroundServiceType="remoteMessaging" />
         <!-- ⊕ → Song playing: Android only says what's playing to an app with notification access. It ignores notifications. -->
         <service android:name=".NowPlayingAccess" android:label="Message Center: song playing" android:exported="true"

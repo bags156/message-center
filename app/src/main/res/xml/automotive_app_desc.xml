@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Android Auto reads and replies to message notifications. -->
+<!-- Android Auto reads chat notifications aloud and sends spoken replies (Reply and Mark as read on each). -->
 <automotiveApp>
     <uses name="notification" />
 </automotiveApp>
