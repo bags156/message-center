@@ -1637,7 +1637,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(!pic.exists()&&MediaOutbox.WAITING.equals(job.optString("state")),"The offline attachment wasn't queued safely");
         java.lang.reflect.Method render=PairedActivity.class.getDeclaredMethod("renderMessages",boolean.class);render.setAccessible(true);
         runOnMainSync(()->{try{render.invoke(bubble,false);}catch(Exception e){throw new RuntimeException(e);}});waitForIdleSync();
-        bubble.getWindow().getDecorView().findViewsWithText(found,"Saved • waiting for connection",android.view.View.FIND_VIEWS_WITH_TEXT);check(!found.isEmpty(),"Offline attachment has no saved status");found.clear();
+        bubble.getWindow().getDecorView().findViewsWithText(found,"Waiting to reconnect • sends automatically",android.view.View.FIND_VIEWS_WITH_TEXT);check(!found.isEmpty(),"Offline attachment doesn't say it's waiting to reconnect");found.clear();
         // The photo goes alone; its text waits until your phone has sent the photo, so it can't arrive first.
         long attempt=savedMedia.begin(jid,false).optLong("attempt");savedMedia.finish(jid,attempt,new JSONObject("{mediaTmpID:'photo-submission'}"));long nowUs=System.currentTimeMillis()*1000;
         check(!MediaOutbox.captionReady(savedMedia.get(jid),System.currentTimeMillis()),"The text would go before your phone sent the photo");
