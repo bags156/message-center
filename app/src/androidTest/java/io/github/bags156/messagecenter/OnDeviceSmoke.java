@@ -1341,7 +1341,8 @@ public final class OnDeviceSmoke extends Instrumentation {
         try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'voice-bg',name:'Vera Background',type:'RCS',lastMessageTimestamp:"+now*1000+",participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'vb',number:'+15557770133'},fullName:'Vera Background',firstName:'Vera'}]}"));
             store.message(new JSONObject("{messageID:'vb-1',conversationID:'voice-bg',participantID:'vb',timestamp:"+(now-60_000L)*1000+",messageStatus:{status:'INCOMING_COMPLETE'},messageInfo:[{mediaContent:"+media+"}]}"),0,true);}
         java.lang.reflect.Field playerField=field("player");
-        java.util.concurrent.Callable<Boolean> playing=()->{boolean[] on={false};runOnMainSync(()->{try{android.media.MediaPlayer p=(android.media.MediaPlayer)playerField.get(a);on[0]=p!=null&&p.isPlaying();}catch(Exception ignored){}});return on[0];};
+        // Read where it's called (waitUntil already runs it on the main thread).
+        java.util.concurrent.Callable<Boolean> playing=()->{try{android.media.MediaPlayer p=(android.media.MediaPlayer)playerField.get(a);return p!=null&&p.isPlaying();}catch(Exception e){return false;}};
         try{onMainCall(()->method("thread",String.class).invoke(a,"voice-bg"));waitForIdleSync();
             onMainCall(()->method("toggleVoice",JSONObject.class,JSONObject.class).invoke(a,media,new JSONObject("{messageID:'vb-1',conversationID:'voice-bg',participantID:'vb'}")));
             check(waitUntil(playing,6000),"The voice message didn't start playing");
@@ -1373,7 +1374,7 @@ public final class OnDeviceSmoke extends Instrumentation {
                 getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS);Thread.sleep(1200);shoot("shot-voice-recording");
                 getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);Thread.sleep(600);
                 ctx.startService(new android.content.Intent(ctx,VoiceRecordService.class).setAction("stop"));
-                check(waitUntil(()->{boolean[] r={true};runOnMainSync(()->{try{r[0]=rec.get(a)!=null;}catch(Exception ignored){}});return !r[0];},3000),"Stop in the notification didn't stop the recording");
+                check(waitUntil(()->rec.get(a)==null,3000),"Stop in the notification didn't stop the recording");
                 java.util.List<?> kept=(java.util.List<?>)field("outgoing").get(a);check(kept.size()==1,"Stop in the notification didn't keep the recording in the message ("+kept.size()+")");
                 check(!VoiceRecordService.holding(),"The recording's notification stayed after it stopped");voiceOffScreen="recording checked";}}
         finally{try{onMainCall(()->method("stopAudio").invoke(a));}catch(Exception ignored){}
