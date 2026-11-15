@@ -1126,6 +1126,7 @@ final class MusicLinks {
                 if (id.startsWith("MPSPPL") && sameShow(title, item.title)) return "https://music.youtube.com/playlist?list=" + id.substring(4);
             }
         }
+        if (log != null) for (JSONObject r : rows.subList(0, Math.min(6, rows.size()))) { JSONArray c = r.optJSONArray("flexColumns"); if (c != null && c.length() > 1) note("youtube row: " + runs(c.optJSONObject(0)) + " | " + runs(c.optJSONObject(1)) + (r.toString().contains("PODCAST_EPISODE") ? " (episode)" : "")); }
         note("youtube: " + rows.size() + " results, no such podcast");
         return null;
     }
