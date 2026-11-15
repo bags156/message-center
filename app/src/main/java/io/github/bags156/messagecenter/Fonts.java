@@ -294,14 +294,30 @@ final class Fonts {
             ViewTreeObserver window;
             // Whether this screen has text in the font: with no font, only a screen that had it is looked through (once, to undo it).
             boolean had;
+            // Fonts are put on new text once it's laid out, which needs laying out again. The frame in between
+            // would show the new letters in spaces measured for the old ones (cut-off words, "28" as "2"), so
+            // it isn't drawn: the screen keeps its last frame until the next, right one (a few ms later).
+            int skip, skippedInARow;
             final ViewTreeObserver.OnGlobalLayoutListener changed = () -> {
                 refresh(c);
                 if (byArea.isEmpty() && !had) return;
-                walk(root, defaultArea);
+                if (walk(root, defaultArea)) skip++;
                 had = !byArea.isEmpty();
             };
-            @Override public void onViewAttachedToWindow(View v) { window = v.getViewTreeObserver(); window.addOnGlobalLayoutListener(changed); had = everApplied; changed.onGlobalLayout(); }
-            @Override public void onViewDetachedFromWindow(View v) { if (window != null && window.isAlive()) window.removeOnGlobalLayoutListener(changed); window = null; }
+            final ViewTreeObserver.OnPreDrawListener hold = () -> {
+                if (skip == 0 || skippedInARow >= 3) { skip = 0; skippedInARow = 0; return true; }
+                skip = 0; skippedInARow++;
+                return false;
+            };
+            @Override public void onViewAttachedToWindow(View v) {
+                window = v.getViewTreeObserver();
+                window.addOnGlobalLayoutListener(changed); window.addOnPreDrawListener(hold);
+                had = everApplied; changed.onGlobalLayout(); skip = 0;
+            }
+            @Override public void onViewDetachedFromWindow(View v) {
+                if (window != null && window.isAlive()) { window.removeOnGlobalLayoutListener(changed); window.removeOnPreDrawListener(hold); }
+                window = null;
+            }
         };
         root.addOnAttachStateChangeListener(watch);
         if (root.isAttachedToWindow()) watch.onViewAttachedToWindow(root);
@@ -314,14 +330,16 @@ final class Fonts {
         walk(root, defaultArea);
     }
 
-    private static void walk(View v, String area) {
+    /** Whether any text changed font (so it needs laying out again). */
+    private static boolean walk(View v, String area) {
         Object marked = v.getTag(R.id.font_area);
         if (marked instanceof String) area = (String) marked;
-        if (v instanceof TextView) use((TextView) v, byArea.get(area));
+        boolean changed = v instanceof TextView && use((TextView) v, byArea.get(area));
         if (v instanceof ViewGroup) {
             ViewGroup g = (ViewGroup) v;
-            for (int i = 0; i < g.getChildCount(); i++) walk(g.getChildAt(i), area);
+            for (int i = 0; i < g.getChildCount(); i++) changed |= walk(g.getChildAt(i), area);
         }
+        return changed;
     }
 
     /** Which uploaded font a piece of text is drawn in now (its plain style), or null for the phone's: for the device checks. */
@@ -333,19 +351,20 @@ final class Fonts {
     }
 
     /** The font for one piece of text, keeping its weight and slant; null puts back what the app chose. */
-    private static void use(TextView t, Typeface font) {
+    private static boolean use(TextView t, Typeface font) {
         Typeface now = t.getTypeface(), mine = (Typeface) t.getTag(R.id.font_set), theirs = (Typeface) t.getTag(R.id.font_original);
         // If the app changed this text's typeface since (bold for unread, say), that's the one to follow.
         if (mine == null || now != mine) theirs = now == null ? Typeface.DEFAULT : now;
         if (font != null && theirs != Typeface.MONOSPACE) {
             Typeface want = styled(font, theirs);
             t.setTag(R.id.font_original, theirs); t.setTag(R.id.font_set, want);
-            if (now != want) t.setTypeface(want);
             everApplied = true;
+            if (now != want) { t.setTypeface(want); return true; }
         } else if (mine != null) {
-            if (now == mine) t.setTypeface(theirs);
             t.setTag(R.id.font_set, null); t.setTag(R.id.font_original, null);
+            if (now == mine) { t.setTypeface(theirs); return true; }
         }
+        return false;
     }
 
     private static Typeface styled(Typeface font, Typeface like) {

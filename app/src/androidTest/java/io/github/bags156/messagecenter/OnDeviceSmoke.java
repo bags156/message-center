@@ -1085,6 +1085,9 @@ public final class OnDeviceSmoke extends Instrumentation {
         return hit[0];}
     /** Whether a piece of text is in the uploaded font right now. */
     private boolean inFont(android.widget.TextView t)throws Exception{boolean[] yes={false};runOnMainSync(()->{Object set=t.getTag(R.id.font_set);yes[0]=set!=null&&t.getTypeface()==set;});return yes[0];}
+    /** How many pieces of text in an uploaded font are waiting to be measured again (drawn now, they'd be cut off or squeezed). */
+    private static int halfLaidOut(android.view.View v){int n=v instanceof android.widget.TextView&&v.getTag(R.id.font_set)!=null&&v.isLayoutRequested()?1:0;
+        if(v instanceof android.view.ViewGroup){android.view.ViewGroup g=(android.view.ViewGroup)v;for(int i=0;i<g.getChildCount();i++)n+=halfLaidOut(g.getChildAt(i));}return n;}
     /** Which uploaded font a piece of text on screen is in (null: the phone's). */
     private android.graphics.Typeface fontOf(android.widget.TextView t)throws Exception{android.graphics.Typeface[] f={null};runOnMainSync(()->f[0]=Fonts.fontOf(t));return f[0];}
     /**
@@ -1125,6 +1128,16 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(fontOf(said)==Fonts.sample(ctx,first.id),"Messages aren't in the font chosen for them");
             android.widget.EditText box=(android.widget.EditText)field("composer").get(a);check(fontOf(box)==Fonts.sample(ctx,first.id),"The message box isn't in the font chosen for it");
             android.widget.TextView title=exactText(a,"Fran Font");check(title!=null&&fontOf(title)==Fonts.sample(ctx,second.id),"The chat's name isn't in the font chosen for titles");
+            // Redrawing the chat and the list (as new messages and syncs do) never shows a frame of text in
+            // the new font squeezed into room measured for the old (the flicker: "28" as "2", cut-off words).
+            int[] bad={0},draws={0};android.view.ViewTreeObserver.OnDrawListener watchDraws=()->{draws[0]++;bad[0]+=halfLaidOut(a.getWindow().getDecorView());};
+            runOnMainSync(()->a.getWindow().getDecorView().getViewTreeObserver().addOnDrawListener(watchDraws));
+            for(int k=0;k<3;k++){onMainCall(()->method("renderMessages",boolean.class).invoke(a,false));waitForIdleSync();Thread.sleep(150);}
+            onMainCall(()->method("inbox").invoke(a));waitForIdleSync();Thread.sleep(200);
+            for(int k=0;k<2;k++){onMainCall(()->method("renderInbox").invoke(a));waitForIdleSync();Thread.sleep(150);}
+            onMainCall(()->method("thread",String.class).invoke(a,"font-chat"));waitForIdleSync();Thread.sleep(300);
+            runOnMainSync(()->a.getWindow().getDecorView().getViewTreeObserver().removeOnDrawListener(watchDraws));
+            check(draws[0]>0&&bad[0]==0,"Redrawing showed text in the new font squeezed into old room ("+bad[0]+" pieces over "+draws[0]+" frames)");
             shoot("shot-custom-font");
             runOnMainSync(()->Fonts.setFontFor(ctx,"messages",""));onMainCall(()->method("thread",String.class).invoke(a,"font-chat"));waitForIdleSync();Thread.sleep(300);
             said=exactText(a,"This should be in your font");check(said!=null&&fontOf(said)==null,"Choosing the phone's font for Messages left them in the uploaded one");
