@@ -1163,7 +1163,8 @@ public final class OnDeviceSmoke extends Instrumentation {
             onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("font-chat");}}}
     /**
      * Chat heads: with "Display over other apps" allowed and chat heads chosen, a new message brings
-     * up its chat's head at full strength, which settles to the chosen strength when left alone;
+     * up its chat's head at full strength, then half, then the chosen faded strength (the steps sped
+     * up here from 5 seconds and 2 minutes);
      * tapping it opens the chat in a floating window (the heads step aside meanwhile, and come back
      * when it closes); the setting shows its slider; closing them all takes them away.
      */
@@ -1172,7 +1173,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         long until=android.os.SystemClock.uptimeMillis()+3000;while(!android.provider.Settings.canDrawOverlays(ctx)&&android.os.SystemClock.uptimeMillis()<until)Thread.sleep(100);
         check(android.provider.Settings.canDrawOverlays(ctx),"Couldn't allow display over other apps on the test phone");
         android.content.SharedPreferences prefs=ctx.getSharedPreferences("paired",android.content.Context.MODE_PRIVATE);
-        prefs.edit().putString(ChatHeads.STYLE,ChatHeads.HEADS).putInt(ChatHeads.OPACITY,40).commit();
+        prefs.edit().putString(ChatHeads.STYLE,ChatHeads.HEADS).putInt(ChatHeads.OPACITY,25).commit();ChatHeads.fullMs=1000;ChatHeads.halfMs=2000;
         try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'head-chat',name:'Hana Head',type:'RCS',lastMessageTimestamp:"+now*1000+",participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'hh',number:'+15557770155'},fullName:'Hana Head',firstName:'Hana'}]}"));
             store.message(new JSONObject().put("messageID","hh-1").put("conversationID","head-chat").put("participantID","hh").put("timestamp",(now-60_000L)*1000)
                 .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","Are you floating?")))),0,true);}
@@ -1182,8 +1183,10 @@ public final class OnDeviceSmoke extends Instrumentation {
             android.view.View[] heads={null};runOnMainSync(()->heads[0]=ChatHeads.view());
             check(heads[0]!=null&&heads[0].isAttachedToWindow(),"A new message didn't bring up a chat head");
             float[] alpha={0};runOnMainSync(()->alpha[0]=heads[0].getAlpha());check(alpha[0]>0.95f,"A new message's head isn't at full strength ("+alpha[0]+")");
-            Thread.sleep(4500);runOnMainSync(()->alpha[0]=heads[0].getAlpha());
-            check(Math.abs(alpha[0]-0.40f)<0.06f,"Left alone, the head isn't at the chosen strength ("+alpha[0]+", not 0.40)");
+            Thread.sleep(1900);runOnMainSync(()->alpha[0]=heads[0].getAlpha());
+            check(Math.abs(alpha[0]-0.5f)<0.06f,"After a moment, the head isn't at half strength ("+alpha[0]+")");
+            Thread.sleep(2500);runOnMainSync(()->alpha[0]=heads[0].getAlpha());
+            check(Math.abs(alpha[0]-0.25f)<0.06f,"Left alone, the head isn't at the chosen faded strength ("+alpha[0]+", not 0.25)");
             shoot("shot-chat-heads");
             runOnMainSync(()->((android.view.ViewGroup)heads[0]).getChildAt(0).performClick());
             android.app.Activity window=getInstrumentation().waitForMonitorWithTimeout(floating,6000);
@@ -1196,10 +1199,10 @@ public final class OnDeviceSmoke extends Instrumentation {
             runOnMainSync(window::finish);Thread.sleep(1200);
             runOnMainSync(()->heads[0]=ChatHeads.view());check(heads[0]!=null,"Closing the floating chat didn't bring the heads back");
             onMainCall(()->method("openSettingsPage",String.class).invoke(a,"notifications"));waitForIdleSync();Thread.sleep(300);
-            check(exactText(a,"Strength when left alone")!=null&&exactText(a,"40%")!=null,"Settings → Notifications doesn't show the chat heads' strength");
+            check(exactText(a,"Faded strength")!=null&&exactText(a,"25%")!=null,"Settings → Notifications doesn't show the chat heads' faded strength");
             shoot("shot-chat-head-settings");
             runOnMainSync(()->ChatHeads.clear(ctx));Thread.sleep(300);runOnMainSync(()->heads[0]=ChatHeads.view());check(heads[0]==null,"Closing all chat heads left one on screen");}
-        finally{getInstrumentation().removeMonitor(floating);runOnMainSync(()->ChatHeads.clear(ctx));prefs.edit().putString(ChatHeads.STYLE,"android").commit();
+        finally{ChatHeads.fullMs=5_000;ChatHeads.halfMs=120_000;getInstrumentation().removeMonitor(floating);runOnMainSync(()->ChatHeads.clear(ctx));prefs.edit().putString(ChatHeads.STYLE,"android").commit();
             onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("head-chat");}}}
     private void checkThemeAll(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();ChatSettings settings=new ChatSettings(ctx);
         settings.themeAll("default",true);settings.setTheme("smoke","berry");

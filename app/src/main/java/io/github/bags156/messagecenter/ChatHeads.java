@@ -38,23 +38,26 @@ import java.util.Map;
 
 /**
  * Message Center's own floating chat heads, in place of Android's bubbles (which Android draws
- * itself, at full strength). They sit see-through at the edge of the screen, at the strength you
- * choose; touching one, or a new message, brings it up to full until it's left alone again. Tap
- * one to open its chat in a floating window; drag to move them (they settle at the nearest side);
- * drag onto the × at the bottom to close them. Needs "Display over other apps".
+ * itself, at full strength). A new message shows its head at full strength for a few seconds, then
+ * half strength for two minutes, then faded to the strength you choose (15% at first) until it's
+ * touched again; touching or dragging one starts the same steps over when you let go. Tap one to
+ * open its chat in a floating window; drag to move them (they settle at the nearest side); drag
+ * onto the × at the bottom to close them. Needs "Display over other apps".
  */
 final class ChatHeads {
     private ChatHeads() {}
 
     static final String STYLE = "bubble_style", HEADS = "heads", OPACITY = "head_opacity";
-    static final int DEFAULT_OPACITY = 50, MIN_OPACITY = 15, MAX_HEADS = 5;
+    static final int DEFAULT_OPACITY = 15, MIN_OPACITY = 10, MAX_HEADS = 5;
+    /** How long a head stays at full strength, then at half, before fading (shorter in the device checks). */
+    static long fullMs = 5_000, halfMs = 120_000;
 
     private static SharedPreferences paired(Context c) { return c.getSharedPreferences("paired", Context.MODE_PRIVATE); }
     private static SharedPreferences state(Context c) { return c.getSharedPreferences("chat_heads", Context.MODE_PRIVATE); }
     /** Whether chats float as these heads (true) or as Android's bubbles. */
     static boolean on(Context c) { return HEADS.equals(paired(c).getString(STYLE, "android")); }
     static boolean allowed(Context c) { return Settings.canDrawOverlays(c); }
-    /** How solid the heads are while left alone, in percent. */
+    /** How solid the heads are once faded, in percent. */
     static int opacity(Context c) { return Math.max(MIN_OPACITY, Math.min(100, paired(c).getInt(OPACITY, DEFAULT_OPACITY))); }
 
     // Everything below runs on the main thread.
@@ -63,14 +66,16 @@ final class ChatHeads {
     private static final List<String> chats = new ArrayList<>(); // newest first
     private static final Map<String, Integer> unread = new HashMap<>();
     private static final Map<String, Bitmap> faces = new HashMap<>();
-    private static boolean loaded, touching, lit;
+    private static boolean loaded, touching;
+    /** Full strength (0), half (1), faded (2). */
+    private static int stage = 2;
     private static String floating = "";
     private static WindowManager wm;
     private static LinearLayout column;
     private static WindowManager.LayoutParams spot;
     private static View target;
     private static ValueAnimator fading, settling;
-    private static final Runnable dim = () -> { lit = false; fadeTo(idle()); };
+    private static final Runnable toHalf = () -> stage(1), toFaded = () -> stage(2);
 
     private static Handler main() { if (main == null) main = new Handler(Looper.getMainLooper()); return main; }
     private static void ui(Context c, Runnable r) {
@@ -78,7 +83,18 @@ final class ChatHeads {
         if (Looper.myLooper() == Looper.getMainLooper()) r.run(); else main().post(r);
     }
     private static int dp(float v) { return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, app.getResources().getDisplayMetrics())); }
-    private static float idle() { return opacity(app) / 100f; }
+    private static float faded() { return opacity(app) / 100f; }
+    /** Half strength, or the faded strength if that's set higher (it's never more see-through than the end). */
+    private static float strength(int stage) { return stage == 0 ? 1f : stage == 1 ? Math.max(0.5f, faded()) : faded(); }
+
+    /** Goes to a step and times the next: full for a few seconds, half for two minutes, then faded. */
+    private static void stage(int s) {
+        stage = s;
+        main().removeCallbacks(toHalf); main().removeCallbacks(toFaded);
+        if (s == 0) main().postDelayed(toHalf, fullMs);
+        else if (s == 1) main().postDelayed(toFaded, halfMs);
+        if (!touching) fadeTo(strength(s));
+    }
 
     /** The chat open in the floating window, or "". */
     static String floatingChat() { return floating; }
@@ -112,7 +128,7 @@ final class ChatHeads {
             if (newMessage && !chat.equals(floating) && !chat.equals(ChatBubbles.onScreen())) unread.merge(chat, 1, Integer::sum);
             faces.remove(chat);
             save(); draw();
-            if (newMessage) light(3000);
+            if (newMessage) stage(0);
             if (open) open(chat);
         });
     }
@@ -128,7 +144,11 @@ final class ChatHeads {
 
     /** The floating window opened a chat (or closed: ""): heads step aside while it's open. */
     static void floating(Context c, String chat) {
-        ui(c, () -> { load(); floating = chat == null ? "" : chat; if (!floating.isEmpty()) unread.remove(floating); draw(); });
+        ui(c, () -> {
+            load(); boolean closing = !floating.isEmpty() && (chat == null || chat.isEmpty());
+            floating = chat == null ? "" : chat; if (!floating.isEmpty()) unread.remove(floating); draw();
+            if (closing) stage(1); // just seen: half strength for a while, then faded
+        });
     }
 
     /** A chat read in the app: its count goes. */
@@ -152,7 +172,7 @@ final class ChatHeads {
             p.topMargin = column.getChildCount() == 0 ? 0 : dp(4);
             column.addView(head(id), p);
         }
-        if (fading == null || !fading.isRunning()) column.setAlpha(touching || lit ? 1f : idle());
+        if (fading == null || !fading.isRunning()) column.setAlpha(touching ? 1f : strength(stage));
     }
 
     private static boolean attach() {
@@ -216,7 +236,7 @@ final class ChatHeads {
             switch (e.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     downX = e.getRawX(); downY = e.getRawY(); startX = spot.x; startY = spot.y; dragging = false; over = false;
-                    touching = true; main().removeCallbacks(dim); fadeTo(1f);
+                    touching = true; main().removeCallbacks(toHalf); main().removeCallbacks(toFaded); fadeTo(1f);
                     if (settling != null) settling.cancel();
                     return true;
                 case MotionEvent.ACTION_MOVE: {
@@ -238,7 +258,7 @@ final class ChatHeads {
                     hideTarget();
                     if (dragging && over) { clear(app); return true; }
                     if (dragging) settle();
-                    main().postDelayed(dim, 1500);
+                    stage(0);
                     if (click) v.performClick();
                     return true;
                 }
@@ -288,13 +308,6 @@ final class ChatHeads {
         float hx = spot.x + dp(34), hy = spot.y + dp(34);
         float tx = s.width() / 2f, ty = s.height() - bars().bottom - dp(48) - dp(32);
         return Math.hypot(hx - tx, hy - ty) < dp(84);
-    }
-
-    /** Up to full strength for a while (a new message), then back to see-through. */
-    private static void light(long ms) {
-        if (column == null) return;
-        lit = true; main().removeCallbacks(dim); fadeTo(1f);
-        if (!touching) main().postDelayed(dim, ms);
     }
 
     private static void fadeTo(float alpha) {
