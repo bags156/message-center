@@ -154,14 +154,32 @@ final class Outbox {
         save(list);
     }
 
-    /** A message arrived in a chat: removes the sent text it's the copy of, and any whose copy never came. True if something changed. */
+    /**
+     * A message arrived in a chat: removes the sent text it's the copy of, and any whose copy never
+     * came. An unsure one (Google never answered the send) goes too when its copy turns up: the same
+     * words, from you, in the same chat, since you sent it. True if something changed.
+     */
     synchronized boolean arrived(JSONObject message) {
         String tmp = message.optString("tmpID"), mid = message.optString("messageID"); long now = System.currentTimeMillis();
         List<JSONObject> list = all();
         boolean changed = list.removeIf(o -> SENT.equals(o.optString("state")) && (now - o.optLong("sentAt") > SENT_GRACE_MS
                 || (!tmp.isEmpty() && tmp.equals(o.optString("tmpID"))) || (!mid.isEmpty() && mid.equals(o.optString("tmpID")))));
+        if (PairedProtocol.outgoing(message)) {
+            String chat = message.optString("conversationID"), text = PairedProtocol.text(message); long when = PairedProtocol.time(message);
+            for (JSONObject o : list) {
+                if (!UNSURE.equals(o.optString("state")) || !chat.equals(o.optString("chat")) || !text.equals(o.optString("text"))) continue;
+                if (when < o.optLong("created") - OutboxEcho.CLOCK_SLACK_MS) continue;
+                list.remove(o); changed = true; break; // one copy settles one text
+            }
+        }
         if (changed) save(list);
         return changed;
+    }
+
+    /** Whether a chat has a text Google never answered about (so it's worth asking Google for the chat's newest messages). */
+    synchronized boolean unsure(String chat) {
+        for (JSONObject o : all()) if (UNSURE.equals(o.optString("state")) && chat.equals(o.optString("chat"))) return true;
+        return false;
     }
 
     /** The next message to send automatically, or null. Unsure and failed items wait for the person. */

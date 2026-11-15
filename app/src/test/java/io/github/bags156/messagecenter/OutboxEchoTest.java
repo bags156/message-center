@@ -50,6 +50,26 @@ public class OutboxEchoTest {
         assertEquals(1, OutboxEcho.toDraw(Collections.singletonList(queued(Outbox.HOLD, "Hi", "", 0)), drawn, TAP + 1000).size());
     }
 
+    @Test public void anUnsureTextIsSettledByItsCopy() throws Exception {
+        // Google never answered the send; the copy arriving shows it went, so it isn't drawn twice.
+        JSONObject unsure = queued(Outbox.UNSURE, "Do you think so?", "", 0);
+        assertEquals(0, OutboxEcho.toDraw(Collections.singletonList(unsure), Collections.singletonList(mine("m1", "", "Do you think so?", TAP + 900)), TAP + 60_000).size());
+        assertEquals(1, OutboxEcho.toDraw(Collections.singletonList(unsure), Collections.emptyList(), TAP + 60_000).size());
+        // And it leaves the outbox when the copy arrives (in its chat, from you, since it was sent).
+        Outbox box = new Outbox(new MemoryPrefs());
+        JSONObject o = box.add("c1", "Do you think so?", "");
+        box.setState(o.optString("id"), Outbox.UNSURE, "Send outcome unknown.");
+        long created = box.get(o.optString("id")).optLong("created");
+        JSONObject elsewhere = mine("m0", "", "Do you think so?", created + 500).put("conversationID", "c2");
+        assertEquals(false, box.arrived(elsewhere));
+        JSONObject earlier = mine("m0", "", "Do you think so?", created - 60_000).put("conversationID", "c1");
+        assertEquals(false, box.arrived(earlier));
+        assertEquals(true, box.unsure("c1"));
+        JSONObject copy = mine("m1", "", "Do you think so?", created + 500).put("conversationID", "c1");
+        assertEquals(true, box.arrived(copy));
+        assertEquals(false, box.unsure("c1"));
+    }
+
     @Test public void stopsWaitingForACopyThatNeverCame() throws Exception {
         JSONObject sent = queued(Outbox.SENT, "On my way", "tmp-1", TAP);
         assertEquals(0, OutboxEcho.toDraw(Collections.singletonList(sent), Collections.emptyList(), TAP + Outbox.SENT_GRACE_MS + 1).size());

@@ -922,7 +922,7 @@ public final class PairedService extends Service {
         execute(cl->cl.sendText(c.toString(),text,""),(v,e)->{
             if(e.isEmpty())s.showReply(chat,text,null);
             else if(e.startsWith("Not sent:")){Outbox box=new Outbox(context);JSONObject o=box.add(chat,text,"");box.retryLater(o.optString("id"),e);s.changed("OUTBOX");s.scheduleRetries();s.showReply(chat,text,"will send when the signal's back");}
-            else {Outbox box=new Outbox(context);JSONObject o=box.add(chat,text,"");box.setState(o.optString("id"),e.startsWith("Send outcome unknown")?Outbox.UNSURE:Outbox.FAILED,e);s.changed("OUTBOX");s.showReply(chat,text,e.startsWith("Send outcome unknown")?"sent to Google, waiting to confirm delivery":"not sent, open the chat to retry");}
+            else {Outbox box=new Outbox(context);JSONObject o=box.add(chat,text,"");box.setState(o.optString("id"),e.startsWith("Send outcome unknown")?Outbox.UNSURE:Outbox.FAILED,e);s.changed("OUTBOX");if(e.startsWith("Send outcome unknown"))s.main.post(()->s.checkUnsure(chat));s.showReply(chat,text,e.startsWith("Send outcome unknown")?"sent to Google, waiting to confirm delivery":"not sent, open the chat to retry");}
             done.run();});
     }
     /** Adds your reply to the chat's notification (Android expects the notification to update after a reply). */
@@ -1012,9 +1012,15 @@ public final class PairedService extends Service {
             else if(e.equals("Connect to Google Messages first.")){outbox.setState(id,Outbox.WAITING,"");changed("OUTBOX");return;}
             // It never reached Google (weak or no connection): it goes again by itself, sooner if the connection improves.
             else if(e.startsWith("Not sent:")){outbox.retryLater(id,e);scheduleRetries();}
-            else outbox.setState(id,e.startsWith("Send outcome unknown")?Outbox.UNSURE:Outbox.FAILED,e);
+            else{outbox.setState(id,e.startsWith("Send outcome unknown")?Outbox.UNSURE:Outbox.FAILED,e);if(e.startsWith("Send outcome unknown"))checkUnsure(chatId);}
             changed("OUTBOX");flushOutbox();});
     }
+    /**
+     * Google didn't answer a send, but it often went anyway: asks Google for the chat's newest
+     * messages a little later (and once more after a minute), so its copy settles it.
+     */
+    private void checkUnsure(String chat){Diagnostics.note("Google didn't answer a send; checking the chat for its copy");
+        for(long wait:new long[]{10_000,60_000})main.postDelayed(()->{if(current==this&&ready&&outbox.unsure(chat))loadMessages(chat,"",(v,err)->{if(current==this)changed("OUTBOX");});},wait);}
     /** Sends now if connected, otherwise saves it for later. The result value is "queued" when saved. */
     static void sendOrQueue(Context context,String chat,String text,String reply,Result done) {
         PairedService s=current;

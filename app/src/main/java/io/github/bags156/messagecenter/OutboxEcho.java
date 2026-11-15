@@ -28,7 +28,8 @@ final class OutboxEcho {
         List<JSONObject> out = new ArrayList<>();
         for (JSONObject o : queued) {
             String state = o.optString("state");
-            boolean onItsWay = Outbox.SENDING.equals(state) || Outbox.SENT.equals(state);
+            // Unsure: Google didn't answer the send, but it may well have gone; its copy settles it.
+            boolean onItsWay = Outbox.SENDING.equals(state) || Outbox.SENT.equals(state) || Outbox.UNSURE.equals(state);
             if (Outbox.SENT.equals(state) && now - o.optLong("sentAt") > Outbox.SENT_GRACE_MS) continue; // its copy never came; stop waiting
             if (onItsWay && !o.optString("tmpID").isEmpty() && ids.contains(o.optString("tmpID"))) continue;
             // Google's copy can arrive before the send call returns its ID: match the same text sent since the tap (each copy once).
