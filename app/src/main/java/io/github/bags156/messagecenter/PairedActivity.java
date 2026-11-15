@@ -223,6 +223,7 @@ public class PairedActivity extends Activity {
         root=vertical();root.setPadding(dp(16),dp(8),dp(16),dp(8));frame.addView(root,new FrameLayout.LayoutParams(-1,-1));
         frame.setOnApplyWindowInsetsListener((v,insets)->{android.graphics.Insets bars=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.ime());v.setPadding(0,bars.top,0,bars.bottom);return insets;});
         setContentView(frame);frame.requestApplyInsets();
+        Fonts.follow(this,frame,name.equals("inbox")?"list":name.equals("settings")?"settings":"other");
     }
     private LinearLayout vertical(){LinearLayout v=new LinearLayout(this);v.setOrientation(LinearLayout.VERTICAL);return v;}
     private LinearLayout row(){LinearLayout v=new LinearLayout(this);v.setGravity(Gravity.CENTER_VERTICAL);return v;}
@@ -243,7 +244,7 @@ public class PairedActivity extends Activity {
         i.setContentDescription(label);if(action!=null){i.setOnClickListener(v->action.run());pressable(i);}
         i.setLayoutParams(new LinearLayout.LayoutParams(dp(48),dp(48)));return i;}
     private EditText input(String hint){EditText e=new EditText(this);e.setHint(hint);e.setTextColor(ink);e.setHintTextColor(muted);e.setTextSize(16);e.setPadding(dp(16),dp(12),dp(16),dp(12));e.setBackground(shape(card,18));return e;}
-    private void header(String title,Runnable back){LinearLayout r=row();if(back!=null)r.addView(icon(R.drawable.ic_back,ink,"Back",back));TextView heading=text(title,24,ink,false);heading.setPadding(dp(back==null?4:8),0,dp(8),0);r.addView(heading,new LinearLayout.LayoutParams(0,-2,1));root.addView(r);gap(root,10);}
+    private void header(String title,Runnable back){LinearLayout r=row();if(back!=null)r.addView(icon(R.drawable.ic_back,ink,"Back",back));TextView heading=text(title,24,ink,false);heading.setPadding(dp(back==null?4:8),0,dp(8),0);r.addView(heading,new LinearLayout.LayoutParams(0,-2,1));Fonts.area(r,"titles");root.addView(r);gap(root,10);}
     /** The connection line, with a Reconnect button on the inbox and in chats when that would help. */
     private void connection(){LinearLayout line=row();line.setGravity(Gravity.CENTER_VERTICAL);line.setPadding(dp(4),0,dp(4),dp(8));statusRow=line;
         statusView=text(PairedService.status(this),13,muted,false);line.addView(statusView,new LinearLayout.LayoutParams(0,-2,1));
@@ -349,7 +350,7 @@ public class PairedActivity extends Activity {
     // ---- Inbox ----
     private void inbox(){if(bubble()){if(!chatId.isEmpty())thread(chatId);else finish();return;}long perfAll=Perf.start(),perf=perfAll;remember();chatId="";replyId="";base("inbox");searchedFor="";Perf.end("inbox: base",perf);perf=Perf.start();
         if(folder!=1){unknownOnly=false;promoOnly=false;needsReplyOnly=false;}
-        LinearLayout bar=row();TextView title=text(folder==2?"Archived":folder==3?"Blocked & spam":unknownOnly?"Unknown senders":promoOnly?"Promotions":needsReplyOnly?"Needs a reply":"Messages",26,ink,false);title.setPadding(dp(folder!=1||unknownOnly||promoOnly||needsReplyOnly?8:4),0,0,0);
+        LinearLayout bar=row();TextView title=text(folder==2?"Archived":folder==3?"Blocked & spam":unknownOnly?"Unknown senders":promoOnly?"Promotions":needsReplyOnly?"Needs a reply":"Messages",26,ink,false);Fonts.area(title,"titles");title.setPadding(dp(folder!=1||unknownOnly||promoOnly||needsReplyOnly?8:4),0,0,0);
         if(folder!=1||unknownOnly||promoOnly||needsReplyOnly)bar.addView(icon(R.drawable.ic_back,ink,"Back",()->{folder=1;unknownOnly=false;promoOnly=false;needsReplyOnly=false;inbox();}));
         // The title, with how many messages are waiting to be read across your conversations beside it.
         LinearLayout heading=row();heading.setGravity(Gravity.CENTER_VERTICAL);heading.addView(title);
@@ -829,7 +830,7 @@ public class PairedActivity extends Activity {
         if(!id.equals(chatId)||!screen.equals("chat")){JSONObject before=store.chat(id);unreadSince=before!=null&&chatSettings.unread(before)?chatSettings.seen(id):-1;unreadJump=unreadSince>0;}
         remember();chatId=id;if(back==null)limit=firstWindow(id);replyId="";base("chat");JSONObject c=store.chat(id);ChatTheme theme=chatSettings.theme(id);loadCalls(id);
         root.setPadding(dp(4),dp(4),dp(4),dp(8));
-        LinearLayout bar=row();if(!bubble())bar.addView(icon(R.drawable.ic_back,ink,"Back",this::inbox));else bar.setPadding(dp(12),0,0,0);
+        LinearLayout bar=row();Fonts.area(bar,"titles");if(!bubble())bar.addView(icon(R.drawable.ic_back,ink,"Back",this::inbox));else bar.setPadding(dp(12),0,0,0);
         LinearLayout who=row();View face=avatar(c,40);who.addView(face);
         TextView name=text(c==null?"Conversation":PairedProtocol.title(c),20,ink,false);name.setSingleLine(true);name.setEllipsize(TextUtils.TruncateAt.END);
         // Chats that send read receipts say so up top, so you know before reading.
@@ -852,7 +853,7 @@ public class PairedActivity extends Activity {
         pinBar=vertical();root.addView(pinBar,new LinearLayout.LayoutParams(-1,-2));pinShown=0;renderPinBar();
         birthdayBar=vertical();root.addView(birthdayBar,new LinearLayout.LayoutParams(-1,-2));renderBirthday();
         if(c!=null){View who2=whoIsThisCard(c);if(who2!=null)root.addView(who2);}
-        scroll=new ScrollView(this);scroll.setVerticalScrollBarEnabled(false);items=vertical();items.setPadding(dp(12),dp(8),dp(12),dp(8));
+        scroll=new ScrollView(this);scroll.setVerticalScrollBarEnabled(false);items=vertical();items.setPadding(dp(12),dp(8),dp(12),dp(8));Fonts.area(items,"messages");
         // A short chat sits at the bottom, just above the message box, like any messaging app.
         scroll.setFillViewport(true);items.setGravity(Gravity.BOTTOM);scroll.addView(items);
         chatFrame=new FrameLayout(this);addChatBackground(chatFrame,id);
@@ -893,8 +894,8 @@ public class PairedActivity extends Activity {
         recordClock=text("0:00",16,ink,true);recordClock.setFontFeatureSettings("tnum");recordBar.addView(recordClock);
         recordWave=new Waveform(this);recordWave.liveMode();recordWave.setColors(danger,danger);LinearLayout.LayoutParams rw=new LinearLayout.LayoutParams(0,dp(32),1);rw.setMarginStart(dp(14));rw.setMarginEnd(dp(14));recordBar.addView(recordWave,rw);
         ImageView sendRec=roundIcon(R.drawable.ic_send,theme.accent(dark),theme.onAccent(dark),44);pressDim(sendRec);sendRec.setContentDescription("Send voice message");sendRec.setOnClickListener(v->finishRecording(true));recordBar.addView(sendRec);root.addView(recordBar);
-        quickRow=row();quickScroll=new HorizontalScrollView(this);quickScroll.setHorizontalScrollBarEnabled(false);quickScroll.setPadding(dp(12),dp(2),dp(12),dp(4));quickScroll.addView(quickRow);quickScroll.setVisibility(View.GONE);root.addView(quickScroll);
-        LinearLayout compose=row();compose.setPadding(dp(4),dp(4),dp(8),0);composeRow=compose;
+        quickRow=row();quickScroll=new HorizontalScrollView(this);Fonts.area(quickScroll,"composer");quickScroll.setHorizontalScrollBarEnabled(false);quickScroll.setPadding(dp(12),dp(2),dp(12),dp(4));quickScroll.addView(quickRow);quickScroll.setVisibility(View.GONE);root.addView(quickScroll);
+        LinearLayout compose=row();compose.setPadding(dp(4),dp(4),dp(8),0);composeRow=compose;Fonts.area(compose,"composer");
         compose.addView(icon(R.drawable.ic_add,ink,"Attach photos, videos, or files",this::attach));
         composerHint=PairedProtocol.rcs(c)?"RCS message":"Text message";composer=new EditText(this);composer.setHint(composerHint);composer.setTextColor(ink);composer.setHintTextColor(muted);composer.setTextSize(17*textScale);
         composer.setBackground(shape(surface,28));composer.setPadding(dp(22),dp(14),dp(22),dp(14));composer.setMaxLines(5);
@@ -1447,7 +1448,7 @@ public class PairedActivity extends Activity {
         Dialog d=new Dialog(this);d.requestWindowFeature(Window.FEATURE_NO_TITLE);if(softInput>=0&&d.getWindow()!=null)d.getWindow().setSoftInputMode(softInput);
         LinearLayout box=vertical();box.setPadding(dp(20),dp(10),dp(20),dp(28));GradientDrawable panel=new GradientDrawable();panel.setColor(card);float r=dp(28);panel.setCornerRadii(new float[]{r,r,r,r,0,0,0,0});box.setBackground(panel);
         View handle=new View(this);handle.setBackground(shape(muted,2));handle.setAlpha(0.45f);LinearLayout.LayoutParams hl=new LinearLayout.LayoutParams(dp(32),dp(4));hl.gravity=Gravity.CENTER_HORIZONTAL;hl.bottomMargin=dp(14);box.addView(handle,hl);
-        box.addView(content,new LinearLayout.LayoutParams(-1,-2));d.setContentView(box);d.show();
+        box.addView(content,new LinearLayout.LayoutParams(-1,-2));d.setContentView(box);Fonts.follow(this,box,"menus");d.show();
         Window w=d.getWindow();if(w!=null){w.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));w.setLayout(-1,-2);w.setGravity(Gravity.BOTTOM);}
         return d;
     }
@@ -2679,6 +2680,7 @@ public class PairedActivity extends Activity {
             if(data.getClipData()!=null)for(int i=0;i<data.getClipData().getItemCount();i++)picked.add(data.getClipData().getItemAt(i).getUri());else if(data.getData()!=null)picked.add(data.getData());
             addNoteFiles(picked);return;}
         if(request==RESTORE_BACKUP){if(result==RESULT_OK&&data!=null&&data.getData()!=null)restoreBackup(data.getData());return;}
+        if(request==PICK_FONT){if(result==RESULT_OK&&data!=null&&data.getData()!=null)useFont(data.getData());return;}
         if(request==PICK_BACKGROUND){if(result==RESULT_OK&&data!=null&&data.getData()!=null)saveBackgroundPhoto(data.getData());return;}
         if(request==PICK_GROUP_PHOTO){if(result==RESULT_OK&&data!=null&&data.getData()!=null)saveGroupPhoto(data.getData());return;}
         if(request==PICK_CONTACT){if(result==RESULT_OK&&data!=null&&data.getData()!=null)sharePickedContact(data.getData());return;}
@@ -4214,7 +4216,7 @@ public class PairedActivity extends Activity {
     private static String settingsTitle(String page){switch(page){case "messages":return "Messages";case "media":return "Photos & media";case "notifications":return "Notifications";
         case "automation":return "Automation";case "appearance":return "Appearance";case "apps":return "Apps";case "connection":return "Connection";case "data":return "Data & about";default:return "Settings";}}
     /** Words people might search for that a setting's own words don't say. */
-    private static String settingKeywords(String title){switch(title){case "Theme":return "dark light black mode night colors";case "Text size":return "font bigger smaller larger";case "Unread count":return "badge number total inbox";case "Chat color":return "theme bubble colour all chats every conversation";case "Calls in chats":return "phone call log duration missed";
+    private static String settingKeywords(String title){switch(title){case "Theme":return "dark light black mode night colors";case "Text size":return "font bigger smaller larger";case "Font":return "typeface custom upload ttf otf letters";case "Unread count":return "badge number total inbox";case "Chat color":return "theme bubble colour all chats every conversation";case "Calls in chats":return "phone call log duration missed";
         case "Undo send":return "unsend delay take back cancel";case "Typing indicators":return "typing privacy";case "Read receipts":return "seen read privacy";case "Bubbles":return "floating chat heads";
         case "Busy auto-reply":return "away driving automatic reply";case "Notifications":return "sound vibration alerts";case "Background activity":return "battery optimization";
         case "Back up app data":return "backup export save";case "Restore from a backup":return "import backup";case "Photo quality":return "pictures compress size";
@@ -4265,7 +4267,7 @@ public class PairedActivity extends Activity {
         long arUntil=PairedService.autoReplyUntil(this);int arrivals=Arrivals.all(this).size();
         settingRow(pages,R.drawable.ic_bolt,0xff14b8a6,"Automation",(arUntil>System.currentTimeMillis()?"Busy reply on":"Busy reply off")+" · "+(arrivals>0?arrivals+" arrival "+(arrivals==1?"text":"texts"):"arrival texts")+" · codes",null,()->openSettingsPage("automation"));
         String themeMode=prefs.getString("theme","system");
-        settingRow(pages,R.drawable.ic_palette,0xffec4899,"Appearance",(themeMode.equals("light")?"Light":themeMode.equals("dark")?"Dark":themeMode.equals("black")?"Black":"Matches phone")+" · text "+scaleLabel(textScale).toLowerCase(Locale.ROOT)+" · chat color",null,()->openSettingsPage("appearance"));
+        settingRow(pages,R.drawable.ic_palette,0xffec4899,"Appearance",(themeMode.equals("light")?"Light":themeMode.equals("dark")?"Dark":themeMode.equals("black")?"Black":"Matches phone")+" · text "+scaleLabel(textScale).toLowerCase(Locale.ROOT)+" · chat color"+(Fonts.has(this)?" · "+Fonts.name(this):""),null,()->openSettingsPage("appearance"));
         MusicLinks.App music=MusicApps.chosen(this,false);
         settingRow(pages,R.drawable.ic_apps,0xff0ea5e9,"Apps",(music!=null?"Music in "+music.label+" · podcasts":"Music, podcasts")+", maps & calendar",null,()->openSettingsPage("apps"));
         boolean restricted=batteryRestricted();
@@ -4352,6 +4354,7 @@ public class PairedActivity extends Activity {
             settingRow(looks,R.drawable.ic_text_size,0xff8b5cf6,"Text size",null,scaleLabel(textScale),()->{float[] sizes={0.9f,1f,1.15f,1.3f};List<Runnable> actions=new ArrayList<>();
                 for(float f:sizes)actions.add(()->{prefs.edit().putFloat("text_scale",f).apply();settings();});
                 menuSheet("Text size",java.util.Arrays.asList("Small","Default","Large","Larger"),actions);});
+            fontSettings(content);
             break;}
         case "apps":{
             LinearLayout apps=settingsGroup(content,"Music and podcasts");
@@ -4423,6 +4426,27 @@ public class PairedActivity extends Activity {
         r.setContentDescription(title+(value==null?"":", "+value)+(sub==null?"":". "+sub));
         if(settingShown(title,sub,value))addSettingRow(group,r);return line[0];}
     /** An on/off setting with a switch; changing it saves at once and leaves the screen where it is. */
+    private static final int PICK_FONT=89;
+    /** Settings → Appearance: your own font, a sample of it, and where it's used. */
+    private void fontSettings(LinearLayout content){LinearLayout group=settingsGroup(content,"Font");boolean has=Fonts.has(this);Typeface font=Fonts.typeface(this);
+        settingRow(group,R.drawable.ic_font,0xfff97316,"Font",has?(font==null?"This file won't load as a font. Upload another":null):"Upload a .ttf or .otf font, then choose where it's used",has?Fonts.name(this):"Phone's font",this::fontMenu);
+        if(!has||font==null)return;
+        TextView sample=text("The quick brown fox jumps over the lazy dog. 123",17,ink,false);sample.setTypeface(font);sample.setPadding(dp(16),dp(4),dp(16),dp(12));sample.setContentDescription("Sample of "+Fonts.name(this));group.addView(sample);
+        LinearLayout where=settingsGroup(content,"Use "+Fonts.name(this)+" for");java.util.Set<String> on=Fonts.areas(this);
+        int[] icons={R.drawable.ic_chat,R.drawable.ic_keyboard,R.drawable.ic_apps,R.drawable.ic_text_size,R.drawable.ic_more,R.drawable.ic_settings,R.drawable.ic_app};
+        int[] colors={0xff3b82f6,0xff0ea5e9,0xff22c55e,0xff8b5cf6,0xfff59e0b,0xff64748b,0xffec4899};
+        for(int i=0;i<Fonts.AREAS.size();i++){String[] a=Fonts.AREAS.get(i);
+            settingSwitch(where,icons[i],colors[i],a[1],a[2],on.contains(a[0]),use->{Fonts.setArea(this,a[0],use);Fonts.apply(this,frame,"settings");});}}
+    private void fontMenu(){boolean has=Fonts.has(this);List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
+        labels.add(has?"Upload a different font":"Upload a font (.ttf or .otf)");actions.add(()->{
+            try{startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"),PICK_FONT);}catch(Exception e){toast("No file picker is available.");}});
+        if(has){labels.add("Use the phone's font");actions.add(()->{Fonts.remove(this);Fonts.apply(this,frame,"settings");settings();toast("Back to the phone's font");});}
+        menuSheet("Font",labels,actions);}
+    /** Takes the picked file as the app's font (checking it is one first). */
+    private void useFont(Uri uri){String picked="font";try(android.database.Cursor q=getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null)){if(q!=null&&q.moveToFirst()&&!q.isNull(0))picked=q.getString(0);}catch(Exception ignored){}
+        String name=picked;decoder.execute(()->{try{String done=Fonts.install(this,uri,name);
+            ui.post(()->{if(screen.equals("settings"))settings();toast(done+" is in use. Choose where below.");});}
+            catch(Exception e){ui.post(()->toast(e.getMessage()!=null?e.getMessage():"That font couldn't be used."));}});}
     private void settingSwitch(LinearLayout group,int icon,int color,String title,String sub,boolean on,java.util.function.Consumer<Boolean> change){TextView[] line=new TextView[1];LinearLayout r=settingLine(icon,color,title,sub,line);pressable(r);
         android.widget.Switch sw=new android.widget.Switch(this);sw.setChecked(on);sw.setContentDescription(title);
         int[][] states={{android.R.attr.state_checked},{}};

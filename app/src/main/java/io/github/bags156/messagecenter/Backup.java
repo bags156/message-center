@@ -20,7 +20,7 @@ final class Backup {
     private static final String[] STORES = {"starred", "nicknames", "reminders", "scheduled", "chat-settings", "pins", "emoji", "notes"};
     /** App settings worth carrying over (not connection state or one-time prompts). */
     private static final Set<String> SETTINGS = new HashSet<>(java.util.Arrays.asList(
-        "mention_name", "send_typing", "voice_speed", "undo_send", "undo_send_seconds", "link_previews", "full_photos", "auto_copy_codes", "theme", "text_scale", "nudge_minutes", "maps_app", "calendar_app", "music_app", "podcast_app", "music_songlink", "smart_replies", "auto_delete_codes", "promotions_separate", "inbox_unread_count", "show_calls", "quick_replies", "quick_replies_on", "alert_keywords", "autoreply_text", "notification_content","photo_quality","photo_text"));
+        "mention_name", "send_typing", "voice_speed", "undo_send", "undo_send_seconds", "link_previews", "full_photos", "auto_copy_codes", "theme", "text_scale", "nudge_minutes", "maps_app", "calendar_app", "music_app", "podcast_app", "music_songlink", "smart_replies", "auto_delete_codes", "promotions_separate", "inbox_unread_count", "show_calls", "quick_replies", "quick_replies_on", "alert_keywords", "autoreply_text", "notification_content","photo_quality","photo_text", "font_name", "font_areas"));
 
     static String export(Context context) throws Exception {
         JSONObject root = new JSONObject();
@@ -29,6 +29,10 @@ final class Backup {
         for (String name : STORES) stores.put(name, dump(context.getSharedPreferences(name, Context.MODE_PRIVATE), null));
         stores.put("paired", dump(context.getSharedPreferences("paired", Context.MODE_PRIVATE), SETTINGS));
         root.put("stores", stores);
+        // Your own font comes along too (if it isn't huge).
+        java.io.File font = Fonts.file(context);
+        if (font.isFile() && font.length() <= 10L * 1024 * 1024)
+            root.put("font", new JSONObject().put("name", Fonts.name(context)).put("data", android.util.Base64.encodeToString(java.nio.file.Files.readAllBytes(font.toPath()), android.util.Base64.NO_WRAP)));
         return root.toString(2);
     }
 
@@ -52,6 +56,11 @@ final class Backup {
             SharedPreferences.Editor edit = context.getSharedPreferences("paired", Context.MODE_PRIVATE).edit();
             count += load(edit, settings, SETTINGS);
             edit.commit();
+        }
+        JSONObject font = root.optJSONObject("font");
+        if (font != null && !font.optString("data").isEmpty()) {
+            try { Fonts.install(context, android.util.Base64.decode(font.optString("data"), android.util.Base64.DEFAULT), font.optString("name")); count++; }
+            catch (Exception ignored) { /* A font that won't load is left out; everything else is restored. */ }
         }
         Nicknames.reload(context);
         Scheduled.rearmAll(context);
