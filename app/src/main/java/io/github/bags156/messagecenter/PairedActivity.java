@@ -197,7 +197,9 @@ public class PairedActivity extends Activity {
     private void refreshDraft(){if(composer==null||drafts==null||chatId.isEmpty()||!screen.equals("chat"))return;String stored=drafts.getOrDefault(chatId,"");
         if(stored.equals(composer.getText().toString()))return;composer.setText(stored);composer.setSelection(stored.length());}
     @Override protected void onSaveInstanceState(Bundle out){remember();out.putString("screen",screen);if(screen.equals("settings")&&settingsScroll!=null){out.putInt("settings_y",settingsScroll.getScrollY());out.putString("settings_page",settingsPage);}if(pendingCapture!=null)out.putString("capture",pendingCapture.getPath());out.putString("chat",chatId);if(screen.equals("chat")){Spot at=chatSpotNow();if(at!=null){out.putString("spot",at.id);out.putInt("spot_offset",at.offset);}}out.putString("reply",replyId);out.putString("draft",drafts.getOrDefault(chatId,""));super.onSaveInstanceState(out);}
-    @Override public void onBackPressed(){if(selecting){stopSelecting();return;}if(screen.equals("note")){leaveNote();return;}if(screen.equals("settings")){settingsBack();return;}if(screen.equals("notes")){leaveNotes();return;}if(screen.equals("media")){details();return;}if(screen.equals("details")){thread(chatId);return;}if(bubble()){super.onBackPressed();return;}if(login!=null){destroyLogin();inbox();}else if(screen.equals("inbox")&&(folder!=1||unknownOnly||promoOnly||needsReplyOnly)){folder=1;unknownOnly=false;promoOnly=false;needsReplyOnly=false;inbox();}else if(!screen.equals("inbox")){remember();inbox();}else super.onBackPressed();}
+    @Override public void onBackPressed(){if(selecting){stopSelecting();return;}
+        // A new group: back from naming it goes back to picking people; back from picking leaves the group.
+        if(screen.equals("namegroup")){groupMode=true;contactQuery="";newChat();return;}if(screen.equals("newchat")&&groupMode){groupMode=false;picked.clear();pickedHex.clear();groupName="";contactQuery="";newChat();return;}if(screen.equals("note")){leaveNote();return;}if(screen.equals("settings")){settingsBack();return;}if(screen.equals("notes")){leaveNotes();return;}if(screen.equals("media")){details();return;}if(screen.equals("details")){thread(chatId);return;}if(bubble()){super.onBackPressed();return;}if(login!=null){destroyLogin();inbox();}else if(screen.equals("inbox")&&(folder!=1||unknownOnly||promoOnly||needsReplyOnly)){folder=1;unknownOnly=false;promoOnly=false;needsReplyOnly=false;inbox();}else if(!screen.equals("inbox")){remember();inbox();}else super.onBackPressed();}
 
     // ---- Shared building blocks ----
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
@@ -770,16 +772,29 @@ public class PairedActivity extends Activity {
     /** Keeps a screen-sized copy of the chosen photo, so the original can be moved or deleted. */
     // ---- Group name (for everyone, RCS groups) and photo (this phone only) ----
     private static final int PICK_GROUP_PHOTO=86;private String groupPhotoFor="";
-    private void renameGroup(String id){JSONObject c=store.chat(id);if(c==null)return;EditText name=input("Group name");name.setSingleLine(true);
-        String now=PairedProtocol.string(c,"name");name.setText(now);name.setSelection(name.getText().length());FrameLayout box=new FrameLayout(this);box.setPadding(dp(20),dp(8),dp(20),0);box.addView(name);
-        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Rename group").setMessage("Everyone in the group sees the new name.").setView(box).setNegativeButton("Cancel",null).setPositiveButton("Rename",null).create();
-        dialog.setOnShowListener(x->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{String n=name.getText().toString().trim();if(n.isEmpty()){name.setError("Give it a name");return;}
-            if(n.equals(now)){dialog.dismiss();return;}if(!PairedService.ready()){toast("Connect first, then rename the group.");return;}dialog.dismiss();toast("Renaming…");
-            PairedService.execute(cl->{cl.renameGroup(id,n);return "";},(value,e)->{if(!e.isEmpty()){error(e);return;}
+    /** The group's name, for everyone in it (RCS groups): a sheet with the name ready to change; Save shows it's working, and a problem stays in view. */
+    private void renameGroup(String id){JSONObject c=store.chat(id);if(c==null)return;String now=PairedProtocol.string(c,"name");
+        LinearLayout content=vertical();content.addView(text("Group name",20,ink,true));gap(content,4);
+        content.addView(text("Everyone in the group sees the new name.",14,muted,false));gap(content,16);
+        EditText name=input("Group name");name.setSingleLine(true);name.setTextSize(18);name.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(100)});
+        name.setText(now);name.selectAll();name.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);content.addView(name,new LinearLayout.LayoutParams(-1,-2));
+        TextView problem=text("",13,danger,false);problem.setPadding(dp(8),dp(8),dp(8),0);problem.setVisibility(View.GONE);content.addView(problem);gap(content,18);
+        Dialog[] d=new Dialog[1];LinearLayout buttons=row();buttons.setGravity(Gravity.END);
+        TextView cancel=button("Cancel",false,()->{if(d[0]!=null)d[0].dismiss();});TextView save=button("Save",true,()->{});
+        LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-2,-2);bp.leftMargin=dp(10);buttons.addView(cancel);buttons.addView(save,bp);content.addView(buttons,new LinearLayout.LayoutParams(-1,-2));
+        Runnable go=()->{String n=name.getText().toString().trim();
+            if(n.isEmpty()){problem.setText("Give the group a name.");problem.setVisibility(View.VISIBLE);return;}
+            if(n.equals(now)){d[0].dismiss();return;}
+            if(!PairedService.ready()){problem.setText("Not connected to Google Messages. Connect, then rename the group.");problem.setVisibility(View.VISIBLE);return;}
+            save.setEnabled(false);save.setText("Saving…");save.setAlpha(0.7f);problem.setVisibility(View.GONE);
+            PairedService.execute(cl->{cl.renameGroup(id,n);return "";},(value,e)->{
+                if(!e.isEmpty()){save.setEnabled(true);save.setText("Save");save.setAlpha(1f);problem.setText("Couldn't rename it: "+e);problem.setVisibility(View.VISIBLE);return;}
                 // Shown right away; Google's own update follows.
                 JSONObject latest=store.chat(id);if(latest!=null){try{latest.put("name",n);store.chat(latest);}catch(Exception ignored){}}
-                Avatars.forgetGroup(id);toast("Renamed to “"+n+"”.");if(screen.equals("details")&&chatId.equals(id))details();});}));
-        dialog.show();name.requestFocus();}
+                Avatars.forgetGroup(id);if(d[0]!=null)d[0].dismiss();toast("Renamed to “"+n+"”.");if(screen.equals("details")&&chatId.equals(id))details();});};
+        save.setOnClickListener(v->go.run());
+        name.setOnEditorActionListener((v,action,ev)->{if(action==android.view.inputmethod.EditorInfo.IME_ACTION_DONE){go.run();return true;}return false;});
+        d[0]=sheet(content,WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE|WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);name.requestFocus();}
     private void groupPhotoMenu(String id){boolean own=Avatars.ownGroupPhoto(this,id).isFile();
         List<String> labels=new ArrayList<>(java.util.Arrays.asList(own?"Choose a different photo":"Choose a photo"));List<Runnable> actions=new ArrayList<>(java.util.Arrays.<Runnable>asList(()->{groupPhotoFor=id;
             try{startActivityForResult(new Intent(MediaStore.ACTION_PICK_IMAGES).setType("image/*"),PICK_GROUP_PHOTO);}catch(Exception e){try{startActivityForResult(new Intent(Intent.ACTION_GET_CONTENT).setType("image/*"),PICK_GROUP_PHOTO);}catch(Exception e2){toast("No photo picker is available.");}}}));
@@ -1785,7 +1800,11 @@ public class PairedActivity extends Activity {
         base("details");header(group?"Group details":"Details",()->thread(id));
         ScrollView sc=new ScrollView(this);sc.setVerticalScrollBarEnabled(false);LinearLayout content=vertical();content.setPadding(dp(8),0,dp(8),dp(24));sc.addView(content);root.addView(sc,new LinearLayout.LayoutParams(-1,0,1));
         LinearLayout top=vertical();top.setGravity(Gravity.CENTER_HORIZONTAL);top.addView(avatar(c,88));gap(top,12);
-        TextView t=text(PairedProtocol.title(c),22,ink,false);t.setGravity(Gravity.CENTER);top.addView(t);List<JSONObject> people=PairedProtocol.members(c);
+        TextView t=text(PairedProtocol.title(c),22,ink,false);t.setGravity(Gravity.CENTER);List<JSONObject> people=PairedProtocol.members(c);
+        if(group&&PairedProtocol.rcs(c)){LinearLayout named=row();named.setGravity(Gravity.CENTER);named.setPadding(dp(8),dp(4),dp(8),dp(4));pressable(named);named.addView(t);
+            ImageView pen=new ImageView(this);pen.setImageResource(R.drawable.ic_edit);pen.setImageTintList(ColorStateList.valueOf(muted));LinearLayout.LayoutParams pl=new LinearLayout.LayoutParams(dp(18),dp(18));pl.leftMargin=dp(8);named.addView(pen,pl);
+            named.setContentDescription("Group name: "+PairedProtocol.title(c)+". Tap to rename it.");named.setOnClickListener(v->renameGroup(id));top.addView(named);}
+        else top.addView(t);
         if(group){gap(top,4);TextView count=text((people.size()+1)+" people, including you",14,muted,false);count.setGravity(Gravity.CENTER);top.addView(count);}
         content.addView(top,new LinearLayout.LayoutParams(-1,-2));gap(content,20);
         content.addView(text(group?"Members":"Contact",14,muted,true));gap(content,4);
@@ -3588,7 +3607,9 @@ public class PairedActivity extends Activity {
 
     // ---- 0.6: reliability, outbox, contacts, management, search, voice, sharing, links ----
     private Outbox outbox;
-    private JSONObject contacts;private boolean contactsFailed;private List<PhoneContacts.Entry> phoneContacts;private List<Person> chatPeople;private boolean groupMode;private String contactQuery="";private final Map<String,String> picked=new LinkedHashMap<>();
+    private JSONObject contacts;private boolean contactsFailed;private List<PhoneContacts.Entry> phoneContacts;private List<Person> chatPeople;private boolean groupMode;private String contactQuery="";
+    /** The new group's screens: the search box, the picked people as chips, the Next button, the name typed so far and their colors. */
+    private EditText contactSearch,groupNameInput;private LinearLayout pickedChips;private TextView groupNext;private String groupName="";private final Map<String,String> pickedHex=new HashMap<>();private final Map<String,String> picked=new LinkedHashMap<>();
     private final List<Outgoing> incoming=new ArrayList<>();private String incomingText;
     private MediaRecorder recorder;private File recording;private long recordStart;private LinearLayout recordBar,composeRow;private ImageView sendButton;private TextView recordClock;private Waveform recordWave;private View recordDot;
     private final Runnable recordTick=this::updateRecordClock;
@@ -3683,13 +3704,17 @@ public class PairedActivity extends Activity {
     /** This phone's contacts (everyone, unlike Google's list), read in the background each time you start a conversation. */
     private void loadPhoneContacts(){if(!PhoneContacts.allowed(this))return;decoder.execute(()->{List<PhoneContacts.Entry> all=PhoneContacts.all(this);
         ui.post(()->{phoneContacts=all;knownNames=null;if(screen.equals("newchat"))renderContacts();});});}
-    private void newChat(){remember();base("newchat");header(groupMode?"New group":"New conversation",()->{if(groupMode){groupMode=false;picked.clear();newChat();}else inbox();});
-        EditText search=input(groupMode?"Add people by name or number":"Type a name or phone number");search.setSingleLine(true);search.setText(contactQuery);
+    private void newChat(){remember();base("newchat");header(groupMode?"New group":"New conversation",()->{if(groupMode){groupMode=false;picked.clear();pickedHex.clear();groupName="";newChat();}else inbox();});
+        EditText search=input(groupMode?"Add people by name or number":"Type a name or phone number");search.setSingleLine(true);search.setText(contactQuery);contactSearch=search;
         LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-1,-2);sp.setMargins(dp(16),0,dp(16),dp(8));root.addView(search,sp);
+        // Who's in the group so far, as chips you can tap to take back out.
+        pickedChips=null;groupNext=null;
+        if(groupMode){android.widget.HorizontalScrollView hs=new android.widget.HorizontalScrollView(this);hs.setHorizontalScrollBarEnabled(false);hs.setClipToPadding(false);
+            pickedChips=row();pickedChips.setPadding(dp(16),0,dp(16),dp(6));hs.addView(pickedChips);root.addView(hs,new LinearLayout.LayoutParams(-1,-2));renderPicked();}
         scroll=new ScrollView(this);items=vertical();items.setPadding(dp(8),0,dp(8),dp(96));scroll.addView(items);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-        if(groupMode){TextView next=text(picked.size()<2?"Pick at least 2 people":"Next • "+picked.size()+" people",16,picked.size()<2?muted:onFab,true);next.setGravity(Gravity.CENTER);
-            next.setPadding(0,dp(14),0,dp(14));next.setBackground(shape(picked.size()<2?surface:fab,18));next.setOnClickListener(v->{if(picked.size()>=2)nameGroup();});
-            LinearLayout.LayoutParams np=new LinearLayout.LayoutParams(-1,-2);np.setMargins(dp(16),dp(4),dp(16),dp(12));root.addView(next,np);}
+        if(groupMode){groupNext=text("",16,onFab,true);groupNext.setGravity(Gravity.CENTER);groupNext.setPadding(0,dp(14),0,dp(14));pressDim(groupNext);
+            groupNext.setOnClickListener(v->{if(picked.size()>=2)nameGroup();});
+            LinearLayout.LayoutParams np=new LinearLayout.LayoutParams(-1,-2);np.setMargins(dp(16),dp(4),dp(16),dp(12));root.addView(groupNext,np);updateGroupNext();}
         search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){contactQuery=s.toString();renderContacts();}public void afterTextChanged(Editable e){}});
         renderContacts();search.requestFocus();}
     /** Someone you can start a conversation with: from your phone's contacts, Google's list, or a chat you're in. */
@@ -3727,11 +3752,13 @@ public class PairedActivity extends Activity {
         if(!on||!callsOn())return;callWatch=new android.database.ContentObserver(ui){@Override public void onChange(boolean self){if(screen.equals("chat")&&!chatId.isEmpty())loadCalls(chatId);}};
         try{r.registerContentObserver(android.provider.CallLog.Calls.CONTENT_URI,true,callWatch);}catch(Exception e){callWatch=null;}}
     private void renderContacts(){if(items==null||!screen.equals("newchat"))return;items.removeAllViews();String q=contactQuery.trim(),number=ChatText.normalizeNumber(q);
-        if(!groupMode&&q.isEmpty()){LinearLayout g=row();g.setPadding(dp(8),dp(10),dp(8),dp(10));pressable(g);View face=new FrameLayout(this);face.setBackground(oval(fab));
-            TextView plus=text("👥",20,onFab,false);plus.setGravity(Gravity.CENTER);((FrameLayout)face).addView(plus,new FrameLayout.LayoutParams(-1,-1));g.addView(face,new LinearLayout.LayoutParams(dp(44),dp(44)));
-            TextView t=text("Create group",17,ink,false);t.setPadding(dp(16),0,0,0);g.addView(t);g.setOnClickListener(v->{groupMode=true;picked.clear();newChat();});items.addView(g);}
-        if(!picked.isEmpty()){items.addView(sectionLabel("Selected"));for(Map.Entry<String,String> e:new ArrayList<>(picked.entrySet()))items.addView(contactRow(e.getValue(),e.getKey(),"",""));}
-        Set<String> shown=new HashSet<>(picked.keySet());
+        if(!groupMode&&q.isEmpty()){LinearLayout g=row();g.setPadding(dp(8),dp(10),dp(8),dp(10));pressable(g);FrameLayout face=new FrameLayout(this);face.setBackground(oval(fab));
+            ImageView people=new ImageView(this);people.setImageResource(R.drawable.ic_people);people.setImageTintList(ColorStateList.valueOf(onFab));people.setPadding(dp(10),dp(10),dp(10),dp(10));
+            face.addView(people,new FrameLayout.LayoutParams(-1,-1));g.addView(face,new LinearLayout.LayoutParams(dp(44),dp(44)));
+            LinearLayout texts=vertical();texts.setPadding(dp(16),0,dp(8),0);texts.addView(text("Create group",17,ink,false));texts.addView(text("Two or more people",14,muted,false));g.addView(texts);
+            g.setOnClickListener(v->{groupMode=true;picked.clear();pickedHex.clear();groupName="";contactQuery="";newChat();});items.addView(g);}
+        // Picked people stay in their places in the list, ticked (and up top as chips).
+        Set<String> shown=new HashSet<>();
         if(!number.isEmpty()&&!picked.containsKey(number)){items.addView(contactRow("Use "+number,number,"",""));shown.add(number);}
         // Without the contacts permission, only Google's partial list can be searched; one row to fix that.
         if(!PhoneContacts.allowed(this))items.addView(allowContactsRow());
@@ -3803,15 +3830,77 @@ public class PairedActivity extends Activity {
         JSONObject p=new JSONObject();try{p.put("avatarHexColor",hex);}catch(Exception ignored){}r.addView(personAvatar(p,name,44));
         LinearLayout texts=vertical();texts.setPadding(dp(16),0,dp(8),0);texts.addView(text(name,17,ink,false));if(!formatted.isEmpty()&&!formatted.equals(name))texts.addView(text(formatted,14,muted,false));
         r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));
-        if(groupMode){boolean on=picked.containsKey(number);TextView check=text(on?"✓":"",18,onFab,true);check.setGravity(Gravity.CENTER);check.setBackground(on?oval(fab):shape(Color.TRANSPARENT,13));
-            if(!on){GradientDrawable ring=shape(Color.TRANSPARENT,13);ring.setStroke(dp(2),muted);check.setBackground(ring);}r.addView(check,new LinearLayout.LayoutParams(dp(26),dp(26)));
-            r.setOnClickListener(v->{if(picked.containsKey(number))picked.remove(number);else picked.put(number,name.startsWith("Use +")?number:name);contactQuery="";newChat();});}
+        if(groupMode){TextView check=text("",18,onFab,true);check.setGravity(Gravity.CENTER);tick(check,picked.containsKey(number));r.addView(check,new LinearLayout.LayoutParams(dp(26),dp(26)));
+            String label=name.startsWith("Use ")?number:name;r.setContentDescription(label+(picked.containsKey(number)?", in the group":""));
+            r.setOnClickListener(v->{boolean on=!picked.containsKey(number);if(on){picked.put(number,label);pickedHex.put(number,hex);}else{picked.remove(number);pickedHex.remove(number);}
+                r.setContentDescription(label+(on?", in the group":""));
+                // Picked from a search: the search empties for the next person. Picked from the list: it stays where it was.
+                if(!contactQuery.trim().isEmpty()&&contactSearch!=null)contactSearch.setText("");else tick(check,on);
+                renderPicked();updateGroupNext();});}
         else r.setOnClickListener(v->startChat(number));
         return r;}
-    private void nameGroup(){EditText name=input("Group name (optional)");name.setSingleLine(true);
-        new AlertDialog.Builder(this).setTitle("Name this group").setMessage("RCS groups can have a name everyone sees. Picture-message (MMS) groups can't.").setView(name)
-            .setNegativeButton("Back",null).setPositiveButton("Create",(d,w)->{String numbers=String.join(",",picked.keySet()),title=name.getText().toString().trim();
-                PairedService.execute(c->c.createGroup(numbers,title),(raw,e)->{if(!e.isEmpty()){error(e);return;}try{JSONObject chat=new JSONObject(raw);store.chat(chat);picked.clear();groupMode=false;thread(chat.getString("conversationID"));}catch(Exception ex){error("The new group could not be opened.");}});}).show();}
+    /** A contact's tick in the new group's list: filled when they're in, an empty ring when not. */
+    private void tick(TextView check,boolean on){check.setText(on?"✓":"");if(on)check.setBackground(oval(fab));else{GradientDrawable ring=shape(Color.TRANSPARENT,13);ring.setStroke(dp(2),muted);check.setBackground(ring);}}
+    /** The picked people as chips (a face, a first name and ×); tapping one takes them back out. */
+    private void renderPicked(){if(pickedChips==null)return;pickedChips.removeAllViews();((View)pickedChips.getParent()).setVisibility(picked.isEmpty()?View.GONE:View.VISIBLE);
+        for(Map.Entry<String,String> e:new ArrayList<>(picked.entrySet())){String number=e.getKey(),name=e.getValue();
+            LinearLayout chip=row();chip.setPadding(dp(4),dp(4),dp(10),dp(4));chip.setBackground(shape(surface,18));pressDim(chip);
+            JSONObject p=new JSONObject();try{p.put("avatarHexColor",pickedHex.getOrDefault(number,""));}catch(Exception ignored){}chip.addView(personAvatar(p,name,28));
+            String first=ContactSearch.numberLike(name)?name:name.trim().split("\\s+")[0];TextView t=text(first,14,ink,false);t.setPadding(dp(8),0,dp(6),0);t.setSingleLine(true);chip.addView(t);
+            ImageView x=new ImageView(this);x.setImageResource(R.drawable.ic_close);x.setImageTintList(ColorStateList.valueOf(muted));chip.addView(x,new LinearLayout.LayoutParams(dp(16),dp(16)));
+            chip.setContentDescription("Remove "+name+" from the group");
+            chip.setOnClickListener(v->{picked.remove(number);pickedHex.remove(number);renderPicked();updateGroupNext();renderContacts();});
+            LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-2,-2);cp.rightMargin=dp(8);pickedChips.addView(chip,cp);}
+        View hs=(View)pickedChips.getParent();hs.post(()->((android.widget.HorizontalScrollView)hs).fullScroll(View.FOCUS_RIGHT));}
+    /** The new group's Next button: how many more to pick, or how many are in. */
+    private void updateGroupNext(){if(groupNext==null)return;int n=picked.size();boolean ready=n>=2;
+        groupNext.setText(n==0?"Pick at least 2 people":n==1?"Pick 1 more person":"Next · "+n+" people");
+        groupNext.setTextColor(ready?onFab:muted);groupNext.setBackground(shape(ready?fab:surface,18));groupNext.setEnabled(ready);}
+    /** The new group as a chat, for drawing its picture before it exists. */
+    private JSONObject draftGroup(){JSONObject c=new JSONObject();try{org.json.JSONArray people=new org.json.JSONArray();
+            people.put(new JSONObject().put("ID",new JSONObject().put("participantID","me")).put("isMe",true));
+            for(Map.Entry<String,String> e:picked.entrySet())people.put(new JSONObject().put("ID",new JSONObject().put("participantID","draft:"+e.getKey()).put("number",e.getKey()))
+                .put("fullName",e.getValue()).put("avatarHexColor",pickedHex.getOrDefault(e.getKey(),"")));
+            c.put("conversationID","draft-group").put("isGroupChat",true).put("participants",people);}catch(Exception ignored){}return c;}
+    /**
+     * The new group's last step, a screen of its own: its picture, a name (optional; everyone sees it,
+     * and picture-message groups can't have one), who's in it (take someone out, or go back for
+     * more), and Create, which shows it's working and keeps any error on screen to try again.
+     */
+    private void nameGroup(){remember();base("namegroup");header("Name your group",()->{groupMode=true;contactQuery="";newChat();});
+        ScrollView sc=new ScrollView(this);LinearLayout content=vertical();content.setPadding(dp(16),dp(8),dp(16),dp(24));sc.addView(content);root.addView(sc,new LinearLayout.LayoutParams(-1,0,1));
+        ImageView pic=roundImage(Avatars.group(this,draftGroup(),dp(96)));pic.setContentDescription("The group's picture, from the people in it");
+        LinearLayout.LayoutParams pp=new LinearLayout.LayoutParams(dp(96),dp(96));pp.gravity=Gravity.CENTER_HORIZONTAL;content.addView(pic,pp);gap(content,20);
+        EditText name=input("Group name");name.setSingleLine(true);name.setTextSize(20);name.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(100)});
+        name.setText(groupName);name.setSelection(name.getText().length());name.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);groupNameInput=name;
+        name.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence x,int a,int b,int c){}public void onTextChanged(CharSequence x,int a,int b,int c){groupName=x.toString();}public void afterTextChanged(Editable e){}});
+        content.addView(name,new LinearLayout.LayoutParams(-1,-2));gap(content,8);
+        TextView about=text("Optional. Everyone in the group sees it. Picture-message (MMS) groups can't have a name.",13,muted,false);about.setPadding(dp(8),0,dp(8),0);content.addView(about);gap(content,24);
+        content.addView(text(picked.size()+(picked.size()==1?" person":" people")+", plus you",14,muted,true));gap(content,4);
+        for(Map.Entry<String,String> e:new ArrayList<>(picked.entrySet())){String number=e.getKey(),who=e.getValue();
+            LinearLayout r=row();r.setPadding(dp(4),dp(8),dp(4),dp(8));JSONObject p=new JSONObject();try{p.put("avatarHexColor",pickedHex.getOrDefault(number,""));}catch(Exception ignored){}r.addView(personAvatar(p,who,40));
+            LinearLayout texts=vertical();texts.setPadding(dp(14),0,dp(8),0);texts.addView(text(who,16,ink,false));if(!who.equals(number))texts.addView(text(number,13,muted,false));r.addView(texts,new LinearLayout.LayoutParams(0,-2,1));
+            ImageView x=icon(R.drawable.ic_close,muted,"Remove "+who,()->{picked.remove(number);pickedHex.remove(number);nameGroup();});r.addView(x);content.addView(r);}
+        LinearLayout more=row();more.setPadding(dp(4),dp(8),dp(4),dp(8));pressable(more);FrameLayout plus=new FrameLayout(this);plus.setBackground(oval(surface));
+        ImageView add=new ImageView(this);add.setImageResource(R.drawable.ic_add);add.setImageTintList(ColorStateList.valueOf(ink));add.setPadding(dp(9),dp(9),dp(9),dp(9));plus.addView(add,new FrameLayout.LayoutParams(-1,-1));
+        more.addView(plus,new LinearLayout.LayoutParams(dp(40),dp(40)));TextView addText=text("Add people",16,ink,false);addText.setPadding(dp(14),0,0,0);more.addView(addText);
+        more.setOnClickListener(v->{groupMode=true;contactQuery="";newChat();});content.addView(more);
+        TextView problem=text("",14,danger,false);problem.setPadding(dp(24),dp(4),dp(24),dp(4));problem.setVisibility(View.GONE);root.addView(problem);
+        boolean ready=picked.size()>=2;TextView create=text(ready?"Create group":"Add at least 2 people",16,ready?onFab:muted,true);create.setGravity(Gravity.CENTER);create.setPadding(0,dp(14),0,dp(14));
+        create.setBackground(shape(ready?fab:surface,18));create.setEnabled(ready);pressDim(create);
+        LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);cp.setMargins(dp(16),dp(4),dp(16),dp(12));root.addView(create,cp);
+        create.setOnClickListener(v->createGroup(create,problem));
+        name.setOnEditorActionListener((v,action,ev)->{if(action==android.view.inputmethod.EditorInfo.IME_ACTION_DONE){hideKeyboard(v);return true;}return false;});
+        if(ready)name.post(()->{name.requestFocus();getSystemService(InputMethodManager.class).showSoftInput(name,0);});}
+    private void createGroup(TextView create,TextView problem){if(picked.size()<2)return;
+        if(!PairedService.ready()){problem.setText("Not connected to Google Messages. Connect, then create the group.");problem.setVisibility(View.VISIBLE);return;}
+        String numbers=String.join(",",picked.keySet()),title=groupName.trim();
+        create.setEnabled(false);create.setText("Creating…");create.setAlpha(0.7f);problem.setVisibility(View.GONE);
+        PairedService.execute(c->c.createGroup(numbers,title),(raw,e)->{
+            Runnable again=()->{create.setEnabled(true);create.setText("Create group");create.setAlpha(1f);};
+            if(!e.isEmpty()){again.run();problem.setText("Couldn't create the group: "+e);problem.setVisibility(View.VISIBLE);return;}
+            try{JSONObject chat=new JSONObject(raw);store.chat(chat);picked.clear();pickedHex.clear();groupName="";groupMode=false;thread(chat.getString("conversationID"));}
+            catch(Exception ex){again.run();problem.setText("The group was made, but couldn't be opened. It's in your conversations.");problem.setVisibility(View.VISIBLE);}});}
 
     // Conversation management
     private void archive(JSONObject c,boolean on){String id=c.optString("conversationID");

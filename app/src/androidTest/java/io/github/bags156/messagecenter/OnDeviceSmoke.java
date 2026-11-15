@@ -1287,6 +1287,41 @@ public final class OnDeviceSmoke extends Instrumentation {
     /** How far the face behind is from its place in the stack (just below the front one): 0 at rest, more as it trails. */
     private float trailGap(){float[][] t={null};runOnMainSync(()->t[0]=ChatHeads.trail());if(t[0]==null||t[0].length<4)return 0;
         float peek=Math.round(9*getTargetContext().getResources().getDisplayMetrics().density);return (float)Math.hypot(t[0][2]-t[0][0],t[0][3]-t[0][1]-peek);}
+    /**
+     * Making a group: picked people show as chips and stay ticked in place (picking from a search
+     * empties it for the next one); Next counts them; the name screen shows the group's picture, a
+     * name box and who's in it, where one can be taken out (Create then asks for 2) or more added
+     * (back to picking, with the name kept). Renaming a group later opens the app's own sheet.
+     */
+    private void checkNewGroup(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();
+        try{onMainCall(()->{((java.util.Map<?,?>)field("picked").get(a)).clear();field("groupMode").setBoolean(a,true);field("groupName").set(a,"");field("contactQuery").set(a,"");return method("newChat").invoke(a);});waitForIdleSync();
+            check(waitForText("Pick at least 2 people",3000,true),"A new group's Next button doesn't say to pick 2 people");
+            android.widget.EditText search=(android.widget.EditText)field("contactSearch").get(a);
+            for(String n:new String[]{"+15557770101","+15557770102"}){runOnMainSync(()->search.setText(n));check(waitForText("Use "+n,3000,true),"Typing a number didn't offer it for the group");pressText("Use "+n);waitForIdleSync();
+                check(search.getText().length()==0,"Picking from a search didn't empty it for the next person");}
+            android.widget.LinearLayout chips=(android.widget.LinearLayout)field("pickedChips").get(a);int[] n={0};runOnMainSync(()->n[0]=chips.getChildCount());
+            check(n[0]==2,"The two picked people aren't shown as chips ("+n[0]+")");
+            check(waitForText("Next · 2 people",3000,true),"Next doesn't count the 2 picked people");
+            shoot("shot-new-group-pick");
+            pressText("Next · 2 people");check(waitForText("Name your group",3000,true),"Next didn't open the group's name screen");
+            check(exactText(a,"2 people, plus you")!=null&&exactText(a,"Create group")!=null,"The name screen doesn't show who's in the group and Create group");
+            android.widget.EditText name=(android.widget.EditText)field("groupNameInput").get(a);runOnMainSync(()->name.setText("Weekend crew"));
+            runOnMainSync(()->a.getSystemService(android.view.inputmethod.InputMethodManager.class).hideSoftInputFromWindow(name.getWindowToken(),0));Thread.sleep(400);
+            shoot("shot-new-group-name");
+            android.view.View[] x={null};runOnMainSync(()->x[0]=described(a.getWindow().getDecorView(),"Remove +15557770101"));check(x[0]!=null,"A member can't be taken out on the name screen");
+            runOnMainSync(()->x[0].performClick());check(waitForText("Add at least 2 people",3000,true),"With one person left, Create didn't ask for 2");
+            pressText("Add people");check(waitForText("Pick 1 more person",3000,true),"Add people didn't go back to picking, with the one still in");
+            check("Weekend crew".equals(field("groupName").get(a)),"Going back to add people lost the group's name");
+            // Renaming later: the app's own sheet, with the name ready to change.
+            try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'rename-check',name:'Old name',isGroupChat:true,type:'RCS',lastMessageTimestamp:1794000300000000,participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},"
+                +"{ID:{participantID:'r1',number:'+15557770111'},fullName:'Rae One'},{ID:{participantID:'r2',number:'+15557770112'},fullName:'Rob Two'}]}"));}
+            onMainCall(()->method("renameGroup",String.class).invoke(a,"rename-check"));
+            check(waitForText("Everyone in the group sees the new name.",3000,true)&&waitForText("Save",2000,true),"Rename group didn't open its sheet");
+            shoot("shot-rename-group");pressText("Cancel");check(waitForText("Everyone in the group sees the new name.",3000,false),"Cancel didn't close the rename sheet");}
+        finally{onMainCall(()->{((java.util.Map<?,?>)field("picked").get(a)).clear();field("groupMode").setBoolean(a,false);field("groupName").set(a,"");return method("inbox").invoke(a);});waitForIdleSync();
+            try(PairedStore store=new PairedStore(ctx)){store.deleteChat("rename-check");}}}
+    private static android.view.View described(android.view.View v,String what){if(what.contentEquals(String.valueOf(v.getContentDescription())))return v;
+        if(v instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++){android.view.View hit=described(((android.view.ViewGroup)v).getChildAt(i),what);if(hit!=null)return hit;}return null;}
     /** Drags a chat head onto the × with real touches, to wherever the × shows up on screen. */
     private void dragOntoClose(android.view.View head,String shot)throws Exception{
         int[] at=new int[2];runOnMainSync(()->head.getLocationOnScreen(at));
@@ -2290,6 +2325,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkMusicLink((PairedActivity)activity);
         checkTheirMusic((PairedActivity)activity);
         checkGroupsInCommon((PairedActivity)activity);
+        checkNewGroup((PairedActivity)activity);
         checkSongPlaying((PairedActivity)activity);
         checkChatReminder((PairedActivity)activity);
         checkSearchClear((PairedActivity)activity);
