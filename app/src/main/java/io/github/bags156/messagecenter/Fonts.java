@@ -148,7 +148,7 @@ final class Fonts {
     static String cleanName(String picked) {
         String n = picked == null ? "" : picked.trim();
         int dot = n.lastIndexOf('.');
-        if (dot > 0) n = n.substring(0, dot);
+        if (dot >= 0) n = n.substring(0, dot);
         n = n.replace('_', ' ').replace('-', ' ').replaceAll("\\s+", " ").trim();
         return n.isEmpty() ? "Your font" : n.length() > 40 ? n.substring(0, 40) : n;
     }
