@@ -92,6 +92,8 @@ final class MusicApps {
             JSONObject saved = new JSONObject(new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8));
             if (System.currentTimeMillis() - saved.optLong("at") > keep(saved.optString("how"))) return null;
             if (!saved.optString("how").equals("exact") && saved.optString("kind").equals("SONG") && !saved.has("universal") && !saved.has("v")) return null; // from before song.link pages
+            String kind = saved.optString("kind");
+            if ((kind.equals("SHOW") || kind.equals("EPISODE") || saved.optString("how").equals("none")) && saved.optInt("v") < 3) return null; // from before podcasts were matched exactly
             synchronized (memory) { memory.put(k, saved); }
             return saved;
         } catch (Exception e) { return null; }
@@ -143,10 +145,17 @@ final class MusicApps {
         MusicLinks.deadline.set(budgetMs > 0 ? start + budgetMs : 0L); MusicLinks.ranOut.set(false);
         try {
             MusicLinks.Net net = new MusicLinks.Http("MessageCenter/" + version(c) + " ( https://github.com/bags156/message-center )");
-            out.put("at", start).put("v", 2);
+            out.put("at", start).put("v", 3);
             MusicLinks.Link link = MusicLinks.expand(MusicLinks.parse(url), net);
             MusicLinks.Item item = link == null ? null : MusicLinks.identify(link, net);
             if (link != null && link.app == app) { out.put("how", "exact").put("url", url).put("kind", link.kind.name()); return out; }
+            // A YouTube Music link that turns out to be a podcast episode goes to your podcast app, if you've picked one.
+            if (item != null && item.kind.podcast() && !podcast(link)) {
+                if (off(c, true)) { out.put("how", "none").put("kind", item.kind.name()); return out; }
+                MusicLinks.App pod = chosen(c, true);
+                if (pod != null && pod != app) { app = pod; out.put("app", pod.name()); }
+                if (link.app == app) { out.put("how", "exact").put("url", url).put("kind", item.kind.name()); return out; }
+            }
             MusicLinks.Match m = item == null ? null : MusicLinks.find(item, app, net, java.util.Locale.getDefault().getCountry());
             out.put("kind", item == null ? (link == null || link.kind == null ? "" : link.kind.name()) : item.kind.name());
             if (m == null) out.put("how", "none");

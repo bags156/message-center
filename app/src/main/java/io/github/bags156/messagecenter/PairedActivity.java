@@ -4135,16 +4135,19 @@ public class PairedActivity extends Activity {
         Runnable show=()->{if(app==null){how.setText("Choose app");r.setContentDescription("Open in your "+(podcast?"podcast":"music")+" app. Choose which one.");return;}
             JSONObject f=found[0];if(f!=null&&f.optString("how").equals("none")){wrap.setVisibility(View.GONE);return;}
             String state=f==null?"Finding…":f.optString("how").equals("error")?"Tap to try again":MusicApps.how(f);
-            how.setText(state);r.setContentDescription("Open in "+app.label+(state.isEmpty()?"":". "+state)+".");};
+            // A link that turned out to be a podcast opens in your podcast app.
+            MusicLinks.App opens=f!=null&&MusicLinks.App.named(f.optString("app"))!=null?MusicLinks.App.named(f.optString("app")):app;
+            if(opens!=app){label.setText("Open in "+opens.label);android.graphics.drawable.Drawable its=MusicApps.installed(this,opens)?appIcon(opens.pkg):null;if(its!=null){icon.setImageTintList(null);icon.setImageDrawable(its);}}
+            how.setText(state);r.setContentDescription("Open in "+opens.label+(state.isEmpty()?"":". "+state)+".");};
         show.run();
-        Runnable lookUp=()->MusicApps.find(this,url,app,res->{found[0]=res;show.run();if(openWhenFound[0]){openWhenFound[0]=false;openMusic(res,app);}});
+        Runnable lookUp=()->MusicApps.find(this,url,app,res->{found[0]=res;show.run();if(openWhenFound[0]){openWhenFound[0]=false;MusicLinks.App opens=MusicLinks.App.named(res.optString("app"));openMusic(res,opens!=null?opens:app);}});
         if(app!=null&&known==null)lookUp.run();
         r.setOnClickListener(v->{
             if(app==null){chooseMusicApp(podcast,chosen->{renderMessages(false);if(chosen!=null)MusicApps.find(this,url,chosen,res->openMusic(res,chosen));});return;}
             JSONObject f=found[0];
             if(f==null){openWhenFound[0]=true;return;}
             if(f.optString("how").equals("error")){found[0]=null;openWhenFound[0]=true;show.run();lookUp.run();return;}
-            openMusic(f,app);});
+            MusicLinks.App opens=MusicLinks.App.named(f.optString("app"));openMusic(f,opens!=null?opens:app);});
         r.setOnLongClickListener(v->{linkSheet(url,m);return true;});
         return wrap;}
     /** Opens what was found, if this screen is still the one in front (a slow lookup shouldn't jump into another app later). */
