@@ -453,7 +453,8 @@ final class ChatHeads {
         @Override public void doFrame(long nanos) {
             if (trail != this) return;
             float dt = last == 0 ? 0.016f : Math.min(0.034f, (nanos - last) / 1e9f); last = nanos;
-            int steps = Math.max(1, (int) Math.ceil(dt / 0.008f)); float h = dt / steps;
+            // Small steps: the front one's spring is stiff, and big steps make it fly apart.
+            int steps = Math.max(1, (int) Math.ceil(dt / 0.002f)); float h = dt / steps;
             boolean still = true;
             for (int k = 0; k < steps; k++) {
                 float[] to = lead();
@@ -464,6 +465,7 @@ final class ChatHeads {
                     float w = i == 0 ? (over ? 40f : 140f) : 24f, z = i == 0 ? 1f : 0.72f;
                     vx[i] += (w * w * (tx - x[i]) - 2 * z * w * vx[i]) * h; x[i] += vx[i] * h;
                     vy[i] += (w * w * (ty - y[i]) - 2 * z * w * vy[i]) * h; y[i] += vy[i] * h;
+                    if (!Float.isFinite(x[i]) || !Float.isFinite(y[i]) || !Float.isFinite(vx[i]) || !Float.isFinite(vy[i])) { x[i] = tx; y[i] = ty; vx[i] = 0; vy[i] = 0; }
                     if (k == steps - 1 && (Math.abs(tx - x[i]) > 0.5f || Math.abs(ty - y[i]) > 0.5f || Math.hypot(vx[i], vy[i]) > 20)) still = false;
                 }
             }
