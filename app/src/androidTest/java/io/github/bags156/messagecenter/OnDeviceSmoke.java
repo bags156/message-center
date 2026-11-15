@@ -1085,8 +1085,9 @@ public final class OnDeviceSmoke extends Instrumentation {
         return hit[0];}
     /** Whether a piece of text is in the uploaded font right now. */
     private boolean inFont(android.widget.TextView t)throws Exception{boolean[] yes={false};runOnMainSync(()->{Object set=t.getTag(R.id.font_set);yes[0]=set!=null&&t.getTypeface()==set;});return yes[0];}
-    /** How many pieces of text in an uploaded font are waiting to be measured again (drawn now, they'd be cut off or squeezed). */
-    private static int halfLaidOut(android.view.View v){int n=v instanceof android.widget.TextView&&v.getTag(R.id.font_set)!=null&&v.isLayoutRequested()?1:0;
+    /** How many pieces of text on screen in an uploaded font are waiting to be measured again (drawn now, they'd be cut off or squeezed). */
+    private static int halfLaidOut(android.view.View v){if(v.getVisibility()==android.view.View.GONE)return 0; // hidden text isn't drawn (or measured) until it shows
+        int n=v instanceof android.widget.TextView&&v.getTag(R.id.font_set)!=null&&v.isLayoutRequested()?1:0;
         if(v instanceof android.view.ViewGroup){android.view.ViewGroup g=(android.view.ViewGroup)v;for(int i=0;i<g.getChildCount();i++)n+=halfLaidOut(g.getChildAt(i));}return n;}
     /** Which uploaded font a piece of text on screen is in (null: the phone's). */
     private android.graphics.Typeface fontOf(android.widget.TextView t)throws Exception{android.graphics.Typeface[] f={null};runOnMainSync(()->f[0]=Fonts.fontOf(t));return f[0];}
