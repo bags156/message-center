@@ -318,6 +318,7 @@ final class MusicLinks {
             case DEEZER: return deezer(link, net);
             case SPOTIFY: return spotify(link, net);
             case YOUTUBE_MUSIC: return youtube(link, net);
+            case POCKET_CASTS: return pocketCasts(link, net);
             case SOUNDCLOUD: {
                 JSONObject j = json(net.get("https://soundcloud.com/oembed?format=json&url=" + enc("https://soundcloud.com/" + link.id), false));
                 if (j == null) return page(link, net);
@@ -490,6 +491,22 @@ final class MusicLinks {
         }
         return page(l, net);
     }
+
+    /** A Pocket Casts page: the episode (or show) and, for an episode, the show it's from. */
+    private static Item pocketCasts(Link l, Net net) throws Exception {
+        String html = net.get(l.url, true);
+        if (html == null) return null;
+        Map<String, String> meta = metaTags(html);
+        String title = meta.getOrDefault("og:title", pageTitle(html)).replaceFirst("\\s+-\\s+Pocket Casts$", "").trim();
+        if (title.isEmpty()) return null;
+        Item i = new Item(l.kind);
+        if (l.kind == Kind.SHOW) { i.title = title; return i; }
+        i.title = title;
+        Matcher m = Pattern.compile("data-testid=\"podcast-title\"[^>]*>([^<]+)<").matcher(html);
+        if (m.find()) i.show = unescape(m.group(1).trim());
+        return i;
+    }
+
 
     /** What YouTube Music's page says this video is ("MUSIC_VIDEO_TYPE_PODCAST_EPISODE"), or "". */
     private static String youtubeType(String videoId, Net net) throws Exception {
@@ -1097,7 +1114,9 @@ final class MusicLinks {
     private static String youtubePodcast(Item item, Net net, String cc) throws Exception {
         String showName = item.kind == Kind.SHOW ? item.title : item.show;
         JSONObject client = new JSONObject().put("clientName", "WEB_REMIX").put("clientVersion", YTM_VERSION).put("hl", "en").put("gl", cc.toUpperCase(Locale.ROOT));
-        JSONObject body = new JSONObject().put("context", new JSONObject().put("client", client)).put("query", searchWords(item));
+        // Searched among episodes (or podcasts) only, the way YouTube Music's own filter chips do.
+        String filter = item.kind == Kind.EPISODE ? "EgWKAQJIAWoMEA4QChADEAQQCRAF" : "EgWKAQJQAWoMEA4QChADEAQQCRAF";
+        JSONObject body = new JSONObject().put("context", new JSONObject().put("client", client)).put("query", searchWords(item)).put("params", filter);
         Map<String, String> headers = new LinkedHashMap<>();
         headers.put("Origin", "https://music.youtube.com"); headers.put("Referer", "https://music.youtube.com/");
         headers.put("X-YouTube-Client-Name", "67"); headers.put("X-YouTube-Client-Version", YTM_VERSION);
