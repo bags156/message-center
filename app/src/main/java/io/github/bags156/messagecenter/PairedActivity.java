@@ -4327,7 +4327,7 @@ public class PairedActivity extends Activity {
                 for(String v:values)actions.add(()->{NotificationPrivacy.setLockMode(this,v);PairedService.refreshChatNotifications(this);if(screen.equals("settings"))settings();});
                 menuSheet("While your phone is locked, notifications show",labels,actions);});
             boolean heads=ChatHeads.on(this);
-            settingRow(alerts,R.drawable.ic_chat,0xff14b8a6,"Floating chats",heads?"Message Center's chat heads: full for a new message, then fading to the strength below":"Android's bubbles. Chat heads can be see-through instead",heads?"Chat heads":"Android's bubbles",this::chooseFloatingStyle);
+            settingRow(alerts,R.drawable.ic_chat,0xff14b8a6,"Floating chats",heads?"Message Center's chat heads: how strong they are at each step is below":"Android's bubbles. Chat heads can be see-through instead",heads?"Chat heads":"Android's bubbles",this::chooseFloatingStyle);
             settingRow(alerts,R.drawable.ic_notification,0xff64748b,"Hide \"Message Center is running\"","Android requires it while connected. Turn it off and messages still arrive; you're told if the connection drops.",null,()->{try{startActivity(PairedService.channelSettings(this,PairedService.RUNNING));}catch(Exception e){openAppSettings();}});
             if(heads)chatHeadSettings(content);
             LinearLayout words=settingsGroup(content,"Alerts that get through");
@@ -4448,22 +4448,35 @@ public class PairedActivity extends Activity {
     private void chatHeadSettings(LinearLayout content){LinearLayout group=settingsGroup(content,"Chat heads");
         boolean may=ChatHeads.allowed(this);
         if(!may)settingRow(group,R.drawable.ic_lock,0xffef4444,"Display over other apps","Chat heads need this to float over other apps",null,this::askOverlay);
-        // How solid they are while left alone, with a head that shows it as you slide.
-        LinearLayout box=vertical();box.setPadding(dp(16),dp(12),dp(16),dp(10));
-        LinearLayout top=row();TextView name=text("Faded strength",16,ink,false);top.addView(name,new LinearLayout.LayoutParams(0,-2,1));
-        TextView value=text(ChatHeads.opacity(this)+"%",14,muted,false);top.addView(value);box.addView(top);
-        TextView sub=text("A new message shows at full strength, then half for 2 minutes, then this until you touch it",13,muted,false);sub.setPadding(0,dp(2),0,dp(6));box.addView(sub);
-        LinearLayout slide=row();ImageView sample=new ImageView(this);GradientDrawable dotShape=oval(ChatTheme.of(chatSettings.allTheme()).accent(dark));sample.setImageResource(R.drawable.ic_chat);sample.setImageTintList(android.content.res.ColorStateList.valueOf(Color.WHITE));
-        sample.setBackground(dotShape);sample.setPadding(dp(9),dp(9),dp(9),dp(9));sample.setAlpha(ChatHeads.opacity(this)/100f);sample.setContentDescription("How a chat head looks");
-        android.widget.SeekBar bar=new android.widget.SeekBar(this);bar.setMax(100-ChatHeads.MIN_OPACITY);bar.setProgress(ChatHeads.opacity(this)-ChatHeads.MIN_OPACITY);bar.setContentDescription("Chat heads' faded strength");bar.setSplitTrack(false);
-        slide.addView(bar,new LinearLayout.LayoutParams(0,dp(40),1));LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(dp(40),dp(40));sp.setMarginStart(dp(10));slide.addView(sample,sp);box.addView(slide);
-        bar.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener(){
-            @Override public void onProgressChanged(android.widget.SeekBar b,int p,boolean user){int v=p+ChatHeads.MIN_OPACITY;value.setText(v+"%");sample.setAlpha(v/100f);if(user){getSharedPreferences("paired",MODE_PRIVATE).edit().putInt(ChatHeads.OPACITY,v).apply();ChatHeads.refresh(PairedActivity.this);}}
-            @Override public void onStartTrackingTouch(android.widget.SeekBar b){}
-            @Override public void onStopTrackingTouch(android.widget.SeekBar b){}});
-        box.setContentDescription("Faded strength");if(settingShown("Faded strength","see-through transparent opacity chat heads bubbles",null))addSettingRow(group,box);
+        // Each step: how solid the heads are (a head beside each slider shows it), and how long the first two last.
+        headStep(group,0,"When a message comes in","How strong a head is when a new message arrives");
+        headStep(group,1,"Then, settled","After that, while the message is still fresh");
+        headStep(group,2,"Then, faded","Until you touch it again (touching one starts these steps over)");
         settingRow(group,R.drawable.ic_chat,0xff14b8a6,"Which chats float","The ones Android's bubble settings let float (all, or those you picked), and any you open as a bubble",null,()->startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName())));
         if(!ChatHeads.heads().isEmpty())settingRow(group,R.drawable.ic_close,0xff64748b,"Close all chat heads","Or drag them onto the \u2715 at the bottom of the screen",null,()->{ChatHeads.clear(this);settings();});}
+    /** One step of a chat head's fading: its strength slider, and (for the first two) how long it lasts. */
+    private void headStep(LinearLayout group,int step,String title,String about){
+        String key=step==0?ChatHeads.NEW:step==1?ChatHeads.MID:ChatHeads.OPACITY;int now=ChatHeads.strength(this,step);
+        LinearLayout box=vertical();box.setPadding(dp(16),dp(12),dp(16),dp(8));
+        LinearLayout top=row();top.addView(text(title,16,ink,false),new LinearLayout.LayoutParams(0,-2,1));TextView value=text(now+"%",14,muted,false);top.addView(value);box.addView(top);
+        TextView sub=text(about,13,muted,false);sub.setPadding(0,dp(2),0,dp(4));box.addView(sub);
+        LinearLayout slide=row();ImageView sample=new ImageView(this);sample.setImageResource(R.drawable.ic_chat);sample.setImageTintList(android.content.res.ColorStateList.valueOf(Color.WHITE));
+        sample.setBackground(oval(ChatTheme.of(chatSettings.allTheme()).accent(dark)));sample.setPadding(dp(9),dp(9),dp(9),dp(9));sample.setAlpha(now/100f);sample.setContentDescription("How a chat head looks "+title.toLowerCase(java.util.Locale.ROOT));
+        android.widget.SeekBar bar=new android.widget.SeekBar(this);bar.setMax(100-ChatHeads.MIN_OPACITY);bar.setProgress(now-ChatHeads.MIN_OPACITY);bar.setContentDescription(title+": chat heads' strength");bar.setSplitTrack(false);
+        slide.addView(bar,new LinearLayout.LayoutParams(0,dp(40),1));LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(dp(40),dp(40));sp.setMarginStart(dp(10));slide.addView(sample,sp);box.addView(slide);
+        bar.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener(){
+            @Override public void onProgressChanged(android.widget.SeekBar b,int p,boolean user){int v=p+ChatHeads.MIN_OPACITY;value.setText(v+"%");sample.setAlpha(v/100f);
+                if(user){getSharedPreferences("paired",MODE_PRIVATE).edit().putInt(key,v).apply();ChatHeads.refresh(PairedActivity.this);ChatHeads.preview(PairedActivity.this,step);}}
+            @Override public void onStartTrackingTouch(android.widget.SeekBar b){}
+            @Override public void onStopTrackingTouch(android.widget.SeekBar b){}});
+        if(step<2){int secs=ChatHeads.seconds(this,step);int[] choices=step==0?new int[]{2,5,10,30,60}:new int[]{30,60,120,300,600,1800};
+            TextView lasts=text("For "+duration(secs)+"  \u203a",14,ChatTheme.of(chatSettings.allTheme()).accent(dark),false);lasts.setPadding(0,dp(2),0,dp(6));lasts.setContentDescription(title+": lasts "+duration(secs)+". Tap to change.");
+            lasts.setOnClickListener(v->{List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
+                for(int c:choices){labels.add((c==secs?"\u2713 ":"")+duration(c));actions.add(()->{getSharedPreferences("paired",MODE_PRIVATE).edit().putInt(step==0?ChatHeads.NEW_SECS:ChatHeads.MID_SECS,c).apply();settings();});}
+                menuSheet(title+": for how long",labels,actions);});
+            box.addView(lasts);}
+        box.setContentDescription(title);if(settingShown(title,"see-through transparent opacity strength chat heads bubbles "+about,null))addSettingRow(group,box);}
+    private static String duration(int secs){return secs<60?secs+(secs==1?" second":" seconds"):secs%60==0?(secs/60)+(secs==60?" minute":" minutes"):(secs/60)+" min "+(secs%60)+" s";}
     private static final int PICK_FONT=89;
     /**
      * Settings → Appearance: your uploaded fonts (each in its own lettering, with where it's used; a

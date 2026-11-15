@@ -38,8 +38,8 @@ import java.util.Map;
 
 /**
  * Message Center's own floating chat heads, in place of Android's bubbles (which Android draws
- * itself, at full strength). A new message shows its head at full strength for a few seconds, then
- * half strength for two minutes, then faded to the strength you choose (15% at first) until it's
+ * itself, at full strength). A new message shows its head in three steps, each set in Settings: at
+ * first (100% for 5 seconds), then settled (50% for 2 minutes), then faded (15%) until it's
  * touched again; touching or dragging one starts the same steps over when you let go. Tap one to
  * open its chat in a floating window; drag to move them (they settle at the nearest side); drag
  * onto the × at the bottom to close them. Needs "Display over other apps".
@@ -47,18 +47,27 @@ import java.util.Map;
 final class ChatHeads {
     private ChatHeads() {}
 
-    static final String STYLE = "bubble_style", HEADS = "heads", OPACITY = "head_opacity";
-    static final int DEFAULT_OPACITY = 15, MIN_OPACITY = 10, MAX_HEADS = 5;
-    /** How long a head stays at full strength, then at half, before fading (shorter in the device checks). */
-    static long fullMs = 5_000, halfMs = 120_000;
+    static final String STYLE = "bubble_style", HEADS = "heads";
+    /** Each step's strength (percent) and, for the first two, how long it lasts (seconds). */
+    static final String NEW = "head_new", NEW_SECS = "head_new_secs", MID = "head_mid", MID_SECS = "head_mid_secs", OPACITY = "head_opacity";
+    static final int DEFAULT_NEW = 100, DEFAULT_NEW_SECS = 5, DEFAULT_MID = 50, DEFAULT_MID_SECS = 120, DEFAULT_OPACITY = 15, MIN_OPACITY = 10, MAX_HEADS = 5;
+    /** The device checks shorten the steps (milliseconds; 0 uses the settings). */
+    static long testNewMs, testMidMs;
 
     private static SharedPreferences paired(Context c) { return c.getSharedPreferences("paired", Context.MODE_PRIVATE); }
     private static SharedPreferences state(Context c) { return c.getSharedPreferences("chat_heads", Context.MODE_PRIVATE); }
     /** Whether chats float as these heads (true) or as Android's bubbles. */
     static boolean on(Context c) { return HEADS.equals(paired(c).getString(STYLE, "android")); }
     static boolean allowed(Context c) { return Settings.canDrawOverlays(c); }
-    /** How solid the heads are once faded, in percent. */
-    static int opacity(Context c) { return Math.max(MIN_OPACITY, Math.min(100, paired(c).getInt(OPACITY, DEFAULT_OPACITY))); }
+    /** How solid the heads are at each step, in percent: 0 a new message, 1 settled, 2 faded. */
+    static int strength(Context c, int stage) {
+        String key = stage == 0 ? NEW : stage == 1 ? MID : OPACITY;
+        int fallback = stage == 0 ? DEFAULT_NEW : stage == 1 ? DEFAULT_MID : DEFAULT_OPACITY;
+        return Math.max(MIN_OPACITY, Math.min(100, paired(c).getInt(key, fallback)));
+    }
+    static int opacity(Context c) { return strength(c, 2); }
+    /** How long the first two steps last, in seconds. */
+    static int seconds(Context c, int stage) { return stage == 0 ? paired(c).getInt(NEW_SECS, DEFAULT_NEW_SECS) : paired(c).getInt(MID_SECS, DEFAULT_MID_SECS); }
 
     // Everything below runs on the main thread.
     private static Context app;
@@ -83,18 +92,27 @@ final class ChatHeads {
         if (Looper.myLooper() == Looper.getMainLooper()) r.run(); else main().post(r);
     }
     private static int dp(float v) { return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, app.getResources().getDisplayMetrics())); }
-    private static float faded() { return opacity(app) / 100f; }
-    /** Half strength, or the faded strength if that's set higher (it's never more see-through than the end). */
-    private static float strength(int stage) { return stage == 0 ? 1f : stage == 1 ? Math.max(0.5f, faded()) : faded(); }
+    private static float strength(int stage) { return strength(app, stage) / 100f; }
 
-    /** Goes to a step and times the next: full for a few seconds, half for two minutes, then faded. */
+    /** Goes to a step and times the next: as a new message, then settled, then faded. */
     private static void stage(int s) {
         stage = s;
         main().removeCallbacks(toHalf); main().removeCallbacks(toFaded);
-        if (s == 0) main().postDelayed(toHalf, fullMs);
-        else if (s == 1) main().postDelayed(toFaded, halfMs);
+        if (s == 0) main().postDelayed(toHalf, testNewMs > 0 ? testNewMs : seconds(app, 0) * 1000L);
+        else if (s == 1) main().postDelayed(toFaded, testMidMs > 0 ? testMidMs : seconds(app, 1) * 1000L);
         if (!touching) fadeTo(strength(s));
     }
+
+    /** Shows the heads at a step's strength for a moment (while that step's slider moves), then as they were. */
+    static void preview(Context c, int step) {
+        ui(c, () -> {
+            if (column == null || touching) return;
+            if (fading != null) fading.cancel();
+            column.setAlpha(strength(step));
+            main().removeCallbacks(back); main().postDelayed(back, 1500);
+        });
+    }
+    private static final Runnable back = () -> { if (column != null && !touching) fadeTo(strength(stage)); };
 
     /** The chat open in the floating window, or "". */
     static String floatingChat() { return floating; }
