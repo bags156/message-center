@@ -164,12 +164,18 @@ final class Fonts {
 
     /** Keeps the text under root in the right font as views come and go. defaultArea covers anything not marked. */
     static void follow(Context c, View root, String defaultArea) {
-        apply(c, root, defaultArea);
         // Listens on the window only while root is in it (a screen replaced by the next one stops listening).
         View.OnAttachStateChangeListener watch = new View.OnAttachStateChangeListener() {
             ViewTreeObserver window;
-            final ViewTreeObserver.OnGlobalLayoutListener changed = () -> apply(c, root, defaultArea);
-            @Override public void onViewAttachedToWindow(View v) { window = v.getViewTreeObserver(); window.addOnGlobalLayoutListener(changed); apply(c, root, defaultArea); }
+            // Whether this screen has text in the font: with no font, only a screen that had it is looked through (once, to undo it).
+            boolean had;
+            final ViewTreeObserver.OnGlobalLayoutListener changed = () -> {
+                Typeface font = typeface(c);
+                if (font == null && !had) return;
+                walk(root, defaultArea, font, loadedAreas);
+                had = font != null;
+            };
+            @Override public void onViewAttachedToWindow(View v) { window = v.getViewTreeObserver(); window.addOnGlobalLayoutListener(changed); had = everApplied; changed.onGlobalLayout(); }
             @Override public void onViewDetachedFromWindow(View v) { if (window != null && window.isAlive()) window.removeOnGlobalLayoutListener(changed); window = null; }
         };
         root.addOnAttachStateChangeListener(watch);
