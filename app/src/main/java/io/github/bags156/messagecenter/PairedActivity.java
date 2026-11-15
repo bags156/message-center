@@ -177,8 +177,10 @@ public class PairedActivity extends Activity {
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(!bubble()&&receiveShare(intent))return;if(MessagesWidget.NEW_CHAT.equals(intent.getAction())){if(login!=null)destroyLogin();inbox();newMessage();return;}String id=intent.getStringExtra("chat");if(id!=null&&!id.isEmpty()){if(login!=null)destroyLogin();thread(id);showFromIntent(intent);}}
     /** On screen (started), as opposed to resumed: a permission prompt over the chat doesn't count as leaving it. */
     private boolean started;
-    @Override protected void onStart(){super.onStart();started=true;reportChatOnScreen();}
-    @Override protected void onStop(){started=false;reportChatOnScreen();super.onStop();}
+    @Override protected void onStart(){super.onStart();started=true;reportChatOnScreen();
+        // Back on screen: the voice message's card and the recording's clock catch up (they rest while it's off screen).
+        if(player!=null&&!playingId.isEmpty())voiceTick();if(recorder!=null)updateRecordClock();}
+    @Override protected void onStop(){started=false;reportChatOnScreen();ui.removeCallbacks(recordTick);super.onStop();}
     /** Tells ChatBubbles which chat you're in (its Details and Shared count), so that chat's bubble steps aside. */
     private void reportChatOnScreen(){if(bubble())return;boolean inChat=screen.equals("chat")||screen.equals("details")||screen.equals("media")||screen.equals("notes")||screen.equals("note");
         ChatBubbles.showing(this,started&&inChat?chatId:"");}
@@ -191,7 +193,7 @@ public class PairedActivity extends Activity {
             if(screen.equals("chat")){renderMessages(false);if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();if(!bubble())PairedService.clearNotification(this,chatId);}
             else if(screen.equals("inbox")){if(batteryCard!=null&&!showBatteryCard()){root.removeView(batteryCard);batteryCard=null;}renderInbox();refreshInbox(false);
                 if(!bubble()&&PairedService.ready()&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED)askContactPhotos();}}}
-    @Override protected void onPause(){MusicApps.updated=null;saveNote();watchCalls(false);if(resumed)PairedService.screenVisible(false);resumed=false;if(dictation!=null)stopDictation();remember();if(inline!=null)inline.pause();ui.removeCallbacks(typingTick);if(recorder!=null)finishRecording(false);if(player!=null&&!playingId.isEmpty())pauseVoice();if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
+    @Override protected void onPause(){MusicApps.updated=null;saveNote();watchCalls(false);if(resumed)PairedService.screenVisible(false);resumed=false;if(dictation!=null)stopDictation();remember();if(inline!=null)inline.pause();ui.removeCallbacks(typingTick);if(recorder!=null&&!VoiceRecordService.holding())finishRecording(false);if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
     @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);if(focused)refreshDraft();if(focused&&store!=null){markReadIfAllowed();updateReceiptStatus();}}
     /** Picks up a draft typed in the other window (bubble or full app) so you carry on where you left off. */
     private void refreshDraft(){if(composer==null||drafts==null||chatId.isEmpty()||!screen.equals("chat"))return;String stored=drafts.getOrDefault(chatId,"");
@@ -3555,7 +3557,7 @@ public class PairedActivity extends Activity {
     /** Voice messages: 1×, 1.5×, or 2×, remembered between messages. */
     private float voiceSpeed(){return getSharedPreferences("paired",MODE_PRIVATE).getFloat("voice_speed",1f);}
     private void cycleVoiceSpeed(TextView chip){float next=voiceSpeed()==1f?1.5f:voiceSpeed()==1.5f?2f:1f;getSharedPreferences("paired",MODE_PRIVATE).edit().putFloat("voice_speed",next).apply();
-        chip.setText(speedLabel(next));if(player!=null&&!playingId.isEmpty()){try{boolean was=player.isPlaying();player.setPlaybackParams(player.getPlaybackParams().setSpeed(next));if(!was)player.pause();}catch(Exception ignored){}}}
+        chip.setText(speedLabel(next));if(player!=null&&!playingId.isEmpty()){try{boolean was=player.isPlaying();player.setPlaybackParams(player.getPlaybackParams().setSpeed(next));if(!was)player.pause();}catch(Exception ignored){}reportVoice();}}
     private static String speedLabel(float s){return s==1f?"1×":s==1.5f?"1.5×":"2×";}
     // ---- 0.8: unknown senders, snooze, mention alerts, safe sharing ----
     private boolean unknownOnly,chatTrusted=true;
@@ -4003,25 +4005,29 @@ public class PairedActivity extends Activity {
         if(composer!=null)composer.setHint(composerHint);updateComposeButton();}
     private void startRecording(){if(recorder!=null)return;
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},77);return;}
+        if(player!=null&&!playingId.isEmpty())pauseVoice();
         File dir=new File(getCacheDir(),"outgoing");if(!dir.isDirectory())dir.mkdirs();recording=new File(dir,java.util.UUID.randomUUID()+"-voice.m4a");
         try{recorder=new MediaRecorder(this);recorder.setAudioSource(MediaRecorder.AudioSource.MIC);recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
             recorder.setAudioSamplingRate(44100);recorder.setAudioEncodingBitRate(64000);recorder.setAudioChannels(1);recorder.setMaxDuration(10*60*1000);recorder.setOutputFile(recording.getPath());
-            recorder.setOnInfoListener((r,what,extra)->{if(what==MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED)finishRecording(true);});recorder.prepare();recorder.start();}
+            recorder.setOnInfoListener((r,what,extra)->{if(what==MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED)finishRecording(started);});recorder.prepare();recorder.start();}
         catch(Exception e){if(recorder!=null){recorder.release();recorder=null;}recording.delete();error("The microphone could not be started.");return;}
-        recordStart=System.currentTimeMillis();if(recordWave!=null)recordWave.liveMode();if(recordBar!=null){recordBar.setVisibility(View.VISIBLE);composeRow.setVisibility(View.GONE);}updateRecordClock();}
+        recordStart=System.currentTimeMillis();if(recordWave!=null)recordWave.liveMode();if(recordBar!=null){recordBar.setVisibility(View.VISIBLE);composeRow.setVisibility(View.GONE);}updateRecordClock();
+        // Keeps recording if the phone locks or you leave, with Stop and Send in its notification.
+        JSONObject to=store.chat(chatId);VoiceRecordService.start(this,recordControls,to!=null&&NotificationPrivacy.showName(this,chatId)?PairedProtocol.title(to):"",recordStart);}
+    private final VoiceRecordService.Controls recordControls=send->{if(recorder!=null)finishRecording(send);};
     /** Every 80 ms while recording: the time, how loud you are (into the live waveform), and the dot's pulse. */
     private void updateRecordClock(){ui.removeCallbacks(recordTick);if(recorder==null||recordClock==null)return;long ms=System.currentTimeMillis()-recordStart,s=ms/1000;
         recordClock.setText(String.format(Locale.US,"%d:%02d",s/60,s%60));recordClock.setContentDescription("Recording, "+s+" seconds");
         if(recordWave!=null){int amp=0;try{amp=recorder.getMaxAmplitude();}catch(Exception ignored){}recordWave.push((float)Math.sqrt(amp/32767f));}
         if(recordDot!=null)recordDot.setAlpha(0.35f+0.65f*(float)(0.5+0.5*Math.cos(ms*2*Math.PI/1200.0)));
-        ui.postDelayed(recordTick,80);}
+        if(started)ui.postDelayed(recordTick,80);}
     /** Stops recording; keep=true adds it to the message (sent right away when send=true). */
-    private void finishRecording(boolean send){if(recorder==null)return;ui.removeCallbacks(recordTick);boolean ok=System.currentTimeMillis()-recordStart>700;
+    private void finishRecording(boolean send){if(recorder==null)return;ui.removeCallbacks(recordTick);VoiceRecordService.stop(this,recordControls);boolean ok=System.currentTimeMillis()-recordStart>700;
         try{recorder.stop();}catch(Exception e){ok=false;}recorder.release();recorder=null;if(recordBar!=null){recordBar.setVisibility(View.GONE);composeRow.setVisibility(View.VISIBLE);}
         if(!ok){recording.delete();toast("Too short to send");return;}
         outgoing.add(new Outgoing(recording,"Voice message.m4a","audio/mp4"));outgoingChat=chatId;renderAttachments();updateComposeButton();
         if(send){JSONObject c=store.chat(chatId);if(c!=null)sendAttachments(c,"",replyId);}}
-    private void cancelRecording(){if(recorder==null)return;ui.removeCallbacks(recordTick);try{recorder.stop();}catch(Exception ignored){}recorder.release();recorder=null;recording.delete();
+    private void cancelRecording(){if(recorder==null)return;ui.removeCallbacks(recordTick);VoiceRecordService.stop(this,recordControls);try{recorder.stop();}catch(Exception ignored){}recorder.release();recorder=null;recording.delete();
         if(recordBar!=null){recordBar.setVisibility(View.GONE);composeRow.setVisibility(View.VISIBLE);}}
     @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] results){super.onRequestPermissionsResult(request,permissions,results);GivenNames.forget();
         if(request==77){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)startRecording();else toast("Message Center needs the microphone to record voice messages.");}
@@ -4047,6 +4053,19 @@ public class PairedActivity extends Activity {
     /** Voice messages in the chat in order, as [mediaID, messageID]: when one ends, an unplayed one right after it from the same person plays next. */
     private final List<String[]> voiceOrder=new ArrayList<>();
     private MediaPlayer player;private String playingId="",preparingId="";private final Runnable playTick=this::voiceTick;
+    /** The playing voice message's chat, who sent it and their picture, for its notification and the lock screen (blank and none when the chat's kept private). */
+    private String playingChat="",playingFrom="";private Bitmap playingFace;
+    /** The notification's and lock screen's buttons. */
+    private final VoicePlayService.Controls voiceControls=new VoicePlayService.Controls(){
+        @Override public void play(){if(player!=null&&!playingId.isEmpty())resumeVoice();}
+        @Override public void pause(){pauseVoice();}
+        @Override public void seek(long ms){if(player==null||playingId.isEmpty())return;try{player.seekTo((int)Math.max(0,ms));}catch(Exception ignored){}bindVoice(playingId);reportVoice();}
+        @Override public void skip(long by){if(player==null||playingId.isEmpty())return;long at,len;try{at=player.getCurrentPosition();len=player.getDuration();}catch(Exception e){return;}seek(Math.max(0,Math.min(len>0?len-200:at+by,at+by)));}
+        @Override public void stop(){stopAudio();}};
+    /** Tells the notification and lock screen where the voice message is. */
+    private void reportVoice(){if(player==null||playingId.isEmpty())return;boolean on;long at,len;
+        try{on=player.isPlaying();at=player.getCurrentPosition();len=player.getDuration();}catch(Exception e){return;}
+        VoicePlayService.show(this,voiceControls,playingChat,playingFrom,playingFace,on,at,len,voiceSpeed());}
     private android.media.AudioFocusRequest focusRequest;private boolean noisyOn;
     private final android.content.BroadcastReceiver noisy=new android.content.BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){pauseVoice();}};
     private static final android.media.AudioAttributes SPEECH=new android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_MEDIA).setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build();
@@ -4104,7 +4123,12 @@ public class PairedActivity extends Activity {
     private void toggleVoice(JSONObject media,JSONObject m){String id=PairedProtocol.string(media,"mediaID");
         if(player!=null&&id.equals(playingId)){if(player.isPlaying())pauseVoice();else resumeVoice();return;}
         startVoice(media,m,0f);}
-    private void startVoice(JSONObject media,JSONObject m,float fraction){String id=PairedProtocol.string(media,"mediaID");stopAudio();preparingId=id;bindVoice(id);
+    private void startVoice(JSONObject media,JSONObject m,float fraction){String id=PairedProtocol.string(media,"mediaID");
+        // The one playing stops; its notification stays for this one (so going on to the next, off screen, keeps it).
+        String was=playingId;releaseVoice(false);playingId="";if(!was.isEmpty())bindVoice(was);preparingId=id;bindVoice(id);
+        JSONObject c=store.chat(chatId);boolean mine=c!=null&&PairedProtocol.outgoing(m,c),open=c!=null&&NotificationPrivacy.showName(this,chatId);
+        playingChat=chatId;playingFrom=!open?"":mine?"you":senderName(m,c);
+        playingFace=open&&!mine?Avatars.face(this,m.optString("participantID"),dp(96)):null;
         File cached=MediaCache.file(this,media,false);
         if(cached.isFile()){playVoice(cached,media,fraction);return;}
         // An old message only on the phone goes through the usual "getting it from your phone" wait.
@@ -4132,27 +4156,31 @@ public class PairedActivity extends Activity {
         am.requestAudioFocus(focusRequest);
         // Headphones unplugged or disconnected: pause rather than play out loud.
         if(!noisyOn){registerReceiver(noisy,new IntentFilter(android.media.AudioManager.ACTION_AUDIO_BECOMING_NOISY),Context.RECEIVER_NOT_EXPORTED);noisyOn=true;}
-        try{player.start();if(voiceSpeed()!=1f)player.setPlaybackParams(player.getPlaybackParams().setSpeed(voiceSpeed()));}catch(Exception ignored){}bindVoice(playingId);voiceTick();}
-    private void pauseVoice(){if(player!=null){try{if(player.isPlaying())player.pause();}catch(Exception ignored){}}letGoOfAudio();bindVoice(playingId);ui.removeCallbacks(playTick);}
+        try{player.start();if(voiceSpeed()!=1f)player.setPlaybackParams(player.getPlaybackParams().setSpeed(voiceSpeed()));}catch(Exception ignored){}bindVoice(playingId);voiceTick();reportVoice();}
+    private void pauseVoice(){if(player!=null){try{if(player.isPlaying())player.pause();}catch(Exception ignored){}}letGoOfAudio();bindVoice(playingId);ui.removeCallbacks(playTick);reportVoice();}
     /** Drag the waveform: the time follows your finger; letting go plays from there (or moves a paused one there). */
     private void seekVoice(VoiceCard vc,float f,boolean done){boolean active=vc.id.equals(playingId)&&player!=null;long len=vc.ms;
         if(active){try{if(player.getDuration()>0)len=player.getDuration();}catch(Exception ignored){}}
         if(!done){if(len>0)vc.time.setText(VoiceNotes.clock(Math.round(f*len)));return;}
-        if(active){try{player.seekTo(Math.round(f*len));}catch(Exception ignored){}bindVoice(vc);return;}
+        if(active){try{player.seekTo(Math.round(f*len));}catch(Exception ignored){}bindVoice(vc);reportVoice();return;}
         startVoice(vc.media,vc.message,f);}
     private void voiceTick(){ui.removeCallbacks(playTick);if(player==null||playingId.isEmpty())return;bindVoice(playingId);
-        boolean playing;try{playing=player.isPlaying();}catch(Exception e){playing=false;}if(playing)ui.postDelayed(playTick,50);}
+        // Off screen, the card rests (the notification keeps its own time); it catches up on coming back.
+        boolean playing;try{playing=player.isPlaying();}catch(Exception e){playing=false;}if(playing&&started)ui.postDelayed(playTick,50);}
     /** One ended: back to the start, and an unplayed voice message right after it from the same person plays next. */
-    private void voiceEnded(String id){stopAudio();bindVoice(id);
+    private void voiceEnded(String id){
         for(int i=0;i+1<voiceOrder.size();i++){if(!voiceOrder.get(i)[0].equals(id))continue;String[] next=voiceOrder.get(i+1);VoiceCard vc=voiceCards.get(next[0]);
-            if(vc!=null&&!vc.outgoing&&next[2].equals(voiceOrder.get(i)[2])&&!VoiceNotes.played(this,next[0])&&adjacent(voiceOrder.get(i)[1],next[1]))startVoice(vc.media,vc.message,0f);break;}}
+            if(vc!=null&&!vc.outgoing&&next[2].equals(voiceOrder.get(i)[2])&&!VoiceNotes.played(this,next[0])&&adjacent(voiceOrder.get(i)[1],next[1])){startVoice(vc.media,vc.message,0f);bindVoice(id);return;}break;}
+        stopAudio();bindVoice(id);}
     /** Whether two messages are next to each other in the chat (nothing said in between). */
     private boolean adjacent(String a,String b){View va=messageViews.get(a),vb=messageViews.get(b);if(va==null||vb==null||va.getParent()!=items||vb.getParent()!=items)return false;
         int ia=items.indexOfChild(va),ib=items.indexOfChild(vb);if(ia<0||ib<=ia)return false;
         for(int k=ia+1;k<ib;k++)if(messageViews.containsValue(items.getChildAt(k)))return false;return true;}
     private void letGoOfAudio(){if(focusRequest!=null)getSystemService(android.media.AudioManager.class).abandonAudioFocusRequest(focusRequest);
         if(noisyOn){try{unregisterReceiver(noisy);}catch(Exception ignored){}noisyOn=false;}}
-    private void releaseVoice(){ui.removeCallbacks(playTick);if(player!=null){try{player.release();}catch(Exception ignored){}player=null;}letGoOfAudio();}
+    private void releaseVoice(){releaseVoice(true);}
+    /** Lets go of the player; drop=true takes its notification and lock screen controls away too. */
+    private void releaseVoice(boolean drop){ui.removeCallbacks(playTick);if(player!=null){try{player.release();}catch(Exception ignored){}player=null;}letGoOfAudio();if(drop)VoicePlayService.gone(this,voiceControls);}
     private void stopAudio(){String was=playingId;releaseVoice();playingId="";if(!was.isEmpty())bindVoice(was);}
 
     // Sharing into the app

@@ -1323,6 +1323,63 @@ public final class OnDeviceSmoke extends Instrumentation {
             shoot("shot-rename-group");pressText("Cancel");check(waitForText("Everyone in the group sees the new name.",3000,false),"Cancel didn't close the rename sheet");}
         finally{onMainCall(()->{((java.util.Map<?,?>)field("picked").get(a)).clear();field("groupMode").setBoolean(a,false);field("groupName").set(a,"");return method("inbox").invoke(a);});waitForIdleSync();
             try(PairedStore store=new PairedStore(ctx)){store.deleteChat("rename-check");}}}
+    /**
+     * Voice messages off screen: one playing keeps playing when you leave the app, with its controls
+     * in the notification and on the lock screen (pause, play, ahead 10 seconds), which go when it
+     * stops. A recording keeps going when you leave, and the notification's Stop keeps it in the
+     * message (where the test phone has a microphone to record from; it says when it hasn't).
+     */
+    private String voiceOffScreen="";
+    private void checkVoiceOffScreen(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();long now=System.currentTimeMillis();
+        getUiAutomation().grantRuntimePermission(ctx.getPackageName(),android.Manifest.permission.POST_NOTIFICATIONS);
+        JSONObject media=new JSONObject("{mediaID:'audbg',mimeType:'audio/mp4',mediaName:'Voice message.m4a',size:640044}");
+        {short[] tone=new short[16000*20];for(int i=0;i<tone.length;i++)tone[i]=(short)Math.round(8000*Math.sin(2*Math.PI*330*i/16000.0));
+            java.io.ByteArrayOutputStream wav=new java.io.ByteArrayOutputStream();java.nio.ByteBuffer h=java.nio.ByteBuffer.allocate(44).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            h.put("RIFF".getBytes()).putInt(36+tone.length*2).put("WAVE".getBytes()).put("fmt ".getBytes()).putInt(16).putShort((short)1).putShort((short)1).putInt(16000).putInt(32000).putShort((short)2).putShort((short)16)
+             .put("data".getBytes()).putInt(tone.length*2);wav.write(h.array());java.nio.ByteBuffer body=java.nio.ByteBuffer.allocate(tone.length*2).order(java.nio.ByteOrder.LITTLE_ENDIAN);for(short t:tone)body.putShort(t);wav.write(body.array());
+            java.io.File f=MediaCache.file(ctx,media,false);f.getParentFile().mkdirs();java.nio.file.Files.write(f.toPath(),wav.toByteArray());}
+        try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'voice-bg',name:'Vera Background',type:'RCS',lastMessageTimestamp:"+now*1000+",participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'vb',number:'+15557770133'},fullName:'Vera Background',firstName:'Vera'}]}"));
+            store.message(new JSONObject("{messageID:'vb-1',conversationID:'voice-bg',participantID:'vb',timestamp:"+(now-60_000L)*1000+",messageStatus:{status:'INCOMING_COMPLETE'},messageInfo:[{mediaContent:"+media+"}]}"),0,true);}
+        java.lang.reflect.Field playerField=field("player");
+        java.util.concurrent.Callable<Boolean> playing=()->{boolean[] on={false};runOnMainSync(()->{try{android.media.MediaPlayer p=(android.media.MediaPlayer)playerField.get(a);on[0]=p!=null&&p.isPlaying();}catch(Exception ignored){}});return on[0];};
+        try{onMainCall(()->method("thread",String.class).invoke(a,"voice-bg"));waitForIdleSync();
+            onMainCall(()->method("toggleVoice",JSONObject.class,JSONObject.class).invoke(a,media,new JSONObject("{messageID:'vb-1',conversationID:'voice-bg',participantID:'vb'}")));
+            check(waitUntil(playing,6000),"The voice message didn't start playing");
+            check(waitUntil(VoicePlayService::showing,3000)&&VoicePlayService.session()!=null,"A playing voice message has no controls in the notification");
+            // Leave the app: it keeps playing.
+            getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME);Thread.sleep(2500);
+            check(playing.call(),"Leaving the app stopped the voice message");
+            getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS);Thread.sleep(1200);shoot("shot-voice-notification");
+            getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);Thread.sleep(600);
+            // The lock screen's and notification's controls.
+            android.media.session.MediaController.TransportControls remote=VoicePlayService.session().getController().getTransportControls();
+            remote.pause();check(waitUntil(()->!playing.call(),3000),"Pause from the notification didn't pause it");
+            check(VoicePlayService.session().getController().getPlaybackState().getState()==android.media.session.PlaybackState.STATE_PAUSED,"The lock screen doesn't show it paused");
+            remote.play();check(waitUntil(playing,3000),"Play from the notification didn't play it again");
+            int[] before={0},after={0};runOnMainSync(()->{try{before[0]=((android.media.MediaPlayer)playerField.get(a)).getCurrentPosition();}catch(Exception ignored){}});
+            remote.sendCustomAction("ahead",null);Thread.sleep(500);
+            runOnMainSync(()->{try{after[0]=((android.media.MediaPlayer)playerField.get(a)).getCurrentPosition();}catch(Exception ignored){}});
+            check(after[0]-before[0]>=9000,"Ahead 10 seconds didn't move it on ("+before[0]+" → "+after[0]+" ms)");
+            remote.stop();check(waitUntil(()->!VoicePlayService.showing(),3000),"Stopping it left its notification up");
+            ctx.startActivity(new android.content.Intent(ctx,PairedActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK|android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));Thread.sleep(1500);waitForIdleSync();
+            // Recording: keeps going off screen; Stop in the notification keeps it in the message.
+            getUiAutomation().grantRuntimePermission(ctx.getPackageName(),android.Manifest.permission.RECORD_AUDIO);
+            java.lang.reflect.Field rec=field("recorder");onMainCall(()->method("startRecording").invoke(a));Thread.sleep(600);
+            boolean[] recording={false};runOnMainSync(()->{try{recording[0]=rec.get(a)!=null;}catch(Exception ignored){}});
+            if(!recording[0]){voiceOffScreen="recording not checked: the test phone has no microphone";if(waitForText("OK",1500,true))pressText("OK");}
+            else{check(waitUntil(VoiceRecordService::holding,3000),"Recording has no notification to keep it going off screen");
+                getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME);Thread.sleep(2500);
+                runOnMainSync(()->{try{recording[0]=rec.get(a)!=null;}catch(Exception ignored){}});check(recording[0],"Leaving the app stopped the recording");
+                getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS);Thread.sleep(1200);shoot("shot-voice-recording");
+                getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);Thread.sleep(600);
+                ctx.startService(new android.content.Intent(ctx,VoiceRecordService.class).setAction("stop"));
+                check(waitUntil(()->{boolean[] r={true};runOnMainSync(()->{try{r[0]=rec.get(a)!=null;}catch(Exception ignored){}});return !r[0];},3000),"Stop in the notification didn't stop the recording");
+                java.util.List<?> kept=(java.util.List<?>)field("outgoing").get(a);check(kept.size()==1,"Stop in the notification didn't keep the recording in the message ("+kept.size()+")");
+                check(!VoiceRecordService.holding(),"The recording's notification stayed after it stopped");voiceOffScreen="recording checked";}}
+        finally{try{onMainCall(()->method("stopAudio").invoke(a));}catch(Exception ignored){}
+            if(!a.hasWindowFocus()){ctx.startActivity(new android.content.Intent(ctx,PairedActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK|android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));Thread.sleep(1500);}
+            runOnMainSync(()->{try{((java.util.List<?>)field("outgoing").get(a)).clear();}catch(Exception ignored){}});
+            onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("voice-bg");}}}
     private static android.view.View described(android.view.View v,String what){if(what.contentEquals(String.valueOf(v.getContentDescription())))return v;
         if(v instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++){android.view.View hit=described(((android.view.ViewGroup)v).getChildAt(i),what);if(hit!=null)return hit;}return null;}
     /** Drags a chat head onto the × with real touches, to wherever the × shows up on screen. */
@@ -2329,6 +2386,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkTheirMusic((PairedActivity)activity);
         checkGroupsInCommon((PairedActivity)activity);
         checkNewGroup((PairedActivity)activity);
+        checkVoiceOffScreen((PairedActivity)activity);
         checkSongPlaying((PairedActivity)activity);
         checkChatReminder((PairedActivity)activity);
         checkSearchClear((PairedActivity)activity);
@@ -2341,7 +2399,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkSnoozeUntilQuiet();
         checkSentTextStays((PairedActivity)activity);
         checkBubbleStepsAside((PairedActivity)activity);
-        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED, sent text stays put, contact as text, contacts listed once, pins and who's this, emoji picker tabs and search, notes, chat menu sheet, inbox menu sheet, dialog look, settings pages, send while loading, lock screen previews, hold a link, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","MESSAGE_CENTER_SMOKE_PASS: SPEED "+openAndBack+" END_SPEED (voice off screen: "+voiceOffScreen+"), sent text stays put, contact as text, contacts listed once, pins and who's this, emoji picker tabs and search, notes, chat menu sheet, inbox menu sheet, dialog look, settings pages, send while loading, lock screen previews, hold a link, gifs keep playing, sent photos kept, snooze until quiet, bubble steps aside in its open chat, notification privacy, "+speed+", JNI, Keystore, history conflict, ID deduplication, activity launch, bubble chat render with attachments, failed retry, outbox, link, voice transcript, search, code chip, starred, scheduled, preview-only media, location, group events, photo fetch state, placeholder previews, screenshots allowed, backup, addresses, chat background, smart taps, scroll anchoring (chat + inbox), message effects and invisible ink, shared photos/links/files, contact search, voice message cards, sending photos (sized to fit), sending videos (compressed, upright, mono for MMS), iPhone stickers and Genmoji (4:4:4 + monochrome, sandboxed)\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){StringBuilder where=new StringBuilder();for(StackTraceElement f:e.getStackTrace())if(f.getClassName().contains("OnDeviceSmoke")&&where.length()<200)where.append(" at ").append(f.getMethodName()).append(':').append(f.getLineNumber());
         result.putString("stream","MESSAGE_CENTER_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+where+"\n");finish(Activity.RESULT_CANCELED,result);}}
 }
