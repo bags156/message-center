@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Floating chat heads (only if you choose them in Settings → Notifications → Floating chats). -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -83,6 +85,10 @@
             </intent-filter>
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
+        <!-- A chat opened from a floating chat head: its own task, a rounded window over whatever app is on screen. -->
+        <activity android:name=".FloatingChatActivity" android:exported="false" android:theme="@style/FloatingChat"
+            android:taskAffinity="io.github.bags156.messagecenter.floating" android:launchMode="singleTask" android:excludeFromRecents="true"
+            android:resizeableActivity="true" android:windowSoftInputMode="adjustResize" android:label="Message Center" />
         <!-- Conversation bubbles: Android requires the bubble's activity to be embeddable and resizable. -->
         <activity android:name=".BubbleActivity" android:exported="false" android:allowEmbedded="true" android:resizeableActivity="true"
             android:documentLaunchMode="always" android:windowSoftInputMode="adjustResize" android:label="Message Center" />
