@@ -1,5 +1,5 @@
-Message Center 1.5.61.
+Message Center 1.5.62.
 
-- Typing in a floating chat: with the keyboard up, the floating chat window now shrinks to end just above it, so the box you type in stays in view. It hid behind the keyboard before. When the keyboard goes down, the window grows back to its full height.
+- Chat heads trail: drag the stack and the heads behind follow the front one with a little lag, the way Android's bubbles do. Stop, and they catch up and tuck back in behind it. Let go, and they follow the stack to the side and settle back into it. Over the ✕, they're pulled onto it.
 
 Install over the existing app through Obtainium. Your pairing, conversations and settings are retained.

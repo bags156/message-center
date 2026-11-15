@@ -18,6 +18,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.util.TypedValue;
+import android.view.Choreographer;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
@@ -42,7 +43,8 @@ import java.util.Map;
  * itself, at full strength). A new message shows its head in three steps, each set in Settings: at
  * first (100% for 5 seconds), then settled (50% for 2 minutes), then faded (15%) until it's
  * touched again; touching or dragging one starts the same steps over when you let go. Several heads
- * sit in one stack (the newest on top); tapping the stack spreads them out, and tapping a head
+ * sit in one stack (the newest on top; dragged, the ones behind trail after it like Android's
+ * bubbles, and settle back in when it stops); tapping the stack spreads them out, and tapping a head
  * opens its chat in a floating window (tapping elsewhere, or a few seconds untouched, stacks them
  * again). Drag to move them (they settle at the nearest side); drag the stack onto the × at the
  * bottom to close them all, or, spread out, drag one head onto it to close just that chat. Needs
@@ -90,6 +92,10 @@ final class ChatHeads {
     private static LinearLayout column;
     private static WindowManager.LayoutParams spot;
     private static View target, lifted;
+    /** The stack as drawn (its box, and whose faces), and its faces trailing while it's dragged. */
+    private static View stackBox;
+    private static List<String> stacked = new ArrayList<>();
+    private static Trail trail;
     private static GradientDrawable ring;
     private static ValueAnimator fading, settling;
     private static final Runnable toHalf = () -> stage(1), toFaded = () -> stage(2);
@@ -128,6 +134,13 @@ final class ChatHeads {
     static List<String> heads() { return new ArrayList<>(chats); }
     /** The heads' window, when showing (for the device checks). */
     static View view() { return column; }
+    /** Where the trailing faces are on screen (front first, x then y), while the stack is dragged (for the device checks). */
+    static float[] trail() {
+        Trail t = trail; if (t == null) return null;
+        float[] out = new float[t.n * 2];
+        for (int i = 0; i < t.n; i++) { out[2 * i] = t.x[i]; out[2 * i + 1] = t.y[i]; }
+        return out;
+    }
     /** The × to drop them on, while one is being dragged (for the device checks). */
     static View closeTarget() { return target; }
 
@@ -194,8 +207,9 @@ final class ChatHeads {
         for (String id : chats) if (!id.equals(ChatBubbles.onScreen())) shown.add(id);
         if (!on(app) || !allowed(app) || !floating.isEmpty() || shown.isEmpty()) { detach(); return; }
         if (column == null && !attach()) return;
-        column.removeAllViews();
         if (shown.size() == 1) spread = false;
+        if (shown.size() < 2 || spread) endTrail();
+        column.removeAllViews();
         if (shown.size() > 1 && !spread) column.addView(stack(shown), new LinearLayout.LayoutParams(dp(60), dp(60 + Math.min(2, shown.size() - 1) * PEEK)));
         else for (String id : shown) {
             LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(dp(60), dp(60));
@@ -227,7 +241,7 @@ final class ChatHeads {
     }
 
     private static void detach() {
-        hideTarget(); dropLifted();
+        hideTarget(); dropLifted(); endTrail();
         if (column != null) { try { wm.removeView(column); } catch (Exception ignored) {} column = null; }
     }
 
@@ -265,6 +279,8 @@ final class ChatHeads {
         box.setContentDescription("Floating chats: " + shown.size() + " chats" + (total > 0 ? ", " + total + " new" : "") + ". Tap to show them, or drag to move.");
         box.setOnClickListener(v -> { spread = true; draw(); main().removeCallbacks(restack); main().postDelayed(restack, 6000); });
         box.setOnTouchListener(new Drag(shown.get(0)));
+        stackBox = box; stacked = new ArrayList<>(shown.subList(0, behind + 1));
+        if (trail != null) { box.setAlpha(0f); trail.box = box; }
         return box;
     }
 
@@ -316,6 +332,7 @@ final class ChatHeads {
                     if (!dragging && Math.hypot(dx, dy) > ViewConfiguration.get(app).getScaledTouchSlop()) {
                         dragging = true; showTarget();
                         if (spread && column.getChildCount() > 1) lift = lift(v);
+                        else if (v == stackBox && stacked.size() > 1) startTrail(v);
                     }
                     if (!dragging) return true;
                     Rect s = screen();
@@ -329,6 +346,7 @@ final class ChatHeads {
                     }
                     boolean was = over;
                     over = onTarget(e.getRawX(), e.getRawY());
+                    if (trail != null) trail.over = over;
                     if (over != was) {
                         if (targetFace != null) { targetFace.animate().scaleX(over ? 1.25f : 1f).scaleY(over ? 1.25f : 1f).setDuration(120).start(); }
                         if (ring != null) ring.setColor(over ? 0xeee11d48 : 0xcc111827);
@@ -341,6 +359,7 @@ final class ChatHeads {
                     touching = false;
                     boolean click = !dragging && e.getActionMasked() == MotionEvent.ACTION_UP;
                     hideTarget();
+                    if (trail != null) { if (!(dragging && over)) trail.over = false; trail.kick(); main().removeCallbacks(trailWatch); main().postDelayed(trailWatch, 1500); }
                     if (lift != null) {
                         lift = null; dropLifted();
                         if (over) { main().post(() -> remove(app, id)); return true; }
@@ -376,6 +395,124 @@ final class ChatHeads {
             startX = p.x; startY = p.y;
             return p;
         }
+    }
+
+    /**
+     * While the stack is dragged, its faces are drawn in a window over the screen (one that takes
+     * no touches): the front one stays with the finger, and each one behind springs after the one
+     * ahead of it, so they trail like Android's bubbles. Over the ×, they're pulled onto it. Let
+     * go, they follow the stack to the side and settle back into it, and the stack shows again.
+     */
+    private static final class Trail implements Choreographer.FrameCallback {
+        final int n; final float[] x, y, vx, vy; final View[] faces; final View badge;
+        final FrameLayout room; final int offX, offY; View box; boolean over; long last;
+        Trail(View box) {
+            this.box = box;
+            n = stacked.size();
+            x = new float[n]; y = new float[n]; vx = new float[n]; vy = new float[n]; faces = new View[n];
+            int[] at = new int[2]; box.getLocationOnScreen(at);
+            // Where the front face sits against the stack's window position (Android offsets these windows from the screen).
+            offX = at[0] - spot.x + dp(3); offY = at[1] - spot.y + dp(3);
+            room = new FrameLayout(app); room.setClipChildren(false);
+            int total = 0;
+            for (String id : stacked) total += unread.getOrDefault(id, 0);
+            for (int i = n - 1; i >= 0; i--) {
+                ImageView face = new ImageView(app);
+                face.setImageBitmap(face(stacked.get(i)));
+                face.setElevation(dp(3 - i));
+                face.setOutlineProvider(new ViewOutlineProvider() { @Override public void getOutline(View v, Outline o) { o.setOval(0, 0, v.getWidth(), v.getHeight()); } });
+                face.setClipToOutline(true);
+                GradientDrawable edge = new GradientDrawable(); edge.setShape(GradientDrawable.OVAL); edge.setStroke(dp(2), 0xe6ffffff);
+                face.setForeground(edge);
+                if (i > 0) { face.setScaleX(1f - 0.1f * i); face.setScaleY(1f - 0.1f * i); face.setColorFilter(0x33000000); }
+                room.addView(face, new FrameLayout.LayoutParams(dp(54), dp(54), Gravity.TOP | Gravity.START));
+                faces[i] = face;
+                x[i] = at[0] + dp(3); y[i] = at[1] + dp(3 + PEEK * i);
+            }
+            if (total > 0) {
+                TextView b = new TextView(app);
+                b.setText(total > 9 ? "9+" : String.valueOf(total));
+                b.setTextColor(Color.WHITE); b.setTextSize(11); b.setGravity(Gravity.CENTER); b.setIncludeFontPadding(false);
+                GradientDrawable dot = new GradientDrawable(); dot.setShape(GradientDrawable.OVAL); dot.setColor(0xffe11d48); dot.setStroke(dp(2), Color.WHITE);
+                b.setBackground(dot); b.setElevation(dp(5));
+                room.addView(b, new FrameLayout.LayoutParams(dp(22), dp(22), Gravity.TOP | Gravity.START));
+                badge = b;
+            } else badge = null;
+            place();
+        }
+
+        /** Where the front face is headed: with the stack, or onto the ×. */
+        private float[] lead() {
+            if (over && target != null && target.getWidth() > 0) {
+                int[] t = new int[2]; target.getLocationOnScreen(t);
+                return new float[] { t[0] + target.getWidth() / 2f - dp(27), t[1] + target.getHeight() / 2f - dp(27) };
+            }
+            return new float[] { spot.x + offX, spot.y + offY };
+        }
+
+        @Override public void doFrame(long nanos) {
+            if (trail != this) return;
+            float dt = last == 0 ? 0.016f : Math.min(0.034f, (nanos - last) / 1e9f); last = nanos;
+            // Small steps: the front one's spring is stiff, and big steps make it fly apart.
+            int steps = Math.max(1, (int) Math.ceil(dt / 0.002f)); float h = dt / steps;
+            boolean still = true;
+            for (int k = 0; k < steps; k++) {
+                float[] to = lead();
+                for (int i = 0; i < n; i++) {
+                    float tx = i == 0 ? to[0] : x[i - 1], ty = i == 0 ? to[1] : y[i - 1] + dp(PEEK);
+                    // The front one stays with the finger (and is pulled more gently onto the ×); the ones
+                    // behind are looser, so they lag and swing in.
+                    float w = i == 0 ? (over ? 40f : 140f) : 24f, z = i == 0 ? 1f : 0.72f;
+                    vx[i] += (w * w * (tx - x[i]) - 2 * z * w * vx[i]) * h; x[i] += vx[i] * h;
+                    vy[i] += (w * w * (ty - y[i]) - 2 * z * w * vy[i]) * h; y[i] += vy[i] * h;
+                    if (!Float.isFinite(x[i]) || !Float.isFinite(y[i]) || !Float.isFinite(vx[i]) || !Float.isFinite(vy[i])) { x[i] = tx; y[i] = ty; vx[i] = 0; vy[i] = 0; }
+                    if (k == steps - 1 && (Math.abs(tx - x[i]) > 0.5f || Math.abs(ty - y[i]) > 0.5f || Math.hypot(vx[i], vy[i]) > 20)) still = false;
+                }
+            }
+            place();
+            if (still && !touching && (settling == null || !settling.isRunning())) { endTrail(); return; }
+            Choreographer.getInstance().postFrameCallback(this);
+        }
+
+        private void place() {
+            int[] o = new int[2]; room.getLocationOnScreen(o);
+            for (int i = 0; i < n; i++) { faces[i].setTranslationX(x[i] - o[0]); faces[i].setTranslationY(y[i] - o[1]); }
+            if (badge != null) { badge.setTranslationX(x[0] + dp(35) - o[0]); badge.setTranslationY(y[0] - dp(3) - o[1]); }
+            room.setAlpha(column != null ? column.getAlpha() : 1f);
+        }
+
+        void kick() { Choreographer.getInstance().removeFrameCallback(this); Choreographer.getInstance().postFrameCallback(this); }
+    }
+
+    private static final Runnable trailWatch = ChatHeads::endTrail;
+
+    private static void startTrail(View box) {
+        endTrail();
+        Trail t = new Trail(box);
+        WindowManager.LayoutParams p = new WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN, PixelFormat.TRANSLUCENT);
+        p.gravity = Gravity.TOP | Gravity.START;
+        p.setFitInsetsTypes(0);
+        p.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+        p.setTitle("Message Center chat heads, moving");
+        try { wm.addView(t.room, p); } catch (Exception e) { return; }
+        trail = t;
+        // The stack hides once its trailing faces are drawn in the same place (no blank frame between).
+        t.room.getViewTreeObserver().addOnDrawListener(new android.view.ViewTreeObserver.OnDrawListener() {
+            boolean done;
+            @Override public void onDraw() { if (done) return; done = true; t.room.post(() -> { if (trail == t && t.box != null) t.box.setAlpha(0f); t.place(); }); }
+        });
+        t.kick();
+    }
+
+    /** Puts the stack back as it was, and takes the trailing faces away. */
+    private static void endTrail() {
+        Trail t = trail; if (t == null) return;
+        trail = null;
+        main().removeCallbacks(trailWatch);
+        Choreographer.getInstance().removeFrameCallback(t);
+        if (t.box != null) t.box.setAlpha(1f);
+        try { wm.removeView(t.room); } catch (Exception ignored) {}
     }
 
     private static void dropLifted() {
