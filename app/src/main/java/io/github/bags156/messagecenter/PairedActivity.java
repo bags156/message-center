@@ -141,6 +141,8 @@ public class PairedActivity extends Activity {
     private final Runnable typingTick=this::updateTyping;
     /** True when this screen is shown inside an Android conversation bubble (see BubbleActivity). */
     protected boolean bubble(){return false;}
+    /** Whether the chat itself is on screen (not its details, a photo…). */
+    protected boolean atChat(){return "chat".equals(screen);}
     private TextView loginAddress;private int signedInPolls,loginSkips;
     private final android.os.Handler loginTimer=new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable loginPoll=this::pollLogin;
@@ -4223,7 +4225,7 @@ public class PairedActivity extends Activity {
     private static String settingsTitle(String page){switch(page){case "messages":return "Messages";case "media":return "Photos & media";case "notifications":return "Notifications";
         case "automation":return "Automation";case "appearance":return "Appearance";case "apps":return "Apps";case "connection":return "Connection";case "data":return "Data & about";default:return "Settings";}}
     /** Words people might search for that a setting's own words don't say. */
-    private static String settingKeywords(String title){switch(title){case "Theme":return "dark light black mode night colors";case "Text size":return "font bigger smaller larger";case "Font":return "typeface custom upload ttf otf letters fonts";case "Upload a font":return "typeface custom ttf otf letters fonts";case "Unread count":return "badge number total inbox";case "Chat color":return "theme bubble colour all chats every conversation";case "Calls in chats":return "phone call log duration missed";
+    private static String settingKeywords(String title){switch(title){case "Theme":return "dark light black mode night colors";case "Text size":return "font bigger smaller larger";case "Font":return "typeface custom upload ttf otf letters fonts";case "Floating chats":return "bubbles chat heads see-through transparent overlay float";case "Upload a font":return "typeface custom ttf otf letters fonts";case "Unread count":return "badge number total inbox";case "Chat color":return "theme bubble colour all chats every conversation";case "Calls in chats":return "phone call log duration missed";
         case "Undo send":return "unsend delay take back cancel";case "Typing indicators":return "typing privacy";case "Read receipts":return "seen read privacy";case "Bubbles":return "floating chat heads";
         case "Busy auto-reply":return "away driving automatic reply";case "Notifications":return "sound vibration alerts";case "Background activity":return "battery optimization";
         case "Back up app data":return "backup export save";case "Restore from a backup":return "import backup";case "Photo quality":return "pictures compress size";
@@ -4324,8 +4326,10 @@ public class PairedActivity extends Activity {
                 List<String> labels=java.util.Arrays.asList("Same as when unlocked","Name only","Nothing (just “New message”)");String[] values={NotificationPrivacy.SAME,NotificationPrivacy.NAME,NotificationPrivacy.NONE};List<Runnable> actions=new ArrayList<>();
                 for(String v:values)actions.add(()->{NotificationPrivacy.setLockMode(this,v);PairedService.refreshChatNotifications(this);if(screen.equals("settings"))settings();});
                 menuSheet("While your phone is locked, notifications show",labels,actions);});
-            settingRow(alerts,R.drawable.ic_chat,0xff14b8a6,"Bubbles","Chats that float over other apps",null,()->startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName())));
+            boolean heads=ChatHeads.on(this);
+            settingRow(alerts,R.drawable.ic_chat,0xff14b8a6,"Floating chats",heads?"Message Center's chat heads: see-through when left alone, at the strength below":"Android's bubbles. Chat heads can be see-through instead",heads?"Chat heads":"Android's bubbles",this::chooseFloatingStyle);
             settingRow(alerts,R.drawable.ic_notification,0xff64748b,"Hide \"Message Center is running\"","Android requires it while connected. Turn it off and messages still arrive; you're told if the connection drops.",null,()->{try{startActivity(PairedService.channelSettings(this,PairedService.RUNNING));}catch(Exception e){openAppSettings();}});
+            if(heads)chatHeadSettings(content);
             LinearLayout words=settingsGroup(content,"Alerts that get through");
             String keywords=prefs.getString("alert_keywords","");
             settingRow(words,R.drawable.ic_search,0xfff59e0b,"Keyword alerts","Notify for these words, even in muted chats",keywords.isEmpty()?"None":keywords,this::editKeywords);
@@ -4433,6 +4437,33 @@ public class PairedActivity extends Activity {
         r.setContentDescription(title+(value==null?"":", "+value)+(sub==null?"":". "+sub));
         if(settingShown(title,sub,value))addSettingRow(group,r);return line[0];}
     /** An on/off setting with a switch; changing it saves at once and leaves the screen where it is. */
+    /** Floating chats as Android's bubbles, or as Message Center's own chat heads (which can be see-through). */
+    private void chooseFloatingStyle(){boolean heads=ChatHeads.on(this);
+        menuSheet("Floating chats",java.util.Arrays.asList((heads?"":"\u2713 ")+"Android's bubbles",(heads?"\u2713 ":"")+"Message Center's chat heads (see-through)"),java.util.Arrays.<Runnable>asList(
+            ()->{prefs.edit().putString(ChatHeads.STYLE,"android").apply();PairedService.floatingStyleChanged(this);settings();},
+            ()->{prefs.edit().putString(ChatHeads.STYLE,ChatHeads.HEADS).apply();PairedService.floatingStyleChanged(this);settings();
+                if(!ChatHeads.allowed(this)){toast("Allow Message Center to display over other apps for chat heads.");askOverlay();}}));}
+    private void askOverlay(){try{startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:"+getPackageName())));}catch(Exception e){toast("Open Settings → Apps → Message Center → Display over other apps.");}}
+    /** Settings → Notifications, with chat heads on: how see-through they are, the permission, and which chats float. */
+    private void chatHeadSettings(LinearLayout content){LinearLayout group=settingsGroup(content,"Chat heads");
+        boolean may=ChatHeads.allowed(this);
+        if(!may)settingRow(group,R.drawable.ic_lock,0xffef4444,"Display over other apps","Chat heads need this to float over other apps",null,this::askOverlay);
+        // How solid they are while left alone, with a head that shows it as you slide.
+        LinearLayout box=vertical();box.setPadding(dp(16),dp(12),dp(16),dp(10));
+        LinearLayout top=row();TextView name=text("Strength when left alone",16,ink,false);top.addView(name,new LinearLayout.LayoutParams(0,-2,1));
+        TextView value=text(ChatHeads.opacity(this)+"%",14,muted,false);top.addView(value);box.addView(top);
+        TextView sub=text("Touching one, or a new message, brings it up to full",13,muted,false);sub.setPadding(0,dp(2),0,dp(6));box.addView(sub);
+        LinearLayout slide=row();ImageView sample=new ImageView(this);GradientDrawable dotShape=oval(ChatTheme.of(chatSettings.allTheme()).accent(dark));sample.setImageResource(R.drawable.ic_chat);sample.setImageTintList(android.content.res.ColorStateList.valueOf(Color.WHITE));
+        sample.setBackground(dotShape);sample.setPadding(dp(9),dp(9),dp(9),dp(9));sample.setAlpha(ChatHeads.opacity(this)/100f);sample.setContentDescription("How a chat head looks");
+        android.widget.SeekBar bar=new android.widget.SeekBar(this);bar.setMax(100-ChatHeads.MIN_OPACITY);bar.setProgress(ChatHeads.opacity(this)-ChatHeads.MIN_OPACITY);bar.setContentDescription("Chat heads' strength when left alone");bar.setSplitTrack(false);
+        slide.addView(bar,new LinearLayout.LayoutParams(0,dp(40),1));LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(dp(40),dp(40));sp.setMarginStart(dp(10));slide.addView(sample,sp);box.addView(slide);
+        bar.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener(){
+            @Override public void onProgressChanged(android.widget.SeekBar b,int p,boolean user){int v=p+ChatHeads.MIN_OPACITY;value.setText(v+"%");sample.setAlpha(v/100f);if(user){prefs.edit().putInt(ChatHeads.OPACITY,v).apply();ChatHeads.refresh(PairedActivity.this);}}
+            @Override public void onStartTrackingTouch(android.widget.SeekBar b){}
+            @Override public void onStopTrackingTouch(android.widget.SeekBar b){}});
+        box.setContentDescription("Strength when left alone");if(settingShown("Strength when left alone","see-through transparent opacity chat heads bubbles",null))addSettingRow(group,box);
+        settingRow(group,R.drawable.ic_chat,0xff14b8a6,"Which chats float","The ones Android's bubble settings let float (all, or those you picked), and any you open as a bubble",null,()->startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName())));
+        if(!ChatHeads.heads().isEmpty())settingRow(group,R.drawable.ic_close,0xff64748b,"Close all chat heads","Or drag them onto the \u2715 at the bottom of the screen",null,()->{ChatHeads.clear(this);settings();});}
     private static final int PICK_FONT=89;
     /**
      * Settings → Appearance: your uploaded fonts (each in its own lettering, with where it's used; a

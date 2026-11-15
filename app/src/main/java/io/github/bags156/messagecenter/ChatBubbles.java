@@ -66,6 +66,7 @@ final class ChatBubbles {
         onScreen = chat == null ? "" : chat;
         main().removeCallbacks(restore);
         if (!onScreen.isEmpty()) takeDown(onScreen);
+        ChatHeads.refresh(context);
         // Any other chat whose bubble was taken down gets it back after a moment.
         main().postDelayed(restore, RESTORE_DELAY_MS);
     }

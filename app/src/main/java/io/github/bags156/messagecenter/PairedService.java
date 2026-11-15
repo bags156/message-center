@@ -133,7 +133,7 @@ public final class PairedService extends Service {
     }
     @Override public void onCreate() {
         super.onCreate();current=this;Diagnostics.init(this);HevcSandbox.init(this);GivenNames.init(this);Nicknames.load(this);store=new PairedStore(this);vault=new SessionVault(this);outbox=new Outbox(this);autoResend=new AutoResend(this);receipts=new ReadReceiptQueue(this);attachmentOutbox=new MediaOutbox(this);attachmentOutbox.recover();outbox.recover();watchWakeAndNetwork();main.postDelayed(stuckCheck,30_000);Arrivals.registerAll(this);
-        NotificationManager manager=getSystemService(NotificationManager.class);
+        NotificationManager manager=getSystemService(NotificationManager.class);ChatHeads.refresh(this);
         try{manager.deleteNotificationChannel(OLD_CONNECTION);}catch(Exception ignored){}
         NotificationChannel running=new NotificationChannel(RUNNING,"Running in background",NotificationManager.IMPORTANCE_MIN);
         running.setDescription("Android requires this while Message Center stays connected. You can turn it off; messages keep arriving.");running.setShowBadge(false);manager.createNotificationChannel(running);
@@ -573,6 +573,11 @@ public final class PairedService extends Service {
      */
     static String showBubble(Context context,String id) {
         NotificationManager nm=context.getSystemService(NotificationManager.class);
+        if(ChatHeads.on(context)){
+            if(!ChatHeads.allowed(context)){try{context.startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:"+context.getPackageName())).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}catch(Exception ignored){}
+                return "Allow Message Center to display over other apps, then try again.";}
+            if(!NotificationPrivacy.showName(context,id))return "Floating chats show the chat's name and photo, so they're off while this chat's notifications show nothing. Change it in this chat's Details, or in Settings → Notifications.";
+            ChatHeads.add(context,id,true,false);return "";}
         if(context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return "Allow Message Center notifications first; bubbles are a kind of notification.";
         if(!nm.areBubblesEnabled()||nm.getBubblePreference()==NotificationManager.BUBBLE_PREFERENCE_NONE){
             try{context.startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,context.getPackageName()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}catch(Exception ignored){}
@@ -598,8 +603,20 @@ public final class PairedService extends Service {
                 if(!temp.renameTo(to))temp.delete();}
             catch(Exception e){temp.delete();Diagnostics.note("Couldn't keep the sent attachment: "+e.getClass().getSimpleName());}
             return;}}
+    /**
+     * Switching how chats float: chats floating as Android's bubbles become chat heads (their
+     * notification stays, without the bubble); switching back closes the heads.
+     */
+    static void floatingStyleChanged(Context context){
+        NotificationManager nm=context.getSystemService(NotificationManager.class);
+        if(!ChatHeads.on(context)){ChatHeads.clear(context);return;}
+        for(StatusBarNotification n:nm.getActiveNotifications()){String tag=n.getTag();if(tag==null||!tag.startsWith("chat:")||(n.getNotification().flags&Notification.FLAG_BUBBLE)==0)continue;
+            String id=tag.substring(5);ChatHeads.add(context,id,false,false);Notification.BubbleMetadata meta=n.getNotification().getBubbleMetadata();
+            try{if(meta!=null&&meta.isNotificationSuppressed())nm.cancel(tag,n.getId());else nm.notify(tag,n.getId(),Notification.Builder.recoverBuilder(context,n.getNotification()).setBubbleMetadata(null).setOnlyAlertOnce(true).build());}catch(Exception ignored){}}
+        ChatHeads.refresh(context);
+    }
     static boolean restoreBubble(String id) {
-        PairedService s=current;if(s==null||s.store==null)return false;
+        PairedService s=current;if(s==null||s.store==null)return false;if(ChatHeads.on(s))return true;
         if(s.store.chat(id)!=null&&NotificationPrivacy.showName(s,id))s.postConversation(id,null,true,false,true);
         return true;
     }
@@ -719,7 +736,7 @@ public final class PairedService extends Service {
     private void postConversation(String id,JSONObject m,boolean quiet,boolean bubbleNow,boolean seen) {
         if(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return;
         // You're looking at this chat in the app: no alert, and no bubble over the message you're reading.
-        if(!bubbleNow&&!seen&&id.equals(ChatBubbles.onScreen()))return;
+        if(!bubbleNow&&!seen&&(id.equals(ChatBubbles.onScreen())||id.equals(ChatHeads.floatingChat())))return;
         JSONObject chat=store.chat(id);
         String title=chat==null?"New message":PairedProtocol.title(chat);boolean group=chat!=null&&PairedProtocol.other(chat)==null;
         List<JSONObject> recent;
@@ -760,7 +777,11 @@ public final class PairedService extends Service {
         if(quiet)builder.setGroup("quiet-"+id).setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY).setOnlyAlertOnce(true);
         // A long-lived shortcut makes this a "conversation" notification, which Android requires for bubbles.
         Bitmap icon=chatIcon(chat,title);String shortcut=publishShortcut(id,title,icon);
-        if(shortcut!=null){builder.setShortcutId(shortcut);builder.setBubbleMetadata(bubble(id,icon,bubbleNow,seen));}
+        boolean heads=ChatHeads.on(this);
+        if(shortcut!=null){builder.setShortcutId(shortcut);if(!heads)builder.setBubbleMetadata(bubble(id,icon,bubbleNow,seen));}
+        // Floating chat heads instead of Android's bubbles: a new message brings up its chat's head (opening it, from "Open as bubble").
+        if(heads&&(bubbleNow||(m!=null&&!PairedProtocol.outgoing(m,chat)&&ChatHeads.floats(this,id,MESSAGES,shortcut))))ChatHeads.add(this,id,bubbleNow,m!=null);
+        if(heads&&bubbleNow)return;
         getSystemService(NotificationManager.class).notify("chat:"+id,1,builder.build());
     }
     private Bitmap chatIcon(JSONObject chat,String title) {

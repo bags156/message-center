@@ -1161,6 +1161,46 @@ public final class OnDeviceSmoke extends Instrumentation {
             box=(android.widget.EditText)field("composer").get(a);check(fontOf(box)==null,"Deleting the font left the message box in it");}
         finally{runOnMainSync(()->{for(Fonts.Entry e:Fonts.library(ctx))Fonts.delete(ctx,e.id);});bad.delete();
             onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("font-chat");}}}
+    /**
+     * Chat heads: with "Display over other apps" allowed and chat heads chosen, a new message brings
+     * up its chat's head at full strength, which settles to the chosen strength when left alone;
+     * tapping it opens the chat in a floating window (the heads step aside meanwhile, and come back
+     * when it closes); the setting shows its slider; closing them all takes them away.
+     */
+    private void checkChatHeads(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();long now=System.currentTimeMillis();
+        try(android.os.ParcelFileDescriptor out=getUiAutomation().executeShellCommand("appops set "+ctx.getPackageName()+" SYSTEM_ALERT_WINDOW allow")){new java.io.FileInputStream(out.getFileDescriptor()).read(new byte[64]);}catch(Exception ignored){}
+        long until=android.os.SystemClock.uptimeMillis()+3000;while(!android.provider.Settings.canDrawOverlays(ctx)&&android.os.SystemClock.uptimeMillis()<until)Thread.sleep(100);
+        check(android.provider.Settings.canDrawOverlays(ctx),"Couldn't allow display over other apps on the test phone");
+        android.content.SharedPreferences prefs=ctx.getSharedPreferences("paired",android.content.Context.MODE_PRIVATE);
+        prefs.edit().putString(ChatHeads.STYLE,ChatHeads.HEADS).putInt(ChatHeads.OPACITY,40).commit();
+        try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'head-chat',name:'Hana Head',type:'RCS',lastMessageTimestamp:"+now*1000+",participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'hh',number:'+15557770155'},fullName:'Hana Head',firstName:'Hana'}]}"));
+            store.message(new JSONObject().put("messageID","hh-1").put("conversationID","head-chat").put("participantID","hh").put("timestamp",(now-60_000L)*1000)
+                .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","Are you floating?")))),0,true);}
+        android.app.Instrumentation.ActivityMonitor floating=getInstrumentation().addMonitor(FloatingChatActivity.class.getName(),null,false);
+        try{onMainCall(()->method("inbox").invoke(a));waitForIdleSync();
+            runOnMainSync(()->ChatHeads.add(ctx,"head-chat",false,true));waitForIdleSync();Thread.sleep(300);
+            android.view.View[] heads={null};runOnMainSync(()->heads[0]=ChatHeads.view());
+            check(heads[0]!=null&&heads[0].isAttachedToWindow(),"A new message didn't bring up a chat head");
+            float[] alpha={0};runOnMainSync(()->alpha[0]=heads[0].getAlpha());check(alpha[0]>0.95f,"A new message's head isn't at full strength ("+alpha[0]+")");
+            Thread.sleep(4500);runOnMainSync(()->alpha[0]=heads[0].getAlpha());
+            check(Math.abs(alpha[0]-0.40f)<0.06f,"Left alone, the head isn't at the chosen strength ("+alpha[0]+", not 0.40)");
+            shoot("shot-chat-heads");
+            runOnMainSync(()->((android.view.ViewGroup)heads[0]).getChildAt(0).performClick());
+            android.app.Activity window=getInstrumentation().waitForMonitorWithTimeout(floating,6000);
+            check(window!=null,"Tapping a chat head didn't open the floating chat");
+            Thread.sleep(800);runOnMainSync(()->heads[0]=ChatHeads.view());check(heads[0]==null,"The heads stayed on screen over the floating chat");
+            int[] size={0,0};android.graphics.Rect full=ctx.getSystemService(android.view.WindowManager.class).getCurrentWindowMetrics().getBounds();
+            runOnMainSync(()->{android.view.View d=window.getWindow().getDecorView();size[0]=d.getWidth();size[1]=d.getHeight();});
+            check(size[0]>0&&size[0]<full.width()&&size[1]<full.height()*0.9,"The floating chat fills the screen ("+size[0]+"×"+size[1]+")");
+            shoot("shot-floating-chat");
+            runOnMainSync(window::finish);Thread.sleep(1200);
+            runOnMainSync(()->heads[0]=ChatHeads.view());check(heads[0]!=null,"Closing the floating chat didn't bring the heads back");
+            onMainCall(()->method("openSettingsPage",String.class).invoke(a,"notifications"));waitForIdleSync();Thread.sleep(300);
+            check(exactText(a,"Strength when left alone")!=null&&exactText(a,"40%")!=null,"Settings → Notifications doesn't show the chat heads' strength");
+            shoot("shot-chat-head-settings");
+            runOnMainSync(()->ChatHeads.clear(ctx));Thread.sleep(300);runOnMainSync(()->heads[0]=ChatHeads.view());check(heads[0]==null,"Closing all chat heads left one on screen");}
+        finally{getInstrumentation().removeMonitor(floating);runOnMainSync(()->ChatHeads.clear(ctx));prefs.edit().putString(ChatHeads.STYLE,"android").commit();
+            onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("head-chat");}}}
     private void checkThemeAll(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();ChatSettings settings=new ChatSettings(ctx);
         settings.themeAll("default",true);settings.setTheme("smoke","berry");
         try{onMainCall(()->method("chooseTheme",String.class).invoke(a,""));check(waitForText("Color for all chats",3000,true),"Chat color for all chats didn't open");shoot("shot-theme-all");
@@ -2154,6 +2194,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkBirthdayAndTracking((PairedActivity)activity);
         checkSuggestionsAndTranslate((PairedActivity)activity);
         checkCustomFont((PairedActivity)activity);
+        checkChatHeads((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();

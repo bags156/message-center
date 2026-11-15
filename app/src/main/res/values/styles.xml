@@ -14,6 +14,18 @@
         <item name="android:statusBarColor">#F8F9FC</item>
         <item name="android:navigationBarColor">#F8F9FC</item>
     </style>
+    <!-- A chat opened from a floating chat head: over the app beneath, which stays in view, dimmed. -->
+    <style name="FloatingChat" parent="AppTheme">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:backgroundDimAmount">0.3</item>
+        <item name="android:windowCloseOnTouchOutside">true</item>
+        <item name="android:windowAnimationStyle">@android:style/Animation.Dialog</item>
+        <item name="android:windowElevation">12dp</item>
+    </style>
     <!-- Dialogs: rounded like the app's sheets, in its colors, with sentence-case buttons. -->
     <style name="AppDialog" parent="android:style/Theme.Material.Light.Dialog.Alert">
         <item name="android:windowBackground">@drawable/dialog_background</item>
