@@ -459,8 +459,9 @@ final class ChatHeads {
                 float[] to = lead();
                 for (int i = 0; i < n; i++) {
                     float tx = i == 0 ? to[0] : x[i - 1], ty = i == 0 ? to[1] : y[i - 1] + dp(PEEK);
-                    // The front one is held tight to the finger; the ones behind are looser, so they lag and swing in.
-                    float w = i == 0 ? 50f : 24f, z = i == 0 ? 1f : 0.72f;
+                    // The front one stays with the finger (and is pulled more gently onto the ×); the ones
+                    // behind are looser, so they lag and swing in.
+                    float w = i == 0 ? (over ? 40f : 140f) : 24f, z = i == 0 ? 1f : 0.72f;
                     vx[i] += (w * w * (tx - x[i]) - 2 * z * w * vx[i]) * h; x[i] += vx[i] * h;
                     vy[i] += (w * w * (ty - y[i]) - 2 * z * w * vy[i]) * h; y[i] += vy[i] * h;
                     if (k == steps - 1 && (Math.abs(tx - x[i]) > 0.5f || Math.abs(ty - y[i]) > 0.5f || Math.hypot(vx[i], vy[i]) > 20)) still = false;
