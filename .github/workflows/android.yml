@@ -103,7 +103,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/music"
           curl -fsSL -o "$RUNNER_TEMP/music/json.jar" https://repo1.maven.org/maven2/org/json/json/20240303/json-20240303.jar
           javac -nowarn -d "$RUNNER_TEMP/music" -cp "$RUNNER_TEMP/music/json.jar" app/src/main/java/io/github/bags156/messagecenter/MusicLinks.java tools/MusicProbe.java
-          java -cp "$RUNNER_TEMP/music:$RUNNER_TEMP/music/json.jar" io.github.bags156.messagecenter.MusicProbe 'follow:https://pca.st/itunes/1200361736' 'finds:https://overcast.fm/itunes1200361736|/+' 'finds:https://music.youtube.com/watch?v=oHceU_lpCqo|INITIAL_ENDPOINT' 'finds:https://music.youtube.com/watch?v=J7p4bzqLvCw|INITIAL_ENDPOINT' 'finds:https://music.youtube.com/watch?v=bu7MdYXJe1s|INITIAL_ENDPOINT' 'raw:https://www.youtube.com/oembed?format=json&url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DoHceU_lpCqo' 'finds:https://open.spotify.com/embed/episode/1qt1vqWHcJqEhuwJgHSqDx|subtitle' | sed 's/^/MUSIC /'
+          java -cp "$RUNNER_TEMP/music:$RUNNER_TEMP/music/json.jar" io.github.bags156.messagecenter.MusicProbe 'raw:https://podcast-api.pocketcasts.com/podcast/full/4eb5b260-c933-0134-10da-25324e2a541d' 'raw:https://cache.pocketcasts.com/mobile/podcast/full/4eb5b260-c933-0134-10da-25324e2a541d' 'raw:https://podcast-api.pocketcasts.com/mobile/show_notes/full/4eb5b260-c933-0134-10da-25324e2a541d' 'finds:https://pocketcasts.com/podcast/the-daily/4eb5b260-c933-0134-10da-25324e2a541d|/episode/' 'finds:https://music.youtube.com/playlist?list=PLdMrbgYfVl-s16D_iT2BJCJ90pWtTO1A4|INITIAL_ENDPOINT' 'finds:https://music.youtube.com/playlist?list=PLdMrbgYfVl-s16D_iT2BJCJ90pWtTO1A4|og:title' | sed 's/^/MUSIC /'
 
   device-smoke:
     needs: build
