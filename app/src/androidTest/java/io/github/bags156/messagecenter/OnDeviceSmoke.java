@@ -1164,9 +1164,10 @@ public final class OnDeviceSmoke extends Instrumentation {
     /**
      * Chat heads: with "Display over other apps" allowed and chat heads chosen, a new message brings
      * up its chat's head at the strength set for a new message, then the settled one, then the
-     * faded one (the steps sped up here from 5 seconds and 2 minutes);
-     * tapping it opens the chat in a floating window (the heads step aside meanwhile, and come back
-     * when it closes); the setting shows its slider; closing them all takes them away.
+     * faded one (the steps sped up here from 5 seconds and 2 minutes); two heads sit in one stack,
+     * which spreads out when tapped; tapping a head then opens the chat in a floating window (the
+     * heads step aside meanwhile, and come back stacked when it closes); the settings show each
+     * step; closing them all takes them away.
      */
     private void checkChatHeads(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();long now=System.currentTimeMillis();
         try(android.os.ParcelFileDescriptor out=getUiAutomation().executeShellCommand("appops set "+ctx.getPackageName()+" SYSTEM_ALERT_WINDOW allow")){new java.io.FileInputStream(out.getFileDescriptor()).read(new byte[64]);}catch(Exception ignored){}
@@ -1179,6 +1180,7 @@ public final class OnDeviceSmoke extends Instrumentation {
                 .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","Are you floating?")))),0,true);}
         android.app.Instrumentation.ActivityMonitor floating=addMonitor(FloatingChatActivity.class.getName(),null,false);
         try{onMainCall(()->method("inbox").invoke(a));waitForIdleSync();
+            runOnMainSync(()->ChatHeads.add(ctx,"head-chat-2",false,false));
             runOnMainSync(()->ChatHeads.add(ctx,"head-chat",false,true));waitForIdleSync();Thread.sleep(300);
             android.view.View[] heads={null};runOnMainSync(()->heads[0]=ChatHeads.view());
             check(heads[0]!=null&&heads[0].isAttachedToWindow(),"A new message didn't bring up a chat head");
@@ -1188,6 +1190,14 @@ public final class OnDeviceSmoke extends Instrumentation {
             Thread.sleep(2500);runOnMainSync(()->alpha[0]=heads[0].getAlpha());
             check(Math.abs(alpha[0]-0.25f)<0.06f,"Left alone, the head isn't at the chosen faded strength ("+alpha[0]+", not 0.25)");
             shoot("shot-chat-heads");
+            // Two chats: one stack, which spreads out when tapped.
+            int[] shown={0};String[] said={""};
+            runOnMainSync(()->{android.view.ViewGroup g=(android.view.ViewGroup)heads[0];shown[0]=g.getChildCount();said[0]=String.valueOf(g.getChildAt(0).getContentDescription());});
+            check(shown[0]==1&&said[0].contains("2 chats"),"Two chat heads aren't in one stack ("+shown[0]+": "+said[0]+")");
+            runOnMainSync(()->((android.view.ViewGroup)heads[0]).getChildAt(0).performClick());waitForIdleSync();Thread.sleep(300);
+            runOnMainSync(()->{heads[0]=ChatHeads.view();shown[0]=((android.view.ViewGroup)heads[0]).getChildCount();});
+            check(shown[0]==2,"Tapping the stack didn't spread the heads out ("+shown[0]+")");
+            shoot("shot-chat-heads-spread");
             runOnMainSync(()->((android.view.ViewGroup)heads[0]).getChildAt(0).performClick());
             android.app.Activity window=waitForMonitorWithTimeout(floating,6000);
             check(window!=null,"Tapping a chat head didn't open the floating chat");
@@ -1197,7 +1207,8 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(size[0]>0&&size[0]<full.width()&&size[1]<full.height()*0.9,"The floating chat fills the screen ("+size[0]+"×"+size[1]+")");
             shoot("shot-floating-chat");
             runOnMainSync(window::finish);Thread.sleep(1200);
-            runOnMainSync(()->heads[0]=ChatHeads.view());check(heads[0]!=null,"Closing the floating chat didn't bring the heads back");
+            runOnMainSync(()->{heads[0]=ChatHeads.view();shown[0]=heads[0]==null?0:((android.view.ViewGroup)heads[0]).getChildCount();});
+            check(heads[0]!=null&&shown[0]==1,"Closing the floating chat didn't bring the heads back, stacked ("+shown[0]+")");
             onMainCall(()->method("openSettingsPage",String.class).invoke(a,"notifications"));waitForIdleSync();Thread.sleep(300);
             for(String t:new String[]{"When a message comes in","Then, settled","Then, faded","90%","60%","25%"})check(exactText(a,t)!=null,"Settings → Notifications doesn't show the chat heads' "+t);
             shoot("shot-chat-head-settings");

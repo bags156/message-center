@@ -40,9 +40,11 @@ import java.util.Map;
  * Message Center's own floating chat heads, in place of Android's bubbles (which Android draws
  * itself, at full strength). A new message shows its head in three steps, each set in Settings: at
  * first (100% for 5 seconds), then settled (50% for 2 minutes), then faded (15%) until it's
- * touched again; touching or dragging one starts the same steps over when you let go. Tap one to
- * open its chat in a floating window; drag to move them (they settle at the nearest side); drag
- * onto the × at the bottom to close them. Needs "Display over other apps".
+ * touched again; touching or dragging one starts the same steps over when you let go. Several heads
+ * sit in one stack (the newest on top); tapping the stack spreads them out, and tapping a head
+ * opens its chat in a floating window (tapping elsewhere, or a few seconds untouched, stacks them
+ * again). Drag to move them (they settle at the nearest side); drag onto the × at the bottom to
+ * close them. Needs "Display over other apps".
  */
 final class ChatHeads {
     private ChatHeads() {}
@@ -76,6 +78,9 @@ final class ChatHeads {
     private static final Map<String, Integer> unread = new HashMap<>();
     private static final Map<String, Bitmap> faces = new HashMap<>();
     private static boolean loaded, touching;
+    /** Spread out (true) or in one stack (false, the usual way while there's more than one). */
+    private static boolean spread;
+    private static final Runnable restack = () -> { if (spread && !touching) { spread = false; draw(); } };
     /** Full strength (0), half (1), faded (2). */
     private static int stage = 2;
     private static String floating = "";
@@ -155,7 +160,7 @@ final class ChatHeads {
     static void remove(Context c, String chat) { ui(c, () -> { load(); chats.remove(chat); unread.remove(chat); save(); draw(); }); }
 
     /** Takes every head away. */
-    static void clear(Context c) { ui(c, () -> { load(); chats.clear(); unread.clear(); save(); draw(); }); }
+    static void clear(Context c) { ui(c, () -> { load(); chats.clear(); unread.clear(); spread = false; save(); draw(); }); }
 
     /** Draws them again (a setting changed, a chat opened in the app, the app started). */
     static void refresh(Context c) { ui(c, () -> { load(); faces.clear(); unread.remove(ChatBubbles.onScreen()); draw(); }); }
@@ -185,7 +190,9 @@ final class ChatHeads {
         if (!on(app) || !allowed(app) || !floating.isEmpty() || shown.isEmpty()) { detach(); return; }
         if (column == null && !attach()) return;
         column.removeAllViews();
-        for (String id : shown) {
+        if (shown.size() == 1) spread = false;
+        if (shown.size() > 1 && !spread) column.addView(stack(shown), new LinearLayout.LayoutParams(dp(60), dp(60 + 2 * 5)));
+        else for (String id : shown) {
             LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(dp(60), dp(60));
             p.topMargin = column.getChildCount() == 0 ? 0 : dp(4);
             column.addView(head(id), p);
@@ -200,7 +207,9 @@ final class ChatHeads {
         column.setPadding(dp(4), dp(4), dp(4), dp(4));
         column.setClipToPadding(false); column.setClipChildren(false);
         spot = new WindowManager.LayoutParams(dp(68), WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT);
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH, PixelFormat.TRANSLUCENT);
+        // Spread out, a tap anywhere else stacks them again.
+        column.setOnTouchListener((v, e) -> { if (e.getActionMasked() == MotionEvent.ACTION_OUTSIDE && spread) { main().removeCallbacks(restack); spread = false; draw(); } return false; });
         spot.gravity = Gravity.TOP | Gravity.START;
         spot.setTitle("Message Center chat heads");
         Rect screen = screen();
@@ -218,6 +227,37 @@ final class ChatHeads {
 
     private static Rect screen() { return wm.getCurrentWindowMetrics().getBounds(); }
     private static android.graphics.Insets bars() { return wm.getCurrentWindowMetrics().getWindowInsets().getInsetsIgnoringVisibility(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout()); }
+
+    /** The heads in one stack: the newest on top, two more peeking out below it, and every new message counted. */
+    private static View stack(List<String> shown) {
+        FrameLayout box = new FrameLayout(app);
+        box.setClipChildren(false); box.setClipToPadding(false);
+        int behind = Math.min(2, shown.size() - 1), total = 0;
+        for (String id : shown) total += unread.getOrDefault(id, 0);
+        for (int i = behind; i >= 0; i--) {
+            ImageView face = new ImageView(app);
+            face.setImageBitmap(face(shown.get(i)));
+            face.setElevation(dp(3 - i));
+            face.setOutlineProvider(new ViewOutlineProvider() { @Override public void getOutline(View v, Outline o) { o.setOval(0, 0, v.getWidth(), v.getHeight()); } });
+            face.setClipToOutline(true);
+            if (i > 0) { face.setScaleX(1f - 0.08f * i); face.setScaleY(1f - 0.08f * i); }
+            FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(dp(54), dp(54), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+            fp.topMargin = dp(3 + 5 * i);
+            box.addView(face, fp);
+        }
+        if (total > 0) {
+            TextView badge = new TextView(app);
+            badge.setText(total > 9 ? "9+" : String.valueOf(total));
+            badge.setTextColor(Color.WHITE); badge.setTextSize(11); badge.setGravity(Gravity.CENTER); badge.setIncludeFontPadding(false);
+            GradientDrawable dot = new GradientDrawable(); dot.setShape(GradientDrawable.OVAL); dot.setColor(0xffe11d48); dot.setStroke(dp(2), Color.WHITE);
+            badge.setBackground(dot); badge.setElevation(dp(5));
+            box.addView(badge, new FrameLayout.LayoutParams(dp(22), dp(22), Gravity.TOP | Gravity.END));
+        }
+        box.setContentDescription("Floating chats: " + shown.size() + " chats" + (total > 0 ? ", " + total + " new" : "") + ". Tap to show them, or drag to move.");
+        box.setOnClickListener(v -> { spread = true; draw(); main().removeCallbacks(restack); main().postDelayed(restack, 6000); });
+        box.setOnTouchListener(new Drag(shown.get(0)));
+        return box;
+    }
 
     private static View head(String id) {
         FrameLayout box = new FrameLayout(app);
@@ -254,7 +294,7 @@ final class ChatHeads {
             switch (e.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     downX = e.getRawX(); downY = e.getRawY(); startX = spot.x; startY = spot.y; dragging = false; over = false;
-                    touching = true; main().removeCallbacks(toHalf); main().removeCallbacks(toFaded); fadeTo(1f);
+                    touching = true; main().removeCallbacks(toHalf); main().removeCallbacks(toFaded); main().removeCallbacks(restack); fadeTo(1f);
                     if (settling != null) settling.cancel();
                     return true;
                 case MotionEvent.ACTION_MOVE: {
@@ -277,6 +317,7 @@ final class ChatHeads {
                     if (dragging && over) { clear(app); return true; }
                     if (dragging) settle();
                     stage(0);
+                    if (spread && !click) main().postDelayed(restack, 6000);
                     if (click) v.performClick();
                     return true;
                 }
@@ -339,7 +380,7 @@ final class ChatHeads {
 
     /** Opens the chat in the floating window, over whatever's on screen. */
     private static void open(String id) {
-        unread.remove(id);
+        unread.remove(id); spread = false; main().removeCallbacks(restack);
         floating = id; draw();
         Intent i = new Intent(app, FloatingChatActivity.class).setAction(Intent.ACTION_VIEW)
             .setData(new Uri.Builder().scheme("messagecenter").authority("chat").appendPath(id).build()).putExtra("chat", id)
