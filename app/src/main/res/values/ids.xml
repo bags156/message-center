@@ -4,4 +4,7 @@
     <item name="time_label" type="id" />
     <item name="chat_row" type="id" />
     <item name="chat_time" type="id" />
+    <item name="font_area" type="id" />
+    <item name="font_set" type="id" />
+    <item name="font_original" type="id" />
 </resources>

@@ -1078,6 +1078,47 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(!a.isFinishing(),"The chat closed after Translate");}
         finally{Thread.sleep(500);if(!a.hasWindowFocus()){ctx.startActivity(new android.content.Intent(ctx,PairedActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK|android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));Thread.sleep(1500);}
             onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("sr-chat");}}}
+    /** The first text on screen that says exactly this, or null. */
+    private android.widget.TextView exactText(PairedActivity a,String words)throws Exception{android.widget.TextView[] hit={null};
+        runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(found,words,android.view.View.FIND_VIEWS_WITH_TEXT);
+            for(android.view.View v:found)if(hit[0]==null&&v instanceof android.widget.TextView&&((android.widget.TextView)v).getText().toString().equals(words))hit[0]=(android.widget.TextView)v;});
+        return hit[0];}
+    /** Whether a piece of text is in the uploaded font right now. */
+    private boolean inFont(android.widget.TextView t)throws Exception{boolean[] yes={false};runOnMainSync(()->{Object set=t.getTag(R.id.font_set);yes[0]=set!=null&&t.getTypeface()==set;});return yes[0];}
+    /**
+     * Your own font: a file that isn't a font is turned away; a real one (one of the phone's own,
+     * standing in for a download) shows in messages and the message box; turning Messages off puts
+     * the phone's font back there only; Settings shows it with its switches; removing it ends it.
+     */
+    private void checkCustomFont(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();long now=System.currentTimeMillis();
+        java.io.File source=null;for(String n:new String[]{"ComingSoon.ttf","DancingScript-Regular.ttf","NotoSerif-Regular.ttf","CutiveMono.ttf"}){java.io.File f=new java.io.File("/system/fonts",n);if(source==null&&f.canRead())source=f;}
+        check(source!=null,"No font on the test phone to upload");
+        java.io.File bad=new java.io.File(ctx.getCacheDir(),"not-a-font.ttf");try(java.io.FileOutputStream o=new java.io.FileOutputStream(bad)){o.write("Not really a font".getBytes());}
+        String refused="";try{Fonts.install(ctx,android.net.Uri.fromFile(bad),"not-a-font.ttf");}catch(java.io.IOException e){refused=String.valueOf(e.getMessage());}
+        check(refused.contains("isn't a font")&&!Fonts.has(ctx),"A file that isn't a font was taken ("+refused+")");
+        String name=Fonts.install(ctx,android.net.Uri.fromFile(source),source.getName());
+        check(Fonts.has(ctx)&&Fonts.typeface(ctx)!=null&&!name.contains(".ttf"),"The uploaded font didn't load ("+name+")");
+        try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'font-chat',name:'Fran Font',type:'RCS',lastMessageTimestamp:"+now*1000+",participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'ff',number:'+15557770144'},fullName:'Fran Font',firstName:'Fran'}]}"));
+            store.message(new JSONObject().put("messageID","ff-1").put("conversationID","font-chat").put("participantID","ff").put("timestamp",(now-60_000L)*1000)
+                .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","This should be in your font")))),0,true);}
+        try{onMainCall(()->method("thread",String.class).invoke(a,"font-chat"));waitForIdleSync();Thread.sleep(300);
+            android.widget.TextView said=exactText(a,"This should be in your font");check(said!=null,"The message didn't show");
+            check(inFont(said),"Messages aren't in the uploaded font");
+            android.widget.EditText box=(android.widget.EditText)field("composer").get(a);check(inFont(box),"The message box isn't in the uploaded font");
+            android.widget.TextView name1=exactText(a,"Fran Font");check(name1!=null&&inFont(name1),"The chat's name at the top isn't in the uploaded font");
+            shoot("shot-custom-font");
+            runOnMainSync(()->Fonts.setArea(ctx,"messages",false));onMainCall(()->method("thread",String.class).invoke(a,"font-chat"));waitForIdleSync();Thread.sleep(300);
+            said=exactText(a,"This should be in your font");check(said!=null&&!inFont(said),"Turning Messages off left them in the uploaded font");
+            box=(android.widget.EditText)field("composer").get(a);check(inFont(box),"Turning Messages off changed the message box too");
+            onMainCall(()->method("openSettingsPage",String.class).invoke(a,"appearance"));waitForIdleSync();Thread.sleep(300);
+            check(exactText(a,"Use "+name+" for")!=null,"Settings → Appearance doesn't list where the font is used");
+            android.widget.TextView fontRow=exactText(a,"Font");check(fontRow!=null&&!inFont(fontRow),"Settings is in the font though it starts off there");
+            shoot("shot-font-settings");
+            runOnMainSync(()->{Fonts.remove(ctx);Fonts.apply(ctx,a.getWindow().getDecorView(),"settings");});
+            onMainCall(()->method("thread",String.class).invoke(a,"font-chat"));waitForIdleSync();Thread.sleep(300);
+            box=(android.widget.EditText)field("composer").get(a);check(!inFont(box),"Removing the font left the message box in it");}
+        finally{runOnMainSync(()->{Fonts.setArea(ctx,"messages",true);Fonts.remove(ctx);});bad.delete();
+            onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("font-chat");}}}
     private void checkThemeAll(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();ChatSettings settings=new ChatSettings(ctx);
         settings.themeAll("default",true);settings.setTheme("smoke","berry");
         try{onMainCall(()->method("chooseTheme",String.class).invoke(a,""));check(waitForText("Color for all chats",3000,true),"Chat color for all chats didn't open");shoot("shot-theme-all");
@@ -2070,6 +2111,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkSearchClear((PairedActivity)activity);
         checkBirthdayAndTracking((PairedActivity)activity);
         checkSuggestionsAndTranslate((PairedActivity)activity);
+        checkCustomFont((PairedActivity)activity);
         checkGifSurvivesRedraw((PairedActivity)activity);
         checkSentPhotoKept();
         checkSnoozeUntilQuiet();
