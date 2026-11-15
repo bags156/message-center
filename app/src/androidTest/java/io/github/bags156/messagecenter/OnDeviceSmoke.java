@@ -1301,6 +1301,9 @@ public final class OnDeviceSmoke extends Instrumentation {
                 check(search.getText().length()==0,"Picking from a search didn't empty it for the next person");}
             android.widget.LinearLayout chips=(android.widget.LinearLayout)field("pickedChips").get(a);int[] n={0};runOnMainSync(()->n[0]=chips.getChildCount());
             check(n[0]==2,"The two picked people aren't shown as chips ("+n[0]+")");
+            // Known only by their numbers: a person outline, not the first digit.
+            boolean[] outline={false};runOnMainSync(()->{android.view.View face=((android.view.ViewGroup)chips.getChildAt(0)).getChildAt(0);outline[0]=face instanceof android.view.ViewGroup&&((android.view.ViewGroup)face).getChildAt(0) instanceof android.widget.ImageView;});
+            check(outline[0],"Someone picked by their number shows a digit instead of a person outline");
             check(waitForText("Next · 2 people",3000,true),"Next doesn't count the 2 picked people");
             shoot("shot-new-group-pick");
             pressText("Next · 2 people");check(waitForText("Name your group",3000,true),"Next didn't open the group's name screen");

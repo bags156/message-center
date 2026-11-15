@@ -306,6 +306,8 @@ public class PairedActivity extends Activity {
         if(!id.isEmpty())b=Avatars.face(this,id,dp(size));
         if(b!=null){box.addView(roundImage(b),new FrameLayout.LayoutParams(-1,-1));return box;}
         box.setBackground(oval(PairedProtocol.color(p==null?"":p.optString("avatarHexColor"),Avatars.fallbackColor(name))));
+        // Known only by their number: a person outline, not the number's first digit.
+        if(ContactSearch.numberLike(name)){ImageView who=new ImageView(this);who.setImageResource(R.drawable.ic_person);who.setImageTintList(ColorStateList.valueOf(Color.WHITE));int pad=Math.round(dp(size)*0.22f);who.setPadding(pad,pad,pad,pad);box.addView(who,new FrameLayout.LayoutParams(-1,-1));return box;}
         TextView letter=text(PairedProtocol.initial(name),Math.round(size*0.42f),Color.WHITE,false);letter.setGravity(Gravity.CENTER);box.addView(letter,new FrameLayout.LayoutParams(-1,-1));return box;}
     /** Photos for everyone in a group, for the details screen and reaction lists. */
     private void requestMemberPhotos(JSONObject c,Runnable after){
@@ -776,7 +778,7 @@ public class PairedActivity extends Activity {
     private void renameGroup(String id){JSONObject c=store.chat(id);if(c==null)return;String now=PairedProtocol.string(c,"name");
         LinearLayout content=vertical();content.addView(text("Group name",20,ink,true));gap(content,4);
         content.addView(text("Everyone in the group sees the new name.",14,muted,false));gap(content,16);
-        EditText name=input("Group name");name.setSingleLine(true);name.setTextSize(18);name.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(100)});
+        EditText name=input("Group name");name.setSingleLine(true);name.setTextSize(18);name.setBackground(shape(surface,18)); // the sheet is the field's usual colorname.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(100)});
         name.setText(now);name.selectAll();name.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);content.addView(name,new LinearLayout.LayoutParams(-1,-2));
         TextView problem=text("",13,danger,false);problem.setPadding(dp(8),dp(8),dp(8),0);problem.setVisibility(View.GONE);content.addView(problem);gap(content,18);
         Dialog[] d=new Dialog[1];LinearLayout buttons=row();buttons.setGravity(Gravity.END);
