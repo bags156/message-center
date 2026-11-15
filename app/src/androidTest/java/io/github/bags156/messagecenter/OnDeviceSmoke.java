@@ -1273,7 +1273,8 @@ public final class OnDeviceSmoke extends Instrumentation {
         for(int i=1;i<=4;i++){Thread.sleep(16);p[0]-=10;p[1]+=10;touch(down,android.view.MotionEvent.ACTION_MOVE,p[0],p[1]);}
         Thread.sleep(400);
         check(ChatHeads.trail()!=null,"Dragging the stack didn't bring its faces out to trail");
-        float most=0;for(int i=1;i<=12;i++){p[0]-=25;p[1]+=40;touch(down,android.view.MotionEvent.ACTION_MOVE,p[0],p[1]);Thread.sleep(16);most=Math.max(most,trailGap());}
+        // Big jumps, so the face behind falls well back however fast the test phone runs (small, slow steps let it keep up).
+        float most=0;for(int i=1;i<=8;i++){p[0]-=60;p[1]+=90;touch(down,android.view.MotionEvent.ACTION_MOVE,p[0],p[1]);Thread.sleep(16);most=Math.max(most,trailGap());}
         check(most/dp>12,"On a quick drag, the face behind didn't trail the front one (at most "+Math.round(most/dp)+" dp from its place in the stack)");
         // Moving while the screenshot is taken, so it shows them trailing.
         Thread mover=new Thread(()->{try{for(int i=0;i<45;i++){p[0]+=10;p[1]-=16;touch(down,android.view.MotionEvent.ACTION_MOVE,p[0],p[1]);Thread.sleep(16);}}catch(Exception ignored){}});
