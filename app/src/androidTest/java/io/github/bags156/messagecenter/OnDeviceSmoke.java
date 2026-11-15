@@ -1210,6 +1210,7 @@ public final class OnDeviceSmoke extends Instrumentation {
             runOnMainSync(()->{android.view.View d=window.getWindow().getDecorView();size[0]=d.getWidth();size[1]=d.getHeight();});
             check(size[0]>0&&size[0]<full.width()&&size[1]<full.height()*0.9,"The floating chat fills the screen ("+size[0]+"×"+size[1]+")");
             shoot("shot-floating-chat");
+            checkFloatingKeyboard(window);
             runOnMainSync(window::finish);Thread.sleep(1200);
             runOnMainSync(()->{heads[0]=ChatHeads.view();shown[0]=heads[0]==null?0:((android.view.ViewGroup)heads[0]).getChildCount();});
             check(heads[0]!=null&&shown[0]==1,"Closing the floating chat didn't bring the heads back, stacked ("+shown[0]+")");
@@ -1230,6 +1231,33 @@ public final class OnDeviceSmoke extends Instrumentation {
             runOnMainSync(()->ChatHeads.clear(ctx));Thread.sleep(300);runOnMainSync(()->heads[0]=ChatHeads.view());check(heads[0]==null,"Closing all chat heads left one on screen");}
         finally{ChatHeads.testNewMs=0;ChatHeads.testMidMs=0;prefs.edit().remove(ChatHeads.NEW).remove(ChatHeads.MID).remove(ChatHeads.OPACITY).commit();removeMonitor(floating);runOnMainSync(()->ChatHeads.clear(ctx));prefs.edit().putString(ChatHeads.STYLE,"android").commit();
             onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("head-chat");}}}
+    /**
+     * The keyboard in a floating chat: with it up, the box you type in stays above it (it hid behind
+     * the keyboard before), and with it down again the window is back to its full height.
+     */
+    private void checkFloatingKeyboard(android.app.Activity window)throws Exception{
+        try(android.os.ParcelFileDescriptor out=getUiAutomation().executeShellCommand("settings put secure show_ime_with_hard_keyboard 1")){new java.io.FileInputStream(out.getFileDescriptor()).read(new byte[64]);}catch(Exception ignored){}
+        android.accessibilityservice.AccessibilityServiceInfo info=getUiAutomation().getServiceInfo();info.flags|=android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;getUiAutomation().setServiceInfo(info);
+        java.lang.reflect.Field f=PairedActivity.class.getDeclaredField("composer");f.setAccessible(true);android.widget.EditText box=(android.widget.EditText)f.get(window);
+        check(box!=null,"The floating chat has no box to type in");
+        int[] full={0};runOnMainSync(()->full[0]=window.getWindow().getDecorView().getHeight());
+        android.view.inputmethod.InputMethodManager imm=window.getSystemService(android.view.inputmethod.InputMethodManager.class);
+        runOnMainSync(()->{box.requestFocus();imm.showSoftInput(box,0);});
+        android.graphics.Rect keys=new android.graphics.Rect();long until=android.os.SystemClock.uptimeMillis()+6000;
+        while(android.os.SystemClock.uptimeMillis()<until){keys.setEmpty();
+            for(android.view.accessibility.AccessibilityWindowInfo w:getUiAutomation().getWindows())if(w.getType()==android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD)w.getBoundsInScreen(keys);
+            if(!keys.isEmpty())break;Thread.sleep(150);}
+        check(!keys.isEmpty(),"The keyboard didn't come up in the floating chat");
+        // Measured again once the keyboard has finished sliding up (mid-slide it's only partly there).
+        Thread.sleep(900);waitForIdleSync();
+        for(android.view.accessibility.AccessibilityWindowInfo w:getUiAutomation().getWindows())if(w.getType()==android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD)w.getBoundsInScreen(keys);
+        int[] at=new int[2];runOnMainSync(()->box.getLocationOnScreen(at));int bottom=at[1]+box.getHeight();
+        shoot("shot-floating-keyboard");
+        check(bottom<=keys.top+2,"In the floating chat, the keyboard covers the box you type in (its bottom at "+bottom+", the keyboard from "+keys.top+")");
+        check(bottom>keys.top-window.getResources().getDisplayMetrics().density*120,"The floating chat shrank well past the keyboard (box ends at "+bottom+", keyboard from "+keys.top+")");
+        runOnMainSync(()->imm.hideSoftInputFromWindow(box.getWindowToken(),0));Thread.sleep(1200);waitForIdleSync();
+        int[] after={0};runOnMainSync(()->after[0]=window.getWindow().getDecorView().getHeight());
+        check(Math.abs(after[0]-full[0])<=2,"With the keyboard down, the floating chat didn't go back to its full height ("+after[0]+", not "+full[0]+")");}
     /** Drags a chat head onto the × with real touches, to wherever the × shows up on screen. */
     private void dragOntoClose(android.view.View head,String shot)throws Exception{
         int[] at=new int[2];runOnMainSync(()->head.getLocationOnScreen(at));
