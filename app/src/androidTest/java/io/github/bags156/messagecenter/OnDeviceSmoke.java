@@ -1195,6 +1195,9 @@ public final class OnDeviceSmoke extends Instrumentation {
             int[] shown={0};String[] said={""};
             runOnMainSync(()->{android.view.ViewGroup g=(android.view.ViewGroup)heads[0];shown[0]=g.getChildCount();said[0]=String.valueOf(g.getChildAt(0).getContentDescription());});
             check(shown[0]==1&&said[0].contains("2 chats"),"Two chat heads aren't in one stack ("+shown[0]+": "+said[0]+")");
+            int[] peek={0};runOnMainSync(()->{android.view.ViewGroup box=(android.view.ViewGroup)((android.view.ViewGroup)heads[0]).getChildAt(0);android.view.View back=box.getChildAt(0),front=box.getChildAt(1);
+                float b=back.getY()+back.getHeight()*(1+back.getScaleY())/2f,f=front.getY()+front.getHeight();peek[0]=Math.round((b-f)/front.getResources().getDisplayMetrics().density);});
+            check(peek[0]>=5,"The face behind the stack's front one barely shows ("+peek[0]+" dp)");
             runOnMainSync(()->((android.view.ViewGroup)heads[0]).getChildAt(0).performClick());waitForIdleSync();Thread.sleep(300);
             runOnMainSync(()->{heads[0]=ChatHeads.view();shown[0]=((android.view.ViewGroup)heads[0]).getChildCount();});
             check(shown[0]==2,"Tapping the stack didn't spread the heads out ("+shown[0]+")");

@@ -196,7 +196,7 @@ final class ChatHeads {
         if (column == null && !attach()) return;
         column.removeAllViews();
         if (shown.size() == 1) spread = false;
-        if (shown.size() > 1 && !spread) column.addView(stack(shown), new LinearLayout.LayoutParams(dp(60), dp(60 + 2 * 5)));
+        if (shown.size() > 1 && !spread) column.addView(stack(shown), new LinearLayout.LayoutParams(dp(60), dp(60 + Math.min(2, shown.size() - 1) * PEEK)));
         else for (String id : shown) {
             LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(dp(60), dp(60));
             p.topMargin = column.getChildCount() == 0 ? 0 : dp(4);
@@ -235,6 +235,7 @@ final class ChatHeads {
     private static android.graphics.Insets bars() { return wm.getCurrentWindowMetrics().getWindowInsets().getInsetsIgnoringVisibility(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout()); }
 
     /** The heads in one stack: the newest on top, two more peeking out below it, and every new message counted. */
+    private static final int PEEK = 9;
     private static View stack(List<String> shown) {
         FrameLayout box = new FrameLayout(app);
         box.setClipChildren(false); box.setClipToPadding(false);
@@ -246,9 +247,11 @@ final class ChatHeads {
             face.setElevation(dp(3 - i));
             face.setOutlineProvider(new ViewOutlineProvider() { @Override public void getOutline(View v, Outline o) { o.setOval(0, 0, v.getWidth(), v.getHeight()); } });
             face.setClipToOutline(true);
-            if (i > 0) { face.setScaleX(1f - 0.08f * i); face.setScaleY(1f - 0.08f * i); }
+            GradientDrawable edge = new GradientDrawable(); edge.setShape(GradientDrawable.OVAL); edge.setStroke(dp(2), 0xe6ffffff);
+            face.setForeground(edge);
+            if (i > 0) { face.setScaleX(1f - 0.1f * i); face.setScaleY(1f - 0.1f * i); face.setColorFilter(0x33000000); }
             FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(dp(54), dp(54), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-            fp.topMargin = dp(3 + 5 * i);
+            fp.topMargin = dp(3 + PEEK * i);
             box.addView(face, fp);
         }
         if (total > 0) {
@@ -327,7 +330,7 @@ final class ChatHeads {
                     boolean was = over;
                     over = onTarget(e.getRawX(), e.getRawY());
                     if (over != was) {
-                        if (target != null) { target.setScaleX(over ? 1.25f : 1f); target.setScaleY(over ? 1.25f : 1f); }
+                        if (targetFace != null) { targetFace.animate().scaleX(over ? 1.25f : 1f).scaleY(over ? 1.25f : 1f).setDuration(120).start(); }
                         if (ring != null) ring.setColor(over ? 0xeee11d48 : 0xcc111827);
                         if (over) v.performHapticFeedback(HapticFeedbackConstants.CONFIRM);
                     }
@@ -394,35 +397,38 @@ final class ChatHeads {
         settling.start();
     }
 
+    private static View targetFace;
     private static void showTarget() {
         if (target != null) return;
         TextView x = new TextView(app);
         x.setText("✕"); x.setTextColor(Color.WHITE); x.setTextSize(24); x.setGravity(Gravity.CENTER);
         ring = new GradientDrawable(); ring.setShape(GradientDrawable.OVAL); ring.setColor(0xcc111827); ring.setStroke(dp(2), 0x99ffffff);
         x.setBackground(ring);
-        x.setContentDescription("Drop here to close the floating chats");
-        WindowManager.LayoutParams p = new WindowManager.LayoutParams(dp(64), dp(64), WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+        FrameLayout room = new FrameLayout(app);
+        room.addView(x, new FrameLayout.LayoutParams(dp(64), dp(64), Gravity.CENTER));
+        room.setContentDescription("Drop here to close the floating chats");
+        WindowManager.LayoutParams p = new WindowManager.LayoutParams(dp(88), dp(88), WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE, PixelFormat.TRANSLUCENT);
         p.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
-        p.y = bars().bottom + dp(48);
+        p.y = bars().bottom + dp(48 - 12);
         p.alpha = 0.8f; // never so solid that Android stops touches passing to the app beneath
         p.setTitle("Message Center close target");
-        target = x;
-        try { wm.addView(target, p); } catch (Exception e) { target = null; }
+        target = room; targetFace = x;
+        try { wm.addView(target, p); } catch (Exception e) { target = null; targetFace = null; }
     }
 
     private static void hideTarget() {
         if (target == null) return;
         try { wm.removeView(target); } catch (Exception ignored) {}
-        target = null; ring = null;
+        target = null; targetFace = null; ring = null;
     }
 
     /** Whether the finger is over the ×, going by where the × really is on screen. */
     private static boolean onTarget(float x, float y) {
         if (target == null) return false;
         int[] at = new int[2]; target.getLocationOnScreen(at);
-        int w = target.getWidth() > 0 ? target.getWidth() : dp(64), h = target.getHeight() > 0 ? target.getHeight() : dp(64);
-        if (target.getWidth() == 0) { Rect s = screen(); at[0] = s.width() / 2 - w / 2; at[1] = s.height() - bars().bottom - dp(48) - h; }
+        int w = target.getWidth() > 0 ? target.getWidth() : dp(88), h = target.getHeight() > 0 ? target.getHeight() : dp(88);
+        if (target.getWidth() == 0) { Rect s = screen(); at[0] = s.width() / 2 - w / 2; at[1] = s.height() - bars().bottom - dp(36) - h; }
         return Math.hypot(x - (at[0] + w / 2f), y - (at[1] + h / 2f)) < dp(80);
     }
 
