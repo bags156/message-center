@@ -46,7 +46,9 @@ public class MusicLinksTest {
 
         assertEquals(MusicLinks.Kind.SONG, MusicLinks.parse("https://music.youtube.com/watch?v=4NRXx6U8ABQ&si=x").kind);
         assertEquals(MusicLinks.Kind.ALBUM, MusicLinks.parse("https://music.youtube.com/playlist?list=OLAK5uy_abc").kind);
-        assertEquals(MusicLinks.Kind.PLAYLIST, MusicLinks.parse("https://music.youtube.com/playlist?list=PLabc").kind);
+        // "PL…" is a podcast or anyone's playlist: which is found out from its page (a playlist is then left alone).
+        assertEquals(MusicLinks.Kind.SHOW, MusicLinks.parse("https://music.youtube.com/playlist?list=PLabc").kind);
+        assertEquals(MusicLinks.Kind.PLAYLIST, MusicLinks.parse("https://music.youtube.com/playlist?list=RDCLAK5uy_abc").kind);
         assertEquals(MusicLinks.Kind.ALBUM, MusicLinks.parse("https://music.youtube.com/browse/MPREb_abc").kind);
         assertNull("a YouTube video isn't a song", MusicLinks.parse("https://www.youtube.com/watch?v=4NRXx6U8ABQ"));
 
@@ -114,6 +116,56 @@ public class MusicLinksTest {
         // Only the short tags: the song is the title and the artist is in the description.
         i = MusicLinks.spotifyPage(MusicLinks.Kind.SONG, "<meta property=\"og:title\" content=\"Blinding Lights\"><meta property=\"og:description\" content=\"Listen to Blinding Lights on Spotify. Song · The Weeknd · 2019\">");
         assertEquals("Blinding Lights", i.title); assertEquals("The Weeknd", i.artist);
+    }
+
+    @Test public void readsPodcastEpisodesEverywhere() throws Exception {
+        // Spotify's episode pages now say "The Daily · Episode".
+        MusicLinks.Item i = MusicLinks.spotifyPage(MusicLinks.Kind.EPISODE, "<title>Grand Theft Auto | Listen to the Podcast on Spotify</title><meta property=\"og:title\" content=\"Grand Theft Auto\"><meta property=\"og:description\" content=\"The Daily · Episode\">");
+        assertEquals("Grand Theft Auto", i.title); assertEquals("The Daily", i.show);
+        // A YouTube Music podcast (a playlist or its browse page), Overcast's show links (an Apple Podcasts id).
+        assertEquals(MusicLinks.Kind.SHOW, MusicLinks.parse("https://music.youtube.com/playlist?list=PLdMrbgYfVl-s16D_iT2BJCJ90pWtTO1A4").kind);
+        MusicLinks.Link browse = MusicLinks.parse("https://music.youtube.com/browse/MPSPPLdMrbgYfVl-s16D_iT2BJCJ90pWtTO1A4");
+        assertEquals(MusicLinks.Kind.SHOW, browse.kind); assertEquals("PLdMrbgYfVl-s16D_iT2BJCJ90pWtTO1A4", browse.id);
+        MusicLinks.Link overcast = MusicLinks.parse("https://overcast.fm/itunes1200361736/the-daily");
+        assertEquals(MusicLinks.App.APPLE_PODCASTS, overcast.app); assertEquals("1200361736", overcast.id);
+        // What a YouTube Music page opens on, not the videos suggested around it.
+        String page = "x\"INITIAL_ENDPOINT\":\"{\\\"watchEndpoint\\\":{\\\"videoId\\\":\\\"abc\\\",\\\"musicVideoType\\\":\\\"MUSIC_VIDEO_TYPE_PODCAST_EPISODE\\\"}}\",\"HOTKEY_DIALOG\":{} MUSIC_VIDEO_TYPE_ATV";
+        assertTrue(MusicLinks.initialEndpoint(page).contains("PODCAST_EPISODE"));
+        assertFalse(MusicLinks.initialEndpoint(page).contains("ATV"));
+    }
+
+    @Test public void matchesEpisodesAcrossApps() {
+        assertTrue(MusicLinks.sameEpisode("Olivia Wilde Hit Bottom. Here's How She Bounced Back.", "Olivia Wilde Hit Bottom. Here's How She Bounced Back With ‘The Invite’ and More."));
+        assertTrue(MusicLinks.sameEpisode("Grand Theft Auto", "Grand Theft Auto")); // short, but the same
+        assertTrue(MusicLinks.sameEpisode("The Ultraviolent Phenomenon of Grand Theft Auto", "The Ultraviolent Phenomenon of Grand Theft Auto: 13 years later"));
+        assertFalse(MusicLinks.sameEpisode("The Sunday Read", "The Sunday Read: a story about bees")); // three words alone are too few to be sure
+        assertFalse(MusicLinks.sameEpisode("Part 1", "Part 2"));
+        assertTrue(MusicLinks.sameShow("The Interview", "The Interview | A Podcast From The New York Times"));
+        assertFalse(MusicLinks.sameShow("The Interview", "Interview Kickback"));
+        // The same daily title on different days isn't the same episode; the one on the day of the right length is.
+        MusicLinks.Item want = new MusicLinks.Item(MusicLinks.Kind.EPISODE); want.title = "Monday Briefing for Investors"; want.date = "2026-11-16"; want.ms = 600_000;
+        List<MusicLinks.Item> eps = new ArrayList<>();
+        for (String d : new String[]{"2026-11-09", "2026-11-16"}) { MusicLinks.Item e = new MusicLinks.Item(MusicLinks.Kind.EPISODE); e.title = "Monday Briefing for Investors"; e.date = d; e.ms = 590_000; eps.add(e); }
+        assertEquals(1, MusicLinks.pickEpisode(want, eps));
+        want.title = "Renamed on this app"; assertEquals(1, MusicLinks.pickEpisode(want, eps));
+        want.date = "2026-11-20"; assertEquals(-1, MusicLinks.pickEpisode(want, eps));
+    }
+
+    @Test public void findsPodcastsInYouTubeMusicsSearch() throws Exception {
+        JSONObject episode = o("musicResponsiveListItemRenderer", o(
+            "flexColumns", a(o("musicResponsiveListItemFlexColumnRenderer", o("text", o("runs", a(o("text", "Olivia Wilde Hit Bottom. Here's How She Bounced Back With More."))))),
+                o("musicResponsiveListItemFlexColumnRenderer", o("text", o("runs", a(o("text", "Episode"), o("text", " • "), o("text", "23h ago"), o("text", " • "), o("text", "The Interview | A Podcast From The New York Times")))))),
+            "overlay", o("watchEndpoint", o("videoId", "oHceU_lpCqo", "watchEndpointMusicSupportedConfigs", o("watchEndpointMusicConfig", o("musicVideoType", "MUSIC_VIDEO_TYPE_PODCAST_EPISODE"))))));
+        JSONObject show = o("musicResponsiveListItemRenderer", o(
+            "flexColumns", a(o("musicResponsiveListItemFlexColumnRenderer", o("text", o("runs", a(o("text", "The Daily"))))),
+                o("musicResponsiveListItemFlexColumnRenderer", o("text", o("runs", a(o("text", "Podcast"), o("text", " • "), o("text", "New York Times Podcasts")))))),
+            "navigationEndpoint", o("browseEndpoint", o("browseId", "MPSPPLdMrbgYfVl-s16D_iT2BJCJ90pWtTO1A4"))));
+        JSONObject root = o("contents", a(show, episode));
+        MusicLinks.Item ep = new MusicLinks.Item(MusicLinks.Kind.EPISODE); ep.title = "Olivia Wilde Hit Bottom. Here's How She Bounced Back."; ep.show = "The Interview";
+        assertEquals("https://music.youtube.com/watch?v=oHceU_lpCqo", MusicLinks.youtubePodcastResult(root, ep, ep.show));
+        ep.show = "The Daily"; assertNull(MusicLinks.youtubePodcastResult(root, ep, ep.show));
+        MusicLinks.Item daily = new MusicLinks.Item(MusicLinks.Kind.SHOW); daily.title = "The Daily";
+        assertEquals("https://music.youtube.com/playlist?list=PLdMrbgYfVl-s16D_iT2BJCJ90pWtTO1A4", MusicLinks.youtubePodcastResult(root, daily, "The Daily"));
     }
 
     @Test public void readsOtherPagesTitles() {

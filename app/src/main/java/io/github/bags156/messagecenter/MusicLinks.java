@@ -13,6 +13,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.text.Normalizer;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -70,12 +71,12 @@ final class MusicLinks {
 
     /** The song (album, artist, show, episode) a link is for, as its service names it. */
     static final class Item {
-        Kind kind; String title = "", artist = "", album = "", isrc = "", upc = "", show = "", feed = "", appleShow = "", appleShowUrl = "";
+        Kind kind; String title = "", artist = "", album = "", isrc = "", upc = "", show = "", feed = "", appleShow = "", appleShowUrl = "", date = "";
         long ms; boolean codesAsked;
         Item(Kind kind) { this.kind = kind; }
         @Override public String toString() {
             return kind + " \"" + title + "\"" + (artist.isEmpty() ? "" : " by " + artist) + (album.isEmpty() ? "" : " on " + album)
-                + (show.isEmpty() ? "" : " from " + show) + (isrc.isEmpty() ? "" : " isrc " + isrc) + (upc.isEmpty() ? "" : " upc " + upc) + (ms > 0 ? " " + ms / 1000 + "s" : "");
+                + (show.isEmpty() ? "" : " from " + show) + (date.isEmpty() ? "" : " on " + date) + (isrc.isEmpty() ? "" : " isrc " + isrc) + (upc.isEmpty() ? "" : " upc " + upc) + (ms > 0 ? " " + ms / 1000 + "s" : "");
         }
     }
 
@@ -152,12 +153,14 @@ final class MusicLinks {
                     case "browse":
                         if (p.size() >= 2 && p.get(1).startsWith("MPRE")) return new Link(App.YOUTUBE_MUSIC, Kind.ALBUM, p.get(1), "", "", url);
                         if (p.size() >= 2 && p.get(1).startsWith("UC")) return new Link(App.YOUTUBE_MUSIC, Kind.ARTIST, p.get(1), "", "", url);
+                        if (p.size() >= 2 && p.get(1).startsWith("MPSPPL")) return new Link(App.YOUTUBE_MUSIC, Kind.SHOW, p.get(1).substring(4), "", "", url);
                         return null;
                     case "channel": return p.size() >= 2 ? new Link(App.YOUTUBE_MUSIC, Kind.ARTIST, p.get(1), "", "", url) : null;
                     case "playlist": {
                         String list = q.get("list");
                         if (list == null || list.isEmpty()) return null;
-                        return new Link(App.YOUTUBE_MUSIC, list.startsWith("OLAK5uy_") ? Kind.ALBUM : Kind.PLAYLIST, list, "", "", url);
+                        // "PL…" is a podcast or anyone's playlist; its page tells which (a playlist is then left alone).
+                        return new Link(App.YOUTUBE_MUSIC, list.startsWith("OLAK5uy_") ? Kind.ALBUM : list.startsWith("PL") ? Kind.SHOW : Kind.PLAYLIST, list, "", "", url);
                     }
                     default: return null;
                 }
@@ -200,6 +203,10 @@ final class MusicLinks {
                     }
                 }
                 return null;
+            }
+            case "overcast.fm": {
+                Matcher m = p.isEmpty() ? null : Pattern.compile("^itunes(\\d+)$").matcher(p.get(0));
+                return m != null && m.find() ? new Link(App.APPLE_PODCASTS, Kind.SHOW, m.group(1), "", "", url) : null;
             }
             case "pca.st": case "pocketcasts.com": case "play.pocketcasts.com": {
                 if (p.isEmpty()) return null;
@@ -312,6 +319,7 @@ final class MusicLinks {
             case DEEZER: return deezer(link, net);
             case SPOTIFY: return spotify(link, net);
             case YOUTUBE_MUSIC: return youtube(link, net);
+            case POCKET_CASTS: return pocketCasts(link, net);
             case SOUNDCLOUD: {
                 JSONObject j = json(net.get("https://soundcloud.com/oembed?format=json&url=" + enc("https://soundcloud.com/" + link.id), false));
                 if (j == null) return page(link, net);
@@ -358,7 +366,7 @@ final class MusicLinks {
             i.feed = r.optString("feedUrl"); i.appleShow = id(r, "collectionId"); i.appleShowUrl = clean(r.optString("collectionViewUrl"));
         } else if (w.equals("podcastEpisode") || k.equals("podcast-episode")) {
             i = new Item(Kind.EPISODE); i.title = r.optString("trackName"); i.show = r.optString("collectionName");
-            i.appleShow = id(r, "collectionId"); i.feed = r.optString("feedUrl"); i.ms = r.optLong("trackTimeMillis");
+            i.appleShow = id(r, "collectionId"); i.feed = r.optString("feedUrl"); i.ms = r.optLong("trackTimeMillis"); i.date = day(r.optString("releaseDate"));
         } else if (w.equals("track")) {
             i = new Item(Kind.SONG); i.title = r.optString("trackName"); i.artist = r.optString("artistName");
             i.album = albumName(r.optString("collectionName")); i.ms = r.optLong("trackTimeMillis");
@@ -394,12 +402,35 @@ final class MusicLinks {
         String html = net.get("https://open.spotify.com/" + type + "/" + l.id, true);
         if (html != null && log != null) { Map<String, String> meta = metaTags(html); note("spotify title=" + pageTitle(html) + " | og:title=" + meta.get("og:title") + " | og:description=" + meta.get("og:description") + " | musician=" + meta.get("music:musician_description")); }
         Item i = html == null ? null : spotifyPage(l.kind, html);
+        if (i != null && l.kind == Kind.EPISODE && (i.show.isEmpty() || i.ms == 0)) spotifyEmbed(l.id, i, net);
         if (i != null) return i;
         JSONObject j = json(net.get("https://open.spotify.com/oembed?url=" + enc("https://open.spotify.com/" + type + "/" + l.id), false));
         if (j == null || j.optString("title").isEmpty()) return null;
         i = new Item(l.kind); i.title = j.optString("title");
         return i;
     }
+
+    /** Fills in an episode's show, length and date from Spotify's embed player data. */
+    private static void spotifyEmbed(String id, Item i, Net net) throws Exception {
+        String html = net.get("https://open.spotify.com/embed/episode/" + id, true);
+        Matcher m = html == null ? null : Pattern.compile("<script id=\"__NEXT_DATA__\" type=\"application/json\">(.*?)</script>", Pattern.DOTALL).matcher(html);
+        JSONObject data = m != null && m.find() ? json(m.group(1)) : null;
+        List<JSONObject> found = new ArrayList<>();
+        if (data != null) collect(data, "entity", found);
+        for (JSONObject e : found) {
+            if (!"episode".equals(e.optString("type"))) continue;
+            if (i.show.isEmpty()) i.show = e.optString("subtitle");
+            if (i.ms == 0) i.ms = e.optLong("duration");
+            JSONObject released = e.optJSONObject("releaseDate");
+            if (i.date.isEmpty() && released != null) i.date = day(released.optString("isoString"));
+            if (i.title.isEmpty()) i.title = e.optString("title", e.optString("name"));
+            return;
+        }
+        note("spotify embed: no episode data");
+    }
+
+    /** "2026-11-15T11:00:00Z" → "2026-11-15". */
+    static String day(String iso) { return iso != null && iso.matches("\\d{4}-\\d{2}-\\d{2}.*") ? iso.substring(0, 10) : ""; }
 
     /**
      * A Spotify page's tags. og:title is the name ("Blinding Lights", "The Weeknd"), though an album's
@@ -431,11 +462,13 @@ final class MusicLinks {
         if (kind == Kind.EPISODE) {
             if ((m = Pattern.compile("Listen to this episode from (.+?) on Spotify").matcher(desc)).find()) i.show = m.group(1).trim();
             else if (parts.length >= 2 && parts[0].toLowerCase(Locale.ROOT).startsWith("podcast")) i.show = parts[1];
+            else if (parts.length >= 2 && parts[1].equalsIgnoreCase("Episode")) i.show = parts[0];
         }
         return i.title.isEmpty() ? null : i;
     }
 
     private static Item youtube(Link l, Net net) throws Exception {
+        if (l.kind == Kind.SHOW) return youtubeShow(l, net);
         String watch = l.kind == Kind.SONG ? "https://www.youtube.com/watch?v=" + l.id : l.kind == Kind.ALBUM && l.id.startsWith("OLAK") ? "https://www.youtube.com/playlist?list=" + l.id : "";
         if (!watch.isEmpty()) {
             JSONObject j = json(net.get("https://www.youtube.com/oembed?format=json&url=" + enc(watch), false));
@@ -443,6 +476,14 @@ final class MusicLinks {
                 String channel = j.optString("author_name").replaceFirst("\\s+-\\s+Topic$", "").replaceFirst("(?i)VEVO$", "").trim();
                 String t = j.optString("title").replaceFirst("^(?i)Album\\s+-\\s+", "")
                     .replaceAll("(?i)\\s*[\\(\\[](official[^\\)\\]]*|lyrics?[^\\)\\]]*|audio|video|music video|visuali[sz]er|hd|4k)[\\)\\]]", "").trim();
+                // Songs come from "Artist - Topic" channels; anything else may be a podcast episode (its page says).
+                if (l.kind == Kind.SONG && !j.optString("author_name").endsWith(" - Topic") && youtubeType(l.id, net).equals("MUSIC_VIDEO_TYPE_PODCAST_EPISODE")) {
+                    Item ep = new Item(Kind.EPISODE); ep.show = j.optString("author_name").trim();
+                    String title = j.optString("title").trim();
+                    if (!ep.show.isEmpty() && title.endsWith(" | " + ep.show)) title = title.substring(0, title.length() - ep.show.length() - 3).trim();
+                    ep.title = title;
+                    return ep;
+                }
                 Item i = new Item(l.kind); i.title = t; i.artist = channel;
                 String[] parts = t.split("\\s+-\\s+", 2);
                 if (parts.length == 2) { i.title = parts[1].trim(); if (channel.isEmpty() || !norm(parts[0]).equals(norm(channel))) i.artist = parts[0].trim(); }
@@ -450,6 +491,48 @@ final class MusicLinks {
             }
         }
         return page(l, net);
+    }
+
+    /** A Pocket Casts page: the episode (or show) and, for an episode, the show it's from. */
+    private static Item pocketCasts(Link l, Net net) throws Exception {
+        String html = net.get(l.url, true);
+        if (html == null) return null;
+        Map<String, String> meta = metaTags(html);
+        String title = meta.getOrDefault("og:title", pageTitle(html)).replaceFirst("\\s+-\\s+Pocket Casts$", "").trim();
+        if (title.isEmpty()) return null;
+        Item i = new Item(l.kind);
+        if (l.kind == Kind.SHOW) { i.title = title; return i; }
+        i.title = title;
+        Matcher m = Pattern.compile("data-testid=\"podcast-title\"[^>]*>([^<]+)<").matcher(html);
+        if (m.find()) i.show = unescape(m.group(1).trim());
+        return i;
+    }
+
+
+    /** What YouTube Music's page says this video is ("MUSIC_VIDEO_TYPE_PODCAST_EPISODE"), or "". */
+    private static String youtubeType(String videoId, Net net) throws Exception {
+        Matcher type = Pattern.compile("(MUSIC_VIDEO_TYPE_[A-Z_]+)").matcher(initialEndpoint(net.get("https://music.youtube.com/watch?v=" + videoId, true)));
+        return type.find() ? type.group(1) : "";
+    }
+
+    /** What a YouTube Music page opens on (its INITIAL_ENDPOINT: the video or page itself, not what's suggested around it). */
+    static String initialEndpoint(String html) {
+        int at = html == null ? -1 : html.indexOf("\"INITIAL_ENDPOINT\":\"");
+        if (at < 0) return "";
+        int start = at + 20, end = html.indexOf("}\",\"", start);
+        if (end < 0 || end - start > 4000) end = Math.min(html.length(), start + 1500);
+        return html.substring(start, end);
+    }
+
+    /** A YouTube Music playlist that's a podcast ("The Daily", "Podcast • New York Times Podcasts"); null for anyone's own playlist. */
+    private static Item youtubeShow(Link l, Net net) throws Exception {
+        String html = net.get("https://music.youtube.com/playlist?list=" + l.id, true);
+        if (html == null) return null;
+        if (!initialEndpoint(html).contains("MUSIC_PAGE_TYPE_PODCAST_SHOW_DETAIL_PAGE")) { note("youtube: playlist " + l.id + " isn't a podcast"); return null; }
+        Map<String, String> meta = metaTags(html);
+        Item i = new Item(Kind.SHOW); i.title = meta.getOrDefault("og:title", "").trim();
+        i.artist = meta.getOrDefault("og:description", "").replaceFirst("^Podcast\\s*•\\s*", "").trim();
+        return i.title.isEmpty() ? null : i;
     }
 
     /** Any other link: the page's own title, like "Blinding Lights by The Weeknd on TIDAL". */
@@ -912,13 +995,20 @@ final class MusicLinks {
     private static Match podcast(Item item, App target, Net net, String cc) throws Exception {
         if (!target.podcasts) return null;
         String showName = item.kind == Kind.SHOW ? item.title : item.show;
+        // The show on Apple Podcasts (its id and feed are what the other apps go by).
         if (item.appleShow.isEmpty() && !showName.isEmpty()) {
             JSONObject j = json(net.get(ITUNES + "search?media=podcast&entity=podcast&limit=10&country=" + cc + "&term=" + enc(showName), false));
             JSONArray r = j == null ? null : j.optJSONArray("results");
             if (r != null) for (int n = 0; n < r.length(); n++) {
                 Item found = fromItunes(r.optJSONObject(n));
-                if (found != null && sameName(found.title, showName)) { item.appleShow = found.appleShow; item.appleShowUrl = found.appleShowUrl; if (item.feed.isEmpty()) item.feed = found.feed; break; }
+                if (found != null && sameShow(found.title, showName)) { item.appleShow = found.appleShow; item.appleShowUrl = found.appleShowUrl; if (item.feed.isEmpty()) item.feed = found.feed; break; }
             }
+        }
+        if (item.feed.isEmpty() && !item.appleShow.isEmpty()) {
+            JSONObject j = json(net.get(ITUNES + "lookup?id=" + item.appleShow + "&country=" + cc, false));
+            JSONArray r = j == null ? null : j.optJSONArray("results");
+            Item found = r == null || r.length() == 0 ? null : fromItunes(r.optJSONObject(0));
+            if (found != null) { item.feed = found.feed; if (item.appleShowUrl.isEmpty()) item.appleShowUrl = found.appleShowUrl; }
         }
         note("podcast " + item + " apple " + item.appleShow + " feed " + item.feed);
         boolean episode = item.kind == Kind.EPISODE;
@@ -928,17 +1018,27 @@ final class MusicLinks {
                 if (episode && !item.title.isEmpty()) {
                     JSONObject j = json(net.get(ITUNES + "lookup?id=" + item.appleShow + "&entity=podcastEpisode&limit=200&country=" + cc, false));
                     JSONArray r = j == null ? null : j.optJSONArray("results");
+                    List<Item> eps = new ArrayList<>(); List<String> urls = new ArrayList<>();
                     if (r != null) for (int n = 1; n < r.length(); n++) {
-                        JSONObject e = r.optJSONObject(n);
-                        if (e != null && sameName(e.optString("trackName"), item.title)) return new Match(clean(e.optString("trackViewUrl")), "", "exact");
+                        Item e = fromItunes(r.optJSONObject(n));
+                        if (e != null && e.kind == Kind.EPISODE) { eps.add(e); urls.add(clean(r.optJSONObject(n).optString("trackViewUrl"))); }
                     }
+                    int at = pickEpisode(item, eps);
+                    if (at >= 0) return new Match(urls.get(at), "", "exact");
                 }
                 String show = item.appleShowUrl.isEmpty() ? "https://podcasts.apple.com/" + cc + "/podcast/id" + item.appleShow : item.appleShowUrl;
                 return new Match(show, "", episode ? "show" : "exact");
             }
-            case POCKET_CASTS:
-                if (!item.appleShow.isEmpty()) return new Match("https://pca.st/itunes/" + item.appleShow, item.feed.isEmpty() ? "" : "pktc://subscribe/" + bare(item.feed), episode ? "show" : "exact");
-                return item.feed.isEmpty() ? null : new Match("pktc://subscribe/" + bare(item.feed), "", episode ? "show" : "exact");
+            case POCKET_CASTS: {
+                if (item.appleShow.isEmpty()) return item.feed.isEmpty() ? null : new Match("pktc://subscribe/" + bare(item.feed), "", episode ? "show" : "exact");
+                String show = "https://pca.st/itunes/" + item.appleShow;
+                if (episode) { String exact = pocketCastsEpisode(item, show, net); if (exact != null) return new Match(exact, "", "exact"); }
+                return new Match(show, item.feed.isEmpty() ? "" : "pktc://subscribe/" + bare(item.feed), episode ? "show" : "exact");
+            }
+            case YOUTUBE_MUSIC: {
+                String exact = youtubePodcast(item, net, cc);
+                return exact != null ? new Match(exact, "", "exact") : search(item, target);
+            }
             case ANTENNAPOD:
                 return item.feed.isEmpty() ? null : new Match("antennapod-subscribe://" + bare(item.feed), "https://antennapod.org/deeplink/subscribe?url=" + enc(item.feed) + "&title=" + enc(showName), episode ? "show" : "exact");
             case PODCAST_ADDICT:
@@ -946,6 +1046,115 @@ final class MusicLinks {
             default:
                 return search(item, target);
         }
+    }
+
+    /**
+     * Which of a show's episodes is this one: the same title (or one starting the other, as "Title"
+     * and "Title: more" or "Title | Show"), not days apart; failing that, the only one out that day
+     * of nearly the same length. -1 if none.
+     */
+    static int pickEpisode(Item want, List<Item> eps) {
+        for (int n = 0; n < eps.size(); n++) {
+            Item e = eps.get(n);
+            if (sameEpisode(e.title, want.title) && closeDays(e.date, want.date, 2)) return n;
+        }
+        int only = -1;
+        if (!want.date.isEmpty() && want.ms > 0) for (int n = 0; n < eps.size(); n++) {
+            Item e = eps.get(n);
+            if (e.date.equals(want.date) && e.ms > 0 && Math.abs(e.ms - want.ms) <= Math.max(60_000, want.ms / 30)) { if (only >= 0) return -1; only = n; }
+        }
+        return only;
+    }
+
+    /** Episode titles that are the same, allowing for one with more on the end ("Title: subtitle", "Title | Show"). */
+    static boolean sameEpisode(String a, String b) {
+        String x = norm(a), y = norm(b);
+        if (x.isEmpty() || y.isEmpty()) return false;
+        if (x.equals(y)) return true;
+        String shortr = x.length() <= y.length() ? x : y, longr = shortr == x ? y : x;
+        return shortr.split(" ").length >= 4 && (longr.startsWith(shortr + " ") || longr.endsWith(" " + shortr));
+    }
+
+    /** A show's names on two services ("The Interview" and "The Interview | A Podcast From The New York Times"). */
+    static boolean sameShow(String a, String b) {
+        String x = norm(a), y = norm(b);
+        if (x.isEmpty() || y.isEmpty()) return false;
+        if (x.equals(y)) return true;
+        String shortr = x.length() <= y.length() ? x : y, longr = shortr == x ? y : x;
+        return longr.startsWith(shortr + " ") || sameName(a, b);
+    }
+
+    /** Dates ("2026-11-15") at most this many days apart; true when either isn't known. */
+    static boolean closeDays(String a, String b, int days) {
+        if (a == null || b == null || a.isEmpty() || b.isEmpty()) return true;
+        try { return Math.abs(java.time.LocalDate.parse(a).toEpochDay() - java.time.LocalDate.parse(b).toEpochDay()) <= days; }
+        catch (Exception e) { return true; }
+    }
+
+    /** The episode in Pocket Casts (pca.st/episode/…), from its list of the show's episodes. */
+    private static String pocketCastsEpisode(Item item, String show, Net net) throws Exception {
+        String at = net.follow(show);
+        Matcher m = at == null ? null : Pattern.compile("/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/?$").matcher(at);
+        if (m == null || !m.find()) { note("pocket casts: no show id from " + at); return null; }
+        JSONObject j = json(net.get("https://podcast-api.pocketcasts.com/podcast/full/" + m.group(1), false));
+        JSONObject podcast = j == null ? null : j.optJSONObject("podcast");
+        JSONArray list = podcast == null ? null : podcast.optJSONArray("episodes");
+        if (list == null) { note("pocket casts: no episode list"); return null; }
+        List<Item> eps = new ArrayList<>(); List<String> ids = new ArrayList<>();
+        for (int n = 0; n < list.length(); n++) {
+            JSONObject e = list.optJSONObject(n);
+            if (e == null) continue;
+            Item ep = new Item(Kind.EPISODE); ep.title = e.optString("title"); ep.date = day(e.optString("published")); ep.ms = e.optLong("duration") * 1000;
+            eps.add(ep); ids.add(e.optString("uuid"));
+        }
+        int pick = pickEpisode(item, eps);
+        return pick < 0 || ids.get(pick).isEmpty() ? null : "https://pca.st/episode/" + ids.get(pick);
+    }
+
+    /** The show or episode in YouTube Music, from its search ("Episode • 23h ago • The Daily"). */
+    private static String youtubePodcast(Item item, Net net, String cc) throws Exception {
+        String showName = item.kind == Kind.SHOW ? item.title : item.show;
+        JSONObject client = new JSONObject().put("clientName", "WEB_REMIX").put("clientVersion", YTM_VERSION).put("hl", "en").put("gl", cc.toUpperCase(Locale.ROOT));
+        // Searched among episodes (or podcasts) only, the way YouTube Music's own filter chips do.
+        String filter = item.kind == Kind.EPISODE ? "EgWKAQJIAWoMEA4QChADEAQQCRAF" : "EgWKAQJQAWoMEA4QChADEAQQCRAF";
+        JSONObject body = new JSONObject().put("context", new JSONObject().put("client", client)).put("query", searchWords(item)).put("params", filter);
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("Origin", "https://music.youtube.com"); headers.put("Referer", "https://music.youtube.com/");
+        headers.put("X-YouTube-Client-Name", "67"); headers.put("X-YouTube-Client-Version", YTM_VERSION);
+        JSONObject root = json(net.post("https://music.youtube.com/youtubei/v1/search?prettyPrint=false", body.toString(), headers));
+        if (root == null) { note("youtube: no reply"); return null; }
+        String found = youtubePodcastResult(root, item, showName);
+        // A long episode title can find nothing at all: once more with its first words and the show.
+        String[] words = item.title.trim().split("\\s+");
+        if (found != null || item.kind != Kind.EPISODE || words.length <= 7 || pastDeadline(System.currentTimeMillis() + 500)) return found;
+        body.put("query", (String.join(" ", Arrays.copyOf(words, 6)) + " " + item.show).trim());
+        root = json(net.post("https://music.youtube.com/youtubei/v1/search?prettyPrint=false", body.toString(), headers));
+        return root == null ? null : youtubePodcastResult(root, item, showName);
+    }
+
+    static String youtubePodcastResult(JSONObject root, Item item, String showName) {
+        List<JSONObject> rows = new ArrayList<>();
+        collect(root, "musicResponsiveListItemRenderer", rows);
+        for (JSONObject r : rows) {
+            JSONArray cols = r.optJSONArray("flexColumns");
+            if (cols == null || cols.length() == 0) continue;
+            String title = runs(cols.optJSONObject(0)), sub = cols.length() > 1 ? runs(cols.optJSONObject(1)) : "";
+            String[] parts = sub.split("\\s+•\\s+");
+            String show = parts[parts.length - 1];
+            String row = r.toString();
+            if (item.kind == Kind.EPISODE) {
+                if (!row.contains("MUSIC_VIDEO_TYPE_PODCAST_EPISODE") || !sameEpisode(title, item.title) || (!showName.isEmpty() && !sameShow(show, showName))) continue;
+                String v = firstString(r, "videoId");
+                if (v != null && !v.isEmpty()) return "https://music.youtube.com/watch?v=" + v;
+            } else {
+                JSONObject nav = r.optJSONObject("navigationEndpoint"), browse = nav == null ? null : nav.optJSONObject("browseEndpoint");
+                String id = browse == null ? "" : browse.optString("browseId");
+                if (id.startsWith("MPSPPL") && sameShow(title, item.title)) return "https://music.youtube.com/playlist?list=" + id.substring(4);
+            }
+        }
+        if (log != null) for (JSONObject r : rows.subList(0, Math.min(6, rows.size()))) { JSONArray c = r.optJSONArray("flexColumns"); if (c != null && c.length() > 1) note("youtube row: " + runs(c.optJSONObject(0)) + " | " + runs(c.optJSONObject(1)) + (r.toString().contains("PODCAST_EPISODE") ? " (episode)" : "")); }
+        note("youtube: " + rows.size() + " results, no such podcast");
+        return null;
     }
 
     private static String bare(String feed) { return feed.replaceFirst("(?i)^https?://", ""); }
@@ -1118,7 +1327,15 @@ final class MusicLinks {
             try (InputStream in = c.getInputStream()) {
                 ByteArrayOutputStream b = new ByteArrayOutputStream(); byte[] buf = new byte[16384]; int n;
                 while ((n = in.read(buf)) > 0 && b.size() < max) b.write(buf, 0, Math.min(n, max - b.size()));
-                return new String(b.toByteArray(), StandardCharsets.UTF_8);
+                byte[] got = b.toByteArray();
+                if (got.length > 2 && (got[0] & 0xFF) == 0x1F && (got[1] & 0xFF) == 0x8B) {
+                    ByteArrayOutputStream plain = new ByteArrayOutputStream();
+                    try (java.util.zip.GZIPInputStream z = new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(got))) {
+                        while ((n = z.read(buf)) > 0 && plain.size() < max) plain.write(buf, 0, Math.min(n, max - plain.size()));
+                    } catch (java.io.EOFException cut) { /* cut off at max: what's there is kept */ }
+                    got = plain.toByteArray();
+                }
+                return new String(got, StandardCharsets.UTF_8);
             }
         }
 
