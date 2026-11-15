@@ -1167,7 +1167,8 @@ public final class OnDeviceSmoke extends Instrumentation {
      * faded one (the steps sped up here from 5 seconds and 2 minutes); two heads sit in one stack,
      * which spreads out when tapped; tapping a head then opens the chat in a floating window (the
      * heads step aside meanwhile, and come back stacked when it closes); the settings show each
-     * step; dragging one spread-out head onto the × (with real touches) closes just that chat, and
+     * step; dragged (with real touches), the face behind the stack trails the front one and settles
+     * back in; dragging one spread-out head onto the × closes just that chat, and
      * dragging the stack onto it closes the rest; closing them all takes them away.
      */
     private void checkChatHeads(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();long now=System.currentTimeMillis();
@@ -1198,6 +1199,7 @@ public final class OnDeviceSmoke extends Instrumentation {
             int[] peek={0};runOnMainSync(()->{android.view.ViewGroup box=(android.view.ViewGroup)((android.view.ViewGroup)heads[0]).getChildAt(0);android.view.View back=box.getChildAt(0),front=box.getChildAt(1);
                 float b=back.getY()+back.getHeight()*(1+back.getScaleY())/2f,f=front.getY()+front.getHeight();peek[0]=Math.round((b-f)/front.getResources().getDisplayMetrics().density);});
             check(peek[0]>=5,"The face behind the stack's front one barely shows ("+peek[0]+" dp)");
+            checkStackTrail();
             runOnMainSync(()->((android.view.ViewGroup)heads[0]).getChildAt(0).performClick());waitForIdleSync();Thread.sleep(300);
             runOnMainSync(()->{heads[0]=ChatHeads.view();shown[0]=((android.view.ViewGroup)heads[0]).getChildCount();});
             check(shown[0]==2,"Tapping the stack didn't spread the heads out ("+shown[0]+")");
@@ -1258,6 +1260,31 @@ public final class OnDeviceSmoke extends Instrumentation {
         runOnMainSync(()->imm.hideSoftInputFromWindow(box.getWindowToken(),0));Thread.sleep(1200);waitForIdleSync();
         int[] after={0};runOnMainSync(()->after[0]=window.getWindow().getDecorView().getHeight());
         check(Math.abs(after[0]-full[0])<=2,"With the keyboard down, the floating chat didn't go back to its full height ("+after[0]+", not "+full[0]+")");}
+    /**
+     * Dragging the stack with real touches: the face behind falls back from the front one on a quick
+     * sweep and catches up when the finger stops; let go, the faces settle back into the stack.
+     */
+    private void checkStackTrail()throws Exception{
+        float dp=getTargetContext().getResources().getDisplayMetrics().density;
+        android.view.View[] box={null};runOnMainSync(()->box[0]=((android.view.ViewGroup)ChatHeads.view()).getChildAt(0));
+        int[] at=new int[2];runOnMainSync(()->box[0].getLocationOnScreen(at));
+        float[] p={at[0]+box[0].getWidth()/2f,at[1]+30*dp};long down=android.os.SystemClock.uptimeMillis();
+        touch(down,android.view.MotionEvent.ACTION_DOWN,p[0],p[1]);
+        for(int i=1;i<=4;i++){Thread.sleep(16);p[0]-=10;p[1]+=10;touch(down,android.view.MotionEvent.ACTION_MOVE,p[0],p[1]);}
+        Thread.sleep(400);
+        check(ChatHeads.trail()!=null,"Dragging the stack didn't bring its faces out to trail");
+        float most=0;for(int i=1;i<=12;i++){p[0]-=25;p[1]+=40;touch(down,android.view.MotionEvent.ACTION_MOVE,p[0],p[1]);Thread.sleep(16);most=Math.max(most,trailGap());}
+        check(most/dp>9+12,"On a quick drag, the face behind didn't trail the front one (at most "+Math.round(most/dp)+" dp apart)");
+        // Moving while the screenshot is taken, so it shows them trailing.
+        Thread mover=new Thread(()->{try{for(int i=0;i<45;i++){p[0]+=10;p[1]-=16;touch(down,android.view.MotionEvent.ACTION_MOVE,p[0],p[1]);Thread.sleep(16);}}catch(Exception ignored){}});
+        mover.start();shoot("shot-chat-heads-trail");mover.join();
+        Thread.sleep(900);float rest=trailGap()/dp;
+        check(Math.abs(rest-9)<3,"With the finger still, the face behind didn't come back in behind the front one ("+Math.round(rest)+" dp, not 9)");
+        touch(down,android.view.MotionEvent.ACTION_UP,p[0],p[1]);Thread.sleep(1300);waitForIdleSync();
+        check(ChatHeads.trail()==null,"Let go, the trailing faces didn't settle back into the stack");
+        float[] a={0};String[] said={""};runOnMainSync(()->{android.view.View b=((android.view.ViewGroup)ChatHeads.view()).getChildAt(0);a[0]=b.getAlpha();said[0]=String.valueOf(b.getContentDescription());});
+        check(a[0]==1f&&said[0].contains("2 chats"),"After the drag, the stack isn't showing again ("+a[0]+", "+said[0]+")");}
+    private float trailGap(){float[][] t={null};runOnMainSync(()->t[0]=ChatHeads.trail());if(t[0]==null||t[0].length<4)return 0;return (float)Math.hypot(t[0][2]-t[0][0],t[0][3]-t[0][1]);}
     /** Drags a chat head onto the × with real touches, to wherever the × shows up on screen. */
     private void dragOntoClose(android.view.View head,String shot)throws Exception{
         int[] at=new int[2];runOnMainSync(()->head.getLocationOnScreen(at));
