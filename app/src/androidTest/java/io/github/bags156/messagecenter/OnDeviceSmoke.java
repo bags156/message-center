@@ -1130,14 +1130,14 @@ public final class OnDeviceSmoke extends Instrumentation {
             android.widget.TextView title=exactText(a,"Fran Font");check(title!=null&&fontOf(title)==Fonts.sample(ctx,second.id),"The chat's name isn't in the font chosen for titles");
             // Redrawing the chat and the list (as new messages and syncs do) never shows a frame of text in
             // the new font squeezed into room measured for the old (the flicker: "28" as "2", cut-off words).
-            int[] bad={0},draws={0};android.view.ViewTreeObserver.OnDrawListener watchDraws=()->{draws[0]++;bad[0]+=halfLaidOut(a.getWindow().getDecorView());};
+            int[] squeezed={0},draws={0};android.view.ViewTreeObserver.OnDrawListener watchDraws=()->{draws[0]++;squeezed[0]+=halfLaidOut(a.getWindow().getDecorView());};
             runOnMainSync(()->a.getWindow().getDecorView().getViewTreeObserver().addOnDrawListener(watchDraws));
             for(int k=0;k<3;k++){onMainCall(()->method("renderMessages",boolean.class).invoke(a,false));waitForIdleSync();Thread.sleep(150);}
             onMainCall(()->method("inbox").invoke(a));waitForIdleSync();Thread.sleep(200);
             for(int k=0;k<2;k++){onMainCall(()->method("renderInbox").invoke(a));waitForIdleSync();Thread.sleep(150);}
             onMainCall(()->method("thread",String.class).invoke(a,"font-chat"));waitForIdleSync();Thread.sleep(300);
             runOnMainSync(()->a.getWindow().getDecorView().getViewTreeObserver().removeOnDrawListener(watchDraws));
-            check(draws[0]>0&&bad[0]==0,"Redrawing showed text in the new font squeezed into old room ("+bad[0]+" pieces over "+draws[0]+" frames)");
+            check(draws[0]>0&&squeezed[0]==0,"Redrawing showed text in the new font squeezed into old room ("+squeezed[0]+" pieces over "+draws[0]+" frames)");
             shoot("shot-custom-font");
             runOnMainSync(()->Fonts.setFontFor(ctx,"messages",""));onMainCall(()->method("thread",String.class).invoke(a,"font-chat"));waitForIdleSync();Thread.sleep(300);
             said=exactText(a,"This should be in your font");check(said!=null&&fontOf(said)==null,"Choosing the phone's font for Messages left them in the uploaded one");
