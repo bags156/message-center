@@ -261,8 +261,6 @@ final class ChatHeads {
             face.setElevation(dp(3 - i));
             face.setOutlineProvider(new ViewOutlineProvider() { @Override public void getOutline(View v, Outline o) { o.setOval(0, 0, v.getWidth(), v.getHeight()); } });
             face.setClipToOutline(true);
-            GradientDrawable edge = new GradientDrawable(); edge.setShape(GradientDrawable.OVAL); edge.setStroke(dp(2), 0xe6ffffff);
-            face.setForeground(edge);
             if (i > 0) { face.setScaleX(1f - 0.1f * i); face.setScaleY(1f - 0.1f * i); face.setColorFilter(0x33000000); }
             FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(dp(54), dp(54), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
             fp.topMargin = dp(3 + PEEK * i);
@@ -422,8 +420,6 @@ final class ChatHeads {
                 face.setElevation(dp(3 - i));
                 face.setOutlineProvider(new ViewOutlineProvider() { @Override public void getOutline(View v, Outline o) { o.setOval(0, 0, v.getWidth(), v.getHeight()); } });
                 face.setClipToOutline(true);
-                GradientDrawable edge = new GradientDrawable(); edge.setShape(GradientDrawable.OVAL); edge.setStroke(dp(2), 0xe6ffffff);
-                face.setForeground(edge);
                 if (i > 0) { face.setScaleX(1f - 0.1f * i); face.setScaleY(1f - 0.1f * i); face.setColorFilter(0x33000000); }
                 room.addView(face, new FrameLayout.LayoutParams(dp(54), dp(54), Gravity.TOP | Gravity.START));
                 faces[i] = face;
