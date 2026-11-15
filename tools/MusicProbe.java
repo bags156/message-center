@@ -32,12 +32,19 @@ public final class MusicProbe {
         java.util.List<String> all = new java.util.ArrayList<>();
         // Raw answers ("raw:URL", "post:URL|JSON") and songs by name ("song:Title|Artist|Album") straight to Spotify.
         boolean namedOnly = true;
-        for (String a : links) if (!a.startsWith("raw:") && !a.startsWith("post:") && !a.startsWith("song:") && !a.startsWith("find:")) namedOnly = false;
+        for (String a : links) if (!a.startsWith("raw:") && !a.startsWith("post:") && !a.startsWith("song:") && !a.startsWith("find:") && !a.startsWith("finds:") && !a.startsWith("postfind:")) namedOnly = false;
         int songs = 0, exact = 0;
         for (String a : links) {
             if (a.startsWith("raw:")) { String r = net.get(a.substring(4), false); System.out.println("RAW " + a.substring(4) + "\n    " + (r == null ? "nothing" : r.substring(0, Math.min(1500, r.length())).replace("\n", " "))); }
             else if (a.startsWith("find:")) { String[] p = a.substring(5).split("\\|", 2); String r = net.get(p[0], true); int at = r == null ? -1 : r.indexOf(p[1]);
                 System.out.println("FIND " + p[1] + " in " + p[0] + " (" + (r == null ? "nothing" : r.length() + " chars") + ")\n    " + (at < 0 ? "not there" : r.substring(Math.max(0, at - 300), Math.min(r.length(), at + 900)))); }
+            else if (a.startsWith("finds:") || a.startsWith("postfind:")) {
+                // Every place a word shows up (up to 10), with a little around each: "finds:URL|word", "postfind:URL|JSON|word".
+                boolean post = a.startsWith("postfind:"); String[] p = a.substring(post ? 9 : 6).split("\\|", post ? 3 : 2); String needle = p[p.length - 1];
+                String r = post ? net.post(p[0], p[1], new java.util.HashMap<>()) : net.get(p[0], true);
+                System.out.println("FINDS " + needle + " in " + p[0] + " (" + (r == null ? "nothing" : r.length() + " chars") + ")");
+                int at = -1, n = 0; while (r != null && n < 10 && (at = r.indexOf(needle, at + 1)) >= 0) { n++; System.out.println("    " + r.substring(Math.max(0, at - 160), Math.min(r.length(), at + 340)).replace("\n", " ")); }
+            }
             else if (a.startsWith("post:")) { String[] p = a.substring(5).split("\\|", 2); String r = net.post(p[0], p[1], new java.util.HashMap<>()); System.out.println("POST " + p[0] + "\n    " + (r == null ? "nothing" : r.substring(0, Math.min(1500, r.length())))); }
             else if (a.startsWith("song:")) {
                 String[] p = a.substring(5).split("\\|");
@@ -49,7 +56,7 @@ public final class MusicProbe {
         if (songs > 0) System.out.println("SPOTIFY EXACT " + exact + " of " + songs);
         if (namedOnly) return;
         for (String url : links) {
-            if (url.startsWith("raw:") || url.startsWith("post:") || url.startsWith("song:") || url.startsWith("find:")) continue;
+            if (url.startsWith("raw:") || url.startsWith("post:") || url.startsWith("song:") || url.startsWith("find:") || url.startsWith("finds:") || url.startsWith("postfind:")) continue;
             if (!url.equals("episodes")) { all.add(url); continue; }
             // An episode of each show, found on its page.
             String page = net.get("https://open.spotify.com/show/3IM0lmZxpFAY7CwMuv9H4g", true);

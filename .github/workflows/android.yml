@@ -103,7 +103,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/music"
           curl -fsSL -o "$RUNNER_TEMP/music/json.jar" https://repo1.maven.org/maven2/org/json/json/20240303/json-20240303.jar
           javac -nowarn -d "$RUNNER_TEMP/music" -cp "$RUNNER_TEMP/music/json.jar" app/src/main/java/io/github/bags156/messagecenter/MusicLinks.java tools/MusicProbe.java
-          java -cp "$RUNNER_TEMP/music:$RUNNER_TEMP/music/json.jar" io.github.bags156.messagecenter.MusicProbe | sed 's/^/MUSIC /'
+          java -cp "$RUNNER_TEMP/music:$RUNNER_TEMP/music/json.jar" io.github.bags156.messagecenter.MusicProbe 'finds:https://pod.link/1200361736|open.spotify.com' 'finds:https://pod.link/1200361736|youtube.com' 'finds:https://pod.link/1200361736|/episode/' 'finds:https://open.spotify.com/embed/show/3IM0lmZxpFAY7CwMuv9H4g|episode' 'finds:https://open.spotify.com/show/3IM0lmZxpFAY7CwMuv9H4g|episode' 'postfind:https://music.youtube.com/youtubei/v1/search?prettyPrint=false|{"context":{"client":{"clientName":"WEB_REMIX","clientVersion":"1.20251103.01.00","hl":"en","gl":"US"}},"query":"The Daily"}|pageType' 'postfind:https://music.youtube.com/youtubei/v1/search?prettyPrint=false|{"context":{"client":{"clientName":"WEB_REMIX","clientVersion":"1.20251103.01.00","hl":"en","gl":"US"}},"query":"Olivia Wilde Hit Bottom The Daily"}|pageType' | sed 's/^/MUSIC /'
 
   device-smoke:
     needs: build
