@@ -246,7 +246,7 @@ public final class PairedService extends Service {
                 case "PAIR_EMOJI" -> {emoji=new JSONObject(payload).optString("emoji");update("Approve the matching emoji in Google Messages");}
                 case "READY" -> {
                     ready=true;emoji="";stopAutoReconnect();update("Connected to Google Messages");scheduleCodeSweep();
-                    saveSession(token);main.post(this::flushOutbox);main.post(this::flushReadReceipts);main.post(this::flushMediaOutbox);
+                    saveSession(token);main.post(this::flushOutbox);main.post(this::flushReadReceipts);main.post(this::flushMediaOutbox);main.postDelayed(this::confirmAllUnsure,5000);
                     // Catch up on anything that came in while disconnected, right away.
                     main.post(()->requestSync(false));
                     network.execute(()->{if(generation.get()==token)try{chats(client,"",1);refreshConversationIcons();}catch(Exception e){update("Connected • tap Refresh to load conversations");}});
@@ -288,7 +288,7 @@ public final class PairedService extends Service {
                 case "TROUBLE" -> {ready=false;update("Weak connection • reconnecting on its own");main.post(()->scheduleAutoReconnect("weak connection"));}
                 // Google Messages on the phone isn't answering: the connection keeps asking by itself, so a fresh one waits a little longer.
                 case "RECONNECTING" -> {ready=false;update("Waiting for Google Messages on your phone • reconnecting on its own");main.post(()->scheduleAutoReconnect("waiting for Google Messages",2));}
-                case "RECOVERED" -> {ready=true;stopAutoReconnect();update("Connected to Google Messages");scheduleCodeSweep();main.post(()->retryWaiting("connection back"));main.post(this::flushReadReceipts);main.post(this::flushMediaOutbox);main.post(()->requestSync(false));}
+                case "RECOVERED" -> {ready=true;stopAutoReconnect();update("Connected to Google Messages");scheduleCodeSweep();main.postDelayed(this::confirmAllUnsure,5000);main.post(()->retryWaiting("connection back"));main.post(this::flushReadReceipts);main.post(this::flushMediaOutbox);main.post(()->requestSync(false));}
                 case "STALE" -> main.post(()->requestSync(true));
                 case "INACTIVE" -> {inactive=true;stopAutoReconnect();update("Google Messages for web is open somewhere else. Open Message Center to switch back.");}
                 default -> { }
@@ -1020,7 +1020,19 @@ public final class PairedService extends Service {
      * messages a little later (and once more after a minute), so its copy settles it.
      */
     private void checkUnsure(String chat){Diagnostics.note("Google didn't answer a send; checking the chat for its copy");
-        for(long wait:new long[]{10_000,60_000})main.postDelayed(()->{if(current==this&&ready&&outbox.unsure(chat))loadMessages(chat,"",(v,err)->{if(current==this)changed("OUTBOX");});},wait);}
+        main.postDelayed(()->{if(current==this&&ready&&outbox.unsure(chat))loadMessages(chat,"",(v,err)->{if(current==this)changed("OUTBOX");});},10_000);
+        main.postDelayed(()->confirmUnsure(chat),60_000);}
+    /**
+     * A minute on: the phone's newest messages for the chat settle it. Its copy there clears it;
+     * not there (and the phone answered, so the connection's fine) means it never arrived, and it
+     * goes again by itself, once. No answer: asked again when the connection's back.
+     */
+    /** Back connected: any text Google didn't answer about is checked now (the reconnect is often why). */
+    private void confirmAllUnsure(){for(String chat:outbox.unsureChats())confirmUnsure(chat);}
+    private void confirmUnsure(String chat){if(current!=this||!ready||!outbox.unsure(chat))return;
+        loadMessages(chat,"",(v,err)->{if(current!=this)return;
+            if(err.isEmpty()&&outbox.unsure(chat)){int again=outbox.notOnPhone(chat);Diagnostics.note(again>0?"A text Google didn't answer about isn't on the phone; sending it again":"A text Google didn't answer about still isn't on the phone after a second try");main.post(this::flushOutbox);}
+            changed("OUTBOX");});}
     /** Sends now if connected, otherwise saves it for later. The result value is "queued" when saved. */
     static void sendOrQueue(Context context,String chat,String text,String reply,Result done) {
         PairedService s=current;
