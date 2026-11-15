@@ -151,9 +151,21 @@ final class Avatars {
         canvas.drawCircle(size / 2f, size / 2f, size / 2f, fill);
         Paint text = new Paint(Paint.ANTI_ALIAS_FLAG); text.setColor(Color.WHITE); text.setTextAlign(Paint.Align.CENTER);
         text.setTextSize(size * 0.45f); text.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        if (PERSON.equals(letter)) {
+            // Someone known only by their number: a head and shoulders, not the number's first digit.
+            Paint white = new Paint(Paint.ANTI_ALIAS_FLAG); white.setColor(Color.WHITE);
+            canvas.drawCircle(size / 2f, size * 0.39f, size * 0.15f, white);
+            canvas.save();
+            android.graphics.Path round = new android.graphics.Path(); round.addCircle(size / 2f, size / 2f, size / 2f, android.graphics.Path.Direction.CW); canvas.clipPath(round);
+            canvas.drawOval(size * 0.24f, size * 0.62f, size * 0.76f, size * 1.05f, white);
+            canvas.restore();
+            return out;
+        }
         canvas.drawText(letter, size / 2f, size / 2f - (text.descent() + text.ascent()) / 2f, text);
         return out;
     }
+    /** Stands in for an initial: draw a person outline instead. */
+    static final String PERSON = "person";
     /**
      * Full-bleed square for Android's adaptive icons (bubbles, shortcuts). Android cuts it to the
      * phone's icon shape (a circle on Pixels, a rounded square on OnePlus) showing roughly the
@@ -205,7 +217,7 @@ final class Avatars {
         for(int i=0;i<Math.min(3,people.size());i++){JSONObject p=people.get(i);String name=PairedProtocol.name(p);File file=best(context,PairedProtocol.participantID(p));
             BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;if(file.isFile())BitmapFactory.decodeFile(file.getPath(),bounds);
             BitmapFactory.Options options=new BitmapFactory.Options();options.inSampleSize=Math.max(1,Integer.highestOneBit(Math.max(bounds.outWidth,bounds.outHeight)/Math.max(1,size)));
-            photos.add(file.isFile()?BitmapFactory.decodeFile(file.getPath(),options):null);letters.add(PairedProtocol.initial(name));colors.add(PairedProtocol.color(p.optString("avatarHexColor"),fallbackColor(name)));}
+            photos.add(file.isFile()?BitmapFactory.decodeFile(file.getPath(),options):null);letters.add(ContactSearch.numberLike(name)||name.trim().isEmpty()?PERSON:PairedProtocol.initial(name));colors.add(PairedProtocol.color(p.optString("avatarHexColor"),fallbackColor(name)));}
         Bitmap image=group(photos,letters,colors,people.size(),PairedProtocol.color(chat.optString("avatarHexColor"),0xff334766),size);GroupCache.images.put(key.toString(),image);return image;
     }
     /** All faces and the lower-left group badge fit inside the adaptive icon's central safe area. */
