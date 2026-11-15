@@ -13,6 +13,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.text.Normalizer;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -1071,7 +1072,7 @@ final class MusicLinks {
         if (x.isEmpty() || y.isEmpty()) return false;
         if (x.equals(y)) return true;
         String shortr = x.length() <= y.length() ? x : y, longr = shortr == x ? y : x;
-        return shortr.split(" ").length >= 3 && (longr.startsWith(shortr + " ") || longr.endsWith(" " + shortr));
+        return shortr.split(" ").length >= 4 && (longr.startsWith(shortr + " ") || longr.endsWith(" " + shortr));
     }
 
     /** A show's names on two services ("The Interview" and "The Interview | A Podcast From The New York Times"). */
@@ -1122,7 +1123,13 @@ final class MusicLinks {
         headers.put("X-YouTube-Client-Name", "67"); headers.put("X-YouTube-Client-Version", YTM_VERSION);
         JSONObject root = json(net.post("https://music.youtube.com/youtubei/v1/search?prettyPrint=false", body.toString(), headers));
         if (root == null) { note("youtube: no reply"); return null; }
-        return youtubePodcastResult(root, item, showName);
+        String found = youtubePodcastResult(root, item, showName);
+        // A long episode title can find nothing at all: once more with its first words and the show.
+        String[] words = item.title.trim().split("\\s+");
+        if (found != null || item.kind != Kind.EPISODE || words.length <= 7 || pastDeadline(System.currentTimeMillis() + 500)) return found;
+        body.put("query", (String.join(" ", Arrays.copyOf(words, 6)) + " " + item.show).trim());
+        root = json(net.post("https://music.youtube.com/youtubei/v1/search?prettyPrint=false", body.toString(), headers));
+        return root == null ? null : youtubePodcastResult(root, item, showName);
     }
 
     static String youtubePodcastResult(JSONObject root, Item item, String showName) {

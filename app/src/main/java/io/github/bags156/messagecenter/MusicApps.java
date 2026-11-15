@@ -149,8 +149,9 @@ final class MusicApps {
             MusicLinks.Link link = MusicLinks.expand(MusicLinks.parse(url), net);
             MusicLinks.Item item = link == null ? null : MusicLinks.identify(link, net);
             if (link != null && link.app == app) { out.put("how", "exact").put("url", url).put("kind", link.kind.name()); return out; }
-            // A YouTube Music link that turns out to be a podcast episode goes to your podcast app, if you've picked one.
-            if (item != null && item.kind.podcast() && !podcast(link)) {
+            // A YouTube Music link that turns out to be a podcast episode goes to your podcast app, if you've picked one
+            // (when it's being opened for you; a link you send goes to their app, which still finds podcasts).
+            if (item != null && item.kind.podcast() && !podcast(link) && app == chosen(c, false)) {
                 if (off(c, true)) { out.put("how", "none").put("kind", item.kind.name()); return out; }
                 MusicLinks.App pod = chosen(c, true);
                 if (pod != null && pod != app) { app = pod; out.put("app", pod.name()); }
