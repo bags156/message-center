@@ -4440,8 +4440,8 @@ public class PairedActivity extends Activity {
     /** Floating chats as Android's bubbles, or as Message Center's own chat heads (which can be see-through). */
     private void chooseFloatingStyle(){boolean heads=ChatHeads.on(this);
         menuSheet("Floating chats",java.util.Arrays.asList((heads?"":"\u2713 ")+"Android's bubbles",(heads?"\u2713 ":"")+"Message Center's chat heads (see-through)"),java.util.Arrays.<Runnable>asList(
-            ()->{prefs.edit().putString(ChatHeads.STYLE,"android").apply();PairedService.floatingStyleChanged(this);settings();},
-            ()->{prefs.edit().putString(ChatHeads.STYLE,ChatHeads.HEADS).apply();PairedService.floatingStyleChanged(this);settings();
+            ()->{getSharedPreferences("paired",MODE_PRIVATE).edit().putString(ChatHeads.STYLE,"android").apply();PairedService.floatingStyleChanged(this);settings();},
+            ()->{getSharedPreferences("paired",MODE_PRIVATE).edit().putString(ChatHeads.STYLE,ChatHeads.HEADS).apply();PairedService.floatingStyleChanged(this);settings();
                 if(!ChatHeads.allowed(this)){toast("Allow Message Center to display over other apps for chat heads.");askOverlay();}}));}
     private void askOverlay(){try{startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:"+getPackageName())));}catch(Exception e){toast("Open Settings → Apps → Message Center → Display over other apps.");}}
     /** Settings → Notifications, with chat heads on: how see-through they are, the permission, and which chats float. */
@@ -4458,7 +4458,7 @@ public class PairedActivity extends Activity {
         android.widget.SeekBar bar=new android.widget.SeekBar(this);bar.setMax(100-ChatHeads.MIN_OPACITY);bar.setProgress(ChatHeads.opacity(this)-ChatHeads.MIN_OPACITY);bar.setContentDescription("Chat heads' strength when left alone");bar.setSplitTrack(false);
         slide.addView(bar,new LinearLayout.LayoutParams(0,dp(40),1));LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(dp(40),dp(40));sp.setMarginStart(dp(10));slide.addView(sample,sp);box.addView(slide);
         bar.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener(){
-            @Override public void onProgressChanged(android.widget.SeekBar b,int p,boolean user){int v=p+ChatHeads.MIN_OPACITY;value.setText(v+"%");sample.setAlpha(v/100f);if(user){prefs.edit().putInt(ChatHeads.OPACITY,v).apply();ChatHeads.refresh(PairedActivity.this);}}
+            @Override public void onProgressChanged(android.widget.SeekBar b,int p,boolean user){int v=p+ChatHeads.MIN_OPACITY;value.setText(v+"%");sample.setAlpha(v/100f);if(user){getSharedPreferences("paired",MODE_PRIVATE).edit().putInt(ChatHeads.OPACITY,v).apply();ChatHeads.refresh(PairedActivity.this);}}
             @Override public void onStartTrackingTouch(android.widget.SeekBar b){}
             @Override public void onStopTrackingTouch(android.widget.SeekBar b){}});
         box.setContentDescription("Strength when left alone");if(settingShown("Strength when left alone","see-through transparent opacity chat heads bubbles",null))addSettingRow(group,box);
