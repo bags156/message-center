@@ -29,6 +29,9 @@ import java.util.concurrent.Executors;
  * Turns a voice message into text with Android's on-device speech recognizer. The audio is
  * decoded on the phone, cut at its pauses, and played to the recognizer a piece at a time, at
  * the pace of speech; nothing is uploaded by this app. Results are saved per message so each one is transcribed once.
+ * A long one that has to stop partway (the recognizer stays busy, or Android ends it) keeps what
+ * it has, says where it got to, and carries on from there next time; it's never saved as if it
+ * were the whole message.
  */
 final class Transcriber {
     private Transcriber() {}
@@ -44,8 +47,27 @@ final class Transcriber {
     /** A saved transcript for this attachment, or null. */
     static String saved(Context context, String mediaID) { return mediaID.isEmpty() ? null : prefs(context).getString(mediaID, null); }
 
-    /** Drops a saved transcript, to transcribe the message again. */
-    static void forget(Context context, String mediaID) { if (!mediaID.isEmpty()) prefs(context).edit().remove(mediaID).apply(); }
+    /** Drops a saved transcript (whole or partway), to transcribe the message again. */
+    static void forget(Context context, String mediaID) { if (!mediaID.isEmpty()) prefs(context).edit().remove(mediaID).remove(mediaID + PART).remove(mediaID + UNTIL).remove(mediaID + TOTAL).apply(); }
+
+    private static final String PART = "|part", UNTIL = "|until", TOTAL = "|total";
+    /** Said where a stretch couldn't be made out, instead of leaving it out. */
+    static final String UNCLEAR = "[unclear]";
+
+    /** A transcription that stopped partway: the text so far, and how far into the message (and of how long) it got. */
+    static final class Partial {
+        final String text; final long untilMs, totalMs;
+        Partial(String text, long untilMs, long totalMs) { this.text = text; this.untilMs = untilMs; this.totalMs = totalMs; }
+    }
+    static Partial partial(Context context, String mediaID) {
+        if (mediaID.isEmpty() || saved(context, mediaID) != null) return null;
+        SharedPreferences p = prefs(context);
+        if (!p.contains(mediaID + UNTIL)) return null;
+        return new Partial(p.getString(mediaID + PART, ""), p.getLong(mediaID + UNTIL, 0), p.getLong(mediaID + TOTAL, 0));
+    }
+
+    /** "6:12". */
+    static String clock(long ms) { long s = Math.max(0, ms) / 1000; return String.format(Locale.US, "%d:%02d", s / 60, s % 60); }
 
     static boolean available(Context context) { return SpeechRecognizer.isOnDeviceRecognitionAvailable(context); }
 
@@ -71,15 +93,18 @@ final class Transcriber {
         decoder.execute(() -> {
             String problem = null;
             List<File> parts = new ArrayList<>();
-            try { decode(audio, pcm); parts = Pcm.split(pcm, dir, pcm.getName()); }
+            List<long[]> times = new ArrayList<>();
+            long total = 0;
+            try { decode(audio, pcm); total = pcm.length() * 1000 / (Pcm.RATE * 2L); parts = Pcm.split(pcm, dir, pcm.getName(), times); }
             catch (Exception e) { problem = e.getMessage() == null ? "This audio could not be read for transcription." : e.getMessage(); }
             finally { pcm.delete(); }
             String p = problem;
             List<File> pieces = parts;
+            long length = total;
             main.post(() -> {
                 if (p != null) { stopped(context); for (File f : pieces) f.delete(); done.done("", p); return; }
                 if (pieces.isEmpty()) { stopped(context); done.done("", "No speech was found in this voice message."); return; }
-                new Job(context.getApplicationContext(), pieces, mediaID, names, progress, done).next();
+                new Job(context.getApplicationContext(), pieces, times, length, mediaID, names, progress, done).start();
             });
         });
     }
@@ -161,12 +186,18 @@ final class Transcriber {
      * recognizer rejects any of that, the rest go without.
      */
     private static final class Job {
+        /** Waits before trying a piece again while the recognizer says it's busy (or asked too often): 2 s up to 40 s. */
+        private static final long[] WAITS = {2_000, 5_000, 10_000, 20_000, 40_000};
+        /** A breath between pieces, so the last session is gone before the next starts (the recognizer can say it's busy otherwise). */
+        private static final long BETWEEN = 250;
         private static final long BACK_UP = Pcm.RATE * 2;            // 1 s of audio, in bytes
         private static final long PADDING = Pcm.RATE * 2;            // the silence after each piece (Pcm.split)
         private static final long LEAD = Pcm.RATE / 5 * 2;           // the silence before it
         private static final int MAX_RESTARTS = 8;
         private final Context context;
         private final List<File> parts;
+        private final List<long[]> times;
+        private final long totalMs;
         private final String mediaID;
         private final List<String> names;
         private final Progress progress;
@@ -174,14 +205,34 @@ final class Transcriber {
         private final List<String> pieces = new ArrayList<>();
         private final boolean english = Locale.getDefault().getLanguage().equals("en");
         private final List<String> heardHere = new ArrayList<>();
-        private boolean extras = true, slowedDown;
-        private int at, restarts;
+        private boolean extras = true, slowedDown, retried;
+        private int at, restarts, waits;
         private long from;
         private float speed;
 
-        Job(Context context, List<File> parts, String mediaID, List<String> names, Progress progress, Done done) {
-            this.context = context; this.parts = parts; this.mediaID = mediaID; this.names = names; this.progress = progress; this.done = done;
+        Job(Context context, List<File> parts, List<long[]> times, long totalMs, String mediaID, List<String> names, Progress progress, Done done) {
+            this.context = context; this.parts = parts; this.times = times; this.totalMs = totalMs; this.mediaID = mediaID; this.names = names; this.progress = progress; this.done = done;
             speed = Speed.now(prefs(context));
+        }
+
+        /** Carries on from where an earlier try stopped, if one did; otherwise from the start. */
+        void start() {
+            Partial was = partial(context, mediaID);
+            if (was != null && was.untilMs > 0) {
+                if (!was.text.isEmpty()) pieces.add(was.text);
+                while (at < parts.size() && at < times.size() && times.get(at)[1] <= was.untilMs) { parts.get(at).delete(); at++; }
+                Diagnostics.note("Transcribing: carrying on from " + clock(was.untilMs) + " of " + clock(totalMs));
+            }
+            next();
+        }
+
+        /** The same piece again, after a wait. */
+        private void again(long waitMs) { main.postDelayed(this::next, Math.max(BETWEEN, waitMs)); }
+
+        /** Where it's got to, kept as it goes: if Android ends it, the next try carries on from here. */
+        private void keep() {
+            long until = at > 0 && at - 1 < times.size() ? times.get(at - 1)[1] : 0;
+            prefs(context).edit().putString(mediaID + PART, TranscriptText.join(pieces, english)).putLong(mediaID + UNTIL, until).putLong(mediaID + TOTAL, totalMs).apply();
         }
 
         void next() {
@@ -189,26 +240,36 @@ final class Transcriber {
             if (progress != null) progress.at(at, parts.size());
             TranscribeService.progress(context, at, parts.size());
             File part = parts.get(at);
+            double seconds = (part.length() - LEAD - PADDING) / (double) (Pcm.RATE * 2);
             recognize(context, part, from, speed, names, extras, (heard, error, reached) -> {
                 if (heard.isEmpty() && error >= 0) {
-                    if (extras && retryable(error)) { extras = false; next(); return; }
+                    if (extras && retryable(error)) { extras = false; again(0); return; }
+                    // Busy, or asked too often: wait and try the same piece again, rather than stop.
+                    if (busy(error)) {
+                        if (waits < WAITS.length) { Diagnostics.note("Transcribing: recognizer busy at piece " + (at + 1) + " of " + parts.size() + ", waiting"); again(WAITS[waits++]); return; }
+                        finish(message(error)); return;
+                    }
                     if (fatal(error)) { finish(message(error)); return; }
-                    // Otherwise this stretch was a cough or a mumble; carry on.
+                    // Nothing came back for a stretch of speech: a fresh session often hears it.
+                    if (heardHere.isEmpty() && !retried && seconds >= 1.5) { retried = true; Diagnostics.note("Transcribing: nothing back for piece " + (at + 1) + " (error " + error + "), trying it again"); again(600); return; }
                 }
+                waits = 0;
                 heardHere.addAll(heard);
                 // Stopped with speech still to come: go again from a second before it stopped.
-                long rest = part.length() - PADDING - reached, again = Math.max(from + Pcm.RATE, reached - BACK_UP);
-                if (rest > Pcm.RATE && restarts < MAX_RESTARTS && again < part.length() - PADDING) { from = again; restarts++; next(); return; }
+                long rest = part.length() - PADDING - reached, resume = Math.max(from + Pcm.RATE, reached - BACK_UP);
+                if (rest > Pcm.RATE && restarts < MAX_RESTARTS && resume < part.length() - PADDING) { from = resume; restarts++; again(BETWEEN); return; }
                 // Far fewer words than the piece's length suggests: the recognizer couldn't keep up. Redo it slower.
-                double seconds = (part.length() - LEAD - PADDING) / (double) (Pcm.RATE * 2);
                 if (speed > 1 && Speed.thin(heardHere, seconds)) {
                     speed = Speed.slower(prefs(context), speed); slowedDown = true;
-                    heardHere.clear(); from = 0; restarts = 0; next(); return;
+                    heardHere.clear(); from = 0; restarts = 0; again(BETWEEN); return;
                 }
+                // Two seconds of speech and still nothing: say so, rather than leave it out.
+                if (heardHere.isEmpty() && seconds >= 2) { pieces.add(UNCLEAR); Diagnostics.note("Transcribing: piece " + (at + 1) + " of " + parts.size() + " couldn't be made out"); }
                 pieces.addAll(heardHere); heardHere.clear();
                 part.delete();
-                at++; from = 0; restarts = 0;
-                next();
+                at++; from = 0; restarts = 0; retried = false;
+                keep();
+                again(BETWEEN);
             });
         }
 
@@ -216,9 +277,17 @@ final class Transcriber {
             stopped(context);
             for (File f : parts) f.delete();
             String text = TranscriptText.join(pieces, english);
+            long until = at > 0 && at - 1 < times.size() ? times.get(at - 1)[1] : 0;
+            if (!error.isEmpty() && at < parts.size() && until > 0) {
+                // Stopped partway: what it has is kept as partway (never as the whole message), to carry on from next time.
+                keep();
+                Diagnostics.note("Transcribing: stopped at " + clock(until) + " of " + clock(totalMs) + " (piece " + (at + 1) + " of " + parts.size() + ")");
+                done.done(text, "Transcription stopped at " + clock(until) + " of " + clock(totalMs) + ". " + error + " Tap “Finish transcribing” to carry on from there.");
+                return;
+            }
             if (!error.isEmpty() && text.isEmpty()) { done.done("", error); return; }
             if (text.isEmpty()) { done.done("", "No speech was found in this voice message."); return; }
-            prefs(context).edit().putString(mediaID, text).apply();
+            prefs(context).edit().putString(mediaID, text).remove(mediaID + PART).remove(mediaID + UNTIL).remove(mediaID + TOTAL).apply();
             // It all went through at this speed: try a step faster next time (never one that's failed).
             if (!slowedDown && parts.size() > 0) Speed.worked(prefs(context), speed);
             done.done(text, "");
@@ -336,8 +405,12 @@ final class Transcriber {
     /** Errors that end the whole transcription: nothing more will work until something on the phone changes. */
     private static boolean fatal(int error) {
         return error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS || error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE
-            || error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
-            || error == SpeechRecognizer.ERROR_TOO_MANY_REQUESTS;
+            || error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED;
+    }
+
+    /** The recognizer is busy or has been asked too often: worth waiting for, not giving up on. */
+    private static boolean busy(int error) {
+        return error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY || error == SpeechRecognizer.ERROR_TOO_MANY_REQUESTS;
     }
 
     /** Errors that might come from the extra requests (formatting, names) rather than the audio or the phone's setup. */

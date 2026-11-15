@@ -151,6 +151,26 @@ public class PcmTest {
         f.delete(); dir.delete();
     }
 
+    /** Each piece's place in the recording, for carrying on after a transcription stops partway. */
+    @Test public void splitSaysWhereEachPieceWas() throws Exception {
+        java.io.File dir = java.nio.file.Files.createTempDirectory("pcm").toFile(), f = new java.io.File(dir, "t.pcm");
+        short[] s = new short[Pcm.RATE * 20];
+        // Speech from 1-4 s, 8-12 s and 15-18 s.
+        int[][] on = {{1, 4}, {8, 12}, {15, 18}};
+        for (int[] o : on) for (int i = o[0] * Pcm.RATE; i < o[1] * Pcm.RATE; i++) s[i] = (short) Math.round(8000 * Math.sin(i / 7.0));
+        java.nio.file.Files.write(f.toPath(), Pcm.bytes(s));
+        java.util.List<long[]> times = new java.util.ArrayList<>();
+        java.util.List<java.io.File> parts = Pcm.split(f, dir, "m", times);
+        assertEquals(parts.size(), times.size());
+        assertEquals(3, parts.size());
+        for (int k = 0; k < 3; k++) {
+            assertTrue("piece " + k + " starts at " + times.get(k)[0], Math.abs(times.get(k)[0] - on[k][0] * 1000L) <= 300);
+            assertTrue("piece " + k + " ends at " + times.get(k)[1], Math.abs(times.get(k)[1] - on[k][1] * 1000L) <= 300);
+        }
+        for (java.io.File p : parts) p.delete();
+        f.delete(); dir.delete();
+    }
+
     @Test public void bytesAreLittleEndian() {
         assertArrayEquals(new byte[]{0x34, 0x12, (byte) 0xFF, (byte) 0xFF}, Pcm.bytes(new short[]{0x1234, -1}));
     }

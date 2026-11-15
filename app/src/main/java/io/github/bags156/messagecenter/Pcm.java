@@ -230,7 +230,10 @@ final class Pcm {
      * Splits a recording into one file per stretch of speech (see speech), each with a little
      * silence before it and more after, so the recognizer hears it end.
      */
-    static List<File> split(File pcm, File dir, String name) throws IOException {
+    static List<File> split(File pcm, File dir, String name) throws IOException { return split(pcm, dir, name, null); }
+
+    /** As split, also giving each piece's place in the recording, as [start ms, end ms], in times. */
+    static List<File> split(File pcm, File dir, String name, List<long[]> times) throws IOException {
         List<File> out = new ArrayList<>();
         List<int[]> parts = speech(levels(pcm));
         byte[] before = new byte[RATE / 5 * 2], after = new byte[RATE * 2];
@@ -243,6 +246,7 @@ final class Pcm {
                 File part = new File(dir, name + "-" + out.size() + ".pcm");
                 try (java.io.OutputStream os = new java.io.BufferedOutputStream(new java.io.FileOutputStream(part))) { os.write(before); os.write(data); os.write(after); }
                 out.add(part);
+                if (times != null) times.add(new long[]{from * 1000 / (RATE * 2L), to * 1000 / (RATE * 2L)});
             }
         }
         return out;

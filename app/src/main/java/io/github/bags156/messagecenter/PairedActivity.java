@@ -1641,7 +1641,8 @@ public class PairedActivity extends Activity {
         if(noteTo!=null&&!noteTo[0].isEmpty()&&(!plain.isEmpty()||!PairedProtocol.media(m).isEmpty())){String what=noteWhat(m),these=what.endsWith("s")?"these ":"this ";
             sheetAction(content,"New note about "+noteTo[1]+" with "+these+what,()->{d[0].dismiss();messageToNote(m,c,false);});
             if(new Notes(this).has(noteTo[0]))sheetAction(content,"Add "+these+what+" to a note…",()->{d[0].dismiss();messageToNote(m,c,true);});}
-        for(JSONObject media:PairedProtocol.media(m)){String transcript=Transcriber.saved(this,PairedProtocol.string(media,"mediaID"));
+        for(JSONObject media:PairedProtocol.media(m)){String mid=PairedProtocol.string(media,"mediaID"),whole=Transcriber.saved(this,mid);Transcriber.Partial part=whole==null?Transcriber.partial(this,mid):null;
+            String transcript=whole!=null?whole:part!=null&&!part.text.isEmpty()?part.text:null;
             if(transcript!=null){sheetAction(content,"Copy transcript",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Transcript",transcript));});
                 sheetAction(content,"Transcribe again",()->{d[0].dismiss();Transcriber.forget(this,PairedProtocol.string(media,"mediaID"));transcribe(media);});}
             String kind=PairedProtocol.mediaKind(media),what=kind.equals("image")?"photo":kind.equals("video")?"video":kind.equals("audio")?"audio":"file";
@@ -3594,6 +3595,14 @@ public class PairedActivity extends Activity {
             t.setGravity(outgoing?Gravity.END:Gravity.START);t.setContentDescription("Transcript: "+saved);t.setOnLongClickListener(v->{messageSheet(m);return true;});}
         else if(transcribing.contains(id)){t=text("Transcribing…"+transcribeProgress.getOrDefault(id,""),13,muted,false);transcribingLabels.put(id,t);}
         else if(id.isEmpty())return line;
+        else if(Transcriber.partial(this,id)!=null){
+            // Stopped partway: what it got, where it got to, and a way to carry on from there.
+            Transcriber.Partial part=Transcriber.partial(this,id);LinearLayout box=vertical();box.setGravity(outgoing?Gravity.END:Gravity.START);
+            if(!part.text.isEmpty()){TextView so=text(part.text,14,ink,false);so.setTypeface(Typeface.create(Typeface.DEFAULT,Typeface.ITALIC));so.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));
+                so.setGravity(outgoing?Gravity.END:Gravity.START);so.setContentDescription("Transcript so far: "+part.text);so.setOnLongClickListener(v->{messageSheet(m);return true;});box.addView(so);}
+            TextView more=text("Stopped at "+Transcriber.clock(part.untilMs)+(part.totalMs>0?" of "+Transcriber.clock(part.totalMs):"")+" · Finish transcribing",13,theme.accent(dark),true);more.setPadding(0,dp(4),0,dp(2));
+            more.setContentDescription("Transcription stopped at "+Transcriber.clock(part.untilMs)+". Finish transcribing from there.");more.setOnClickListener(v->transcribe(media));box.addView(more);
+            line.addView(box);return line;}
         else {t=text("Transcribe",14,theme.accent(dark),true);t.setPadding(0,dp(2),0,dp(2));t.setContentDescription("Transcribe this voice message");t.setOnClickListener(v->transcribe(media));}
         line.addView(t);return line;}
     private void transcribe(JSONObject media){

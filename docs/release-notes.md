@@ -1,6 +1,9 @@
-Message Center 1.5.65.
+Message Center 1.5.66.
 
-- Voice messages keep playing when your phone locks or you leave the app. Pause, play, back 10 seconds and ahead 10 seconds are in the notification and on the lock screen, along with a bar to move through the message. Playback still pauses on its own for a call, when your headphones disconnect, or when another app starts playing. Left paused for 10 minutes, the notification goes away.
-- Recording a voice message keeps going when your phone locks or you leave the app. A "Recording a voice message" notification shows the time, with two buttons: Stop keeps the recording in your message to listen to or send later, and Send sends it. If you reach the 10-minute limit while away, it's kept for you rather than sent.
+- Long voice messages transcribe all the way through. A long message is transcribed in many short pieces. Partway through, the phone's speech recognizer could say it was busy, and the transcription then ended early. What it had so far was saved as if it were the whole message. Now:
+  - When the recognizer is busy, it waits and tries again rather than stopping.
+  - A stretch that comes back empty gets a second try. If it still can't be made out, the transcript says [unclear] there instead of leaving it out.
+  - If it does have to stop (or Android ends it), the transcript shows what it has and where it stopped, like "Stopped at 6:12 of 10:03 · Finish transcribing". Tap that to carry on from there.
+- A voice message whose transcript stopped early before this update: long-press it and choose "Transcribe again" to get the whole thing.
 
 Install over the existing app through Obtainium. Your pairing, conversations and settings are retained.
