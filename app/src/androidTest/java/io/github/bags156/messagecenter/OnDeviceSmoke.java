@@ -1167,7 +1167,8 @@ public final class OnDeviceSmoke extends Instrumentation {
      * faded one (the steps sped up here from 5 seconds and 2 minutes); two heads sit in one stack,
      * which spreads out when tapped; tapping a head then opens the chat in a floating window (the
      * heads step aside meanwhile, and come back stacked when it closes); the settings show each
-     * step; closing them all takes them away.
+     * step; dragging one spread-out head onto the × (with real touches) closes just that chat, and
+     * dragging the stack onto it closes the rest; closing them all takes them away.
      */
     private void checkChatHeads(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();long now=System.currentTimeMillis();
         try(android.os.ParcelFileDescriptor out=getUiAutomation().executeShellCommand("appops set "+ctx.getPackageName()+" SYSTEM_ALERT_WINDOW allow")){new java.io.FileInputStream(out.getFileDescriptor()).read(new byte[64]);}catch(Exception ignored){}
@@ -1212,9 +1213,36 @@ public final class OnDeviceSmoke extends Instrumentation {
             onMainCall(()->method("openSettingsPage",String.class).invoke(a,"notifications"));waitForIdleSync();Thread.sleep(300);
             for(String t:new String[]{"When a message comes in","Then, settled","Then, faded","90%","60%","25%"})check(exactText(a,t)!=null,"Settings → Notifications doesn't show the chat heads' "+t);
             shoot("shot-chat-head-settings");
+            // Spread out, one head dragged onto the × closes just that chat.
+            runOnMainSync(()->((android.view.ViewGroup)heads[0]).getChildAt(0).performClick());waitForIdleSync();Thread.sleep(300);
+            runOnMainSync(()->{heads[0]=ChatHeads.view();shown[0]=((android.view.ViewGroup)heads[0]).getChildCount();});check(shown[0]==2,"The stack didn't spread out again ("+shown[0]+")");
+            dragOntoClose(((android.view.ViewGroup)heads[0]).getChildAt(0),"shot-chat-head-close");Thread.sleep(500);
+            java.util.List<String> left=ChatHeads.heads();
+            check(left.size()==1&&left.contains("head-chat-2"),"Dropping one head on the × didn't close just that chat ("+left+")");
+            runOnMainSync(()->{heads[0]=ChatHeads.view();shown[0]=heads[0]==null?0:((android.view.ViewGroup)heads[0]).getChildCount();});check(shown[0]==1,"After closing one, the other head isn't on screen ("+shown[0]+")");
+            // And the last one, dragged onto the ×, goes too.
+            dragOntoClose(((android.view.ViewGroup)heads[0]).getChildAt(0),null);Thread.sleep(500);
+            runOnMainSync(()->heads[0]=ChatHeads.view());check(ChatHeads.heads().isEmpty()&&heads[0]==null,"Dropping the heads on the × didn't close them ("+ChatHeads.heads()+")");
+            runOnMainSync(()->{ChatHeads.add(ctx,"head-chat-2",false,false);ChatHeads.add(ctx,"head-chat",false,false);});Thread.sleep(300);
             runOnMainSync(()->ChatHeads.clear(ctx));Thread.sleep(300);runOnMainSync(()->heads[0]=ChatHeads.view());check(heads[0]==null,"Closing all chat heads left one on screen");}
         finally{ChatHeads.testNewMs=0;ChatHeads.testMidMs=0;prefs.edit().remove(ChatHeads.NEW).remove(ChatHeads.MID).remove(ChatHeads.OPACITY).commit();removeMonitor(floating);runOnMainSync(()->ChatHeads.clear(ctx));prefs.edit().putString(ChatHeads.STYLE,"android").commit();
             onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("head-chat");}}}
+    /** Drags a chat head onto the × with real touches, to wherever the × shows up on screen. */
+    private void dragOntoClose(android.view.View head,String shot)throws Exception{
+        int[] at=new int[2];runOnMainSync(()->head.getLocationOnScreen(at));
+        float x=at[0]+head.getWidth()/2f,y=at[1]+head.getHeight()/2f;long down=android.os.SystemClock.uptimeMillis();
+        touch(down,android.view.MotionEvent.ACTION_DOWN,x,y);
+        for(int i=1;i<=4;i++){Thread.sleep(16);touch(down,android.view.MotionEvent.ACTION_MOVE,x-i*12,y+i*12);}
+        x-=48;y+=48;Thread.sleep(250);
+        android.view.View[] t={null};int[] to=new int[2];runOnMainSync(()->{t[0]=ChatHeads.closeTarget();if(t[0]!=null)t[0].getLocationOnScreen(to);});
+        if(t[0]==null){touch(down,android.view.MotionEvent.ACTION_UP,x,y);check(false,"Dragging a chat head didn't show the × to drop it on");}
+        float tx=to[0]+t[0].getWidth()/2f,ty=to[1]+t[0].getHeight()/2f;
+        for(int i=1;i<=15;i++){Thread.sleep(16);touch(down,android.view.MotionEvent.ACTION_MOVE,x+(tx-x)*i/15f,y+(ty-y)*i/15f);}
+        Thread.sleep(200);if(shot!=null)shoot(shot);
+        touch(down,android.view.MotionEvent.ACTION_UP,tx,ty);waitForIdleSync();}
+    private void touch(long down,int action,float x,float y){
+        android.view.MotionEvent e=android.view.MotionEvent.obtain(down,android.os.SystemClock.uptimeMillis(),action,x,y,0);
+        e.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);getUiAutomation().injectInputEvent(e,true);e.recycle();}
     private void checkThemeAll(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();ChatSettings settings=new ChatSettings(ctx);
         settings.themeAll("default",true);settings.setTheme("smoke","berry");
         try{onMainCall(()->method("chooseTheme",String.class).invoke(a,""));check(waitForText("Color for all chats",3000,true),"Chat color for all chats didn't open");shoot("shot-theme-all");
