@@ -29,13 +29,15 @@ final class Backup {
         for (String name : STORES) stores.put(name, dump(context.getSharedPreferences(name, Context.MODE_PRIVATE), null));
         stores.put("paired", dump(context.getSharedPreferences("paired", Context.MODE_PRIVATE), SETTINGS));
         root.put("stores", stores);
-        // Your uploaded fonts come along too (up to 40 MB of them), with which one is in use.
-        JSONArray fonts = new JSONArray(); long size = 0; String current = Fonts.currentId(context);
+        // Your uploaded fonts come along too (up to 40 MB of them), with the parts of the app each is used for.
+        JSONArray fonts = new JSONArray(); long size = 0;
         for (Fonts.Entry e : Fonts.library(context)) {
             java.io.File f = Fonts.fileFor(context, e.id);
             if (size + f.length() > 40L * 1024 * 1024) continue;
             size += f.length();
-            fonts.put(new JSONObject().put("name", e.name).put("current", e.id.equals(current)).put("data", android.util.Base64.encodeToString(java.nio.file.Files.readAllBytes(f.toPath()), android.util.Base64.NO_WRAP)));
+            JSONArray areas = new JSONArray();
+            for (String[] a : Fonts.AREAS) if (Fonts.fontFor(context, a[0]).equals(e.id)) areas.put(a[0]);
+            fonts.put(new JSONObject().put("name", e.name).put("areas", areas).put("data", android.util.Base64.encodeToString(java.nio.file.Files.readAllBytes(f.toPath()), android.util.Base64.NO_WRAP)));
         }
         if (fonts.length() > 0) root.put("fonts", fonts);
         return root.toString(2);
@@ -62,18 +64,26 @@ final class Backup {
             count += load(edit, settings, SETTINGS);
             edit.commit();
         }
-        // Fonts (1.5.53 backups have one, as "font"): added to the library; the one that was in use is used.
+        // Fonts: added to the library, each used where it was. (1.5.53 backups have one, as "font", used where its switches said.)
         JSONArray fonts = root.optJSONArray("fonts");
-        if (fonts == null && root.optJSONObject("font") != null) fonts = new JSONArray().put(root.optJSONObject("font").put("current", true));
+        if (fonts == null && root.optJSONObject("font") != null) {
+            JSONObject only = root.optJSONObject("font");
+            String areas = settings == null ? "" : settings.optString("font_areas", "messages,composer,list,titles,menus,other");
+            JSONArray list = new JSONArray(); for (String a : areas.split(",")) if (!a.isEmpty()) list.put(a);
+            fonts = new JSONArray().put(only.put("areas", list));
+        }
         if (fonts != null) {
-            String use = "";
+            for (String[] a : Fonts.AREAS) Fonts.setFontFor(context, a[0], "");
             for (int i = 0; i < fonts.length(); i++) {
                 JSONObject font = fonts.optJSONObject(i);
                 if (font == null || font.optString("data").isEmpty()) continue;
-                try { Fonts.Entry e = Fonts.install(context, android.util.Base64.decode(font.optString("data"), android.util.Base64.DEFAULT), font.optString("name")); count++; if (font.optBoolean("current")) use = e.id; }
-                catch (Exception ignored) { /* A font that won't load is left out; everything else is restored. */ }
+                try {
+                    Fonts.Entry e = Fonts.install(context, android.util.Base64.decode(font.optString("data"), android.util.Base64.DEFAULT), font.optString("name")); count++;
+                    for (String[] a : Fonts.AREAS) Fonts.setFontFor(context, a[0], Fonts.fontFor(context, a[0]).equals(e.id) ? "" : Fonts.fontFor(context, a[0]));
+                    JSONArray areas = font.optJSONArray("areas");
+                    for (int k = 0; areas != null && k < areas.length(); k++) Fonts.setFontFor(context, areas.optString(k), e.id);
+                } catch (Exception ignored) { /* A font that won't load is left out; everything else is restored. */ }
             }
-            Fonts.choose(context, use);
         }
         Nicknames.reload(context);
         Scheduled.rearmAll(context);

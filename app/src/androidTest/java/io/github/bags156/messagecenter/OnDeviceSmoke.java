@@ -1085,56 +1085,67 @@ public final class OnDeviceSmoke extends Instrumentation {
         return hit[0];}
     /** Whether a piece of text is in the uploaded font right now. */
     private boolean inFont(android.widget.TextView t)throws Exception{boolean[] yes={false};runOnMainSync(()->{Object set=t.getTag(R.id.font_set);yes[0]=set!=null&&t.getTypeface()==set;});return yes[0];}
+    /** Which uploaded font a piece of text on screen is in (null: the phone's). */
+    private android.graphics.Typeface fontOf(android.widget.TextView t)throws Exception{android.graphics.Typeface[] f={null};runOnMainSync(()->f[0]=Fonts.fontOf(t));return f[0];}
     /**
      * Your own fonts: a file that isn't a font is turned away; real ones (the phone's own, standing
-     * in for downloads) all stay as choices, and the same one twice isn't listed twice; the one in
-     * use shows in messages and the message box; turning Messages off puts the phone's font back
-     * there only; a demo font's stand-in marks give way to the phone's font; deleting one removes it.
+     * in for downloads) all stay, and the same one twice isn't listed twice; the first goes into use,
+     * and each part of the app can have a different one (messages in one, titles in another); a demo
+     * font's stand-in marks give way to the phone's font; deleting one puts the phone's font back
+     * where it was used.
      */
     private void checkCustomFont(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();long now=System.currentTimeMillis();
         java.util.List<java.io.File> sources=new java.util.ArrayList<>();
         for(String n:new String[]{"ComingSoon.ttf","DancingScript-Regular.ttf","NotoSerif-Regular.ttf","CutiveMono.ttf"}){java.io.File f=new java.io.File("/system/fonts",n);if(f.canRead())sources.add(f);}
         check(sources.size()>=2,"Fewer than two fonts on the test phone to upload");
-        for(Fonts.Entry e:Fonts.library(ctx))Fonts.delete(ctx,e.id);
+        runOnMainSync(()->{for(Fonts.Entry e:Fonts.library(ctx))Fonts.delete(ctx,e.id);});
         java.io.File bad=new java.io.File(ctx.getCacheDir(),"not-a-font.ttf");try(java.io.FileOutputStream o=new java.io.FileOutputStream(bad)){o.write("Not really a font".getBytes());}
         String refused="";try{Fonts.install(ctx,android.net.Uri.fromFile(bad),"not-a-font.ttf");}catch(java.io.IOException e){refused=String.valueOf(e.getMessage());}
         check(refused.contains("isn't a font")&&Fonts.library(ctx).isEmpty(),"A file that isn't a font was taken ("+refused+")");
-        String first=Fonts.install(ctx,android.net.Uri.fromFile(sources.get(0)),sources.get(0).getName());
-        String second=Fonts.install(ctx,android.net.Uri.fromFile(sources.get(1)),sources.get(1).getName());
-        check(Fonts.library(ctx).size()==2&&Fonts.name(ctx).equals(second),"Uploading a second font didn't keep the first ("+Fonts.library(ctx).size()+")");
-        String again=Fonts.install(ctx,android.net.Uri.fromFile(sources.get(0)),"copy.ttf");
-        check(Fonts.library(ctx).size()==2&&again.equals(first)&&Fonts.name(ctx).equals(first),"Uploading the same font twice listed it twice");
-        check(Fonts.typeface(ctx)!=null&&!first.contains(".ttf"),"The uploaded font didn't load ("+first+")");
+        Fonts.Entry first=Fonts.install(ctx,android.net.Uri.fromFile(sources.get(0)),sources.get(0).getName());
+        check(Fonts.fontFor(ctx,"messages").equals(first.id)&&Fonts.fontFor(ctx,"settings").isEmpty()&&!first.name.contains(".ttf"),"The first font didn't go into use everywhere but Settings");
+        Fonts.Entry second=Fonts.install(ctx,android.net.Uri.fromFile(sources.get(1)),sources.get(1).getName());
+        check(Fonts.library(ctx).size()==2&&Fonts.fontFor(ctx,"messages").equals(first.id),"Uploading a second font didn't keep the first, or replaced it in use");
+        Fonts.Entry again=Fonts.install(ctx,android.net.Uri.fromFile(sources.get(0)),"copy.ttf");
+        check(Fonts.library(ctx).size()==2&&again.id.equals(first.id),"Uploading the same font twice listed it twice");
         // A demo font: the first font with a dozen characters mapped to one stand-in glyph.
         byte[] real=java.nio.file.Files.readAllBytes(sources.get(0).toPath());java.util.Map<Integer,Integer> map=new java.util.TreeMap<>(FontFile.cmap(real));int mark=map.get((int)'Z');
         for(int ch:new int[]{'4','9','\''})map.put(ch,mark);for(int ch=0x2190;ch<0x2199;ch++)map.put(ch,mark);
         Fonts.Entry demo=Fonts.install(ctx,FontFile.withCmap(real,FontFile.buildCmap(map)),"Demo Font");
         check(demo.moved>=12,"A demo font's stand-in marks weren't found ("+demo.moved+")");
-        android.graphics.Paint paint=new android.graphics.Paint();paint.setTextSize(100);paint.setTypeface(Fonts.typeface(ctx));float four=paint.measureText("4");paint.setTypeface(android.graphics.Typeface.DEFAULT);
+        android.graphics.Paint paint=new android.graphics.Paint();paint.setTextSize(100);paint.setTypeface(Fonts.sample(ctx,demo.id));float four=paint.measureText("4");paint.setTypeface(android.graphics.Typeface.DEFAULT);
         check(Math.abs(four-paint.measureText("4"))<0.5f,"A demo font's 4 isn't drawn in the phone's font");
-        String demoId=demo.id;Fonts.choose(ctx,Fonts.library(ctx).get(0).id);
+        // Titles in the second font, messages in the first.
+        runOnMainSync(()->Fonts.setFontFor(ctx,"titles",second.id));
         try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'font-chat',name:'Fran Font',type:'RCS',lastMessageTimestamp:"+now*1000+",participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'ff',number:'+15557770144'},fullName:'Fran Font',firstName:'Fran'}]}"));
             store.message(new JSONObject().put("messageID","ff-1").put("conversationID","font-chat").put("participantID","ff").put("timestamp",(now-60_000L)*1000)
                 .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","This should be in your font")))),0,true);}
         try{onMainCall(()->method("thread",String.class).invoke(a,"font-chat"));waitForIdleSync();Thread.sleep(300);
             android.widget.TextView said=exactText(a,"This should be in your font");check(said!=null,"The message didn't show");
-            check(inFont(said),"Messages aren't in the uploaded font");
-            android.widget.EditText box=(android.widget.EditText)field("composer").get(a);check(inFont(box),"The message box isn't in the uploaded font");
-            android.widget.TextView name1=exactText(a,"Fran Font");check(name1!=null&&inFont(name1),"The chat's name at the top isn't in the uploaded font");
+            check(fontOf(said)==Fonts.sample(ctx,first.id),"Messages aren't in the font chosen for them");
+            android.widget.EditText box=(android.widget.EditText)field("composer").get(a);check(fontOf(box)==Fonts.sample(ctx,first.id),"The message box isn't in the font chosen for it");
+            android.widget.TextView title=exactText(a,"Fran Font");check(title!=null&&fontOf(title)==Fonts.sample(ctx,second.id),"The chat's name isn't in the font chosen for titles");
             shoot("shot-custom-font");
-            runOnMainSync(()->Fonts.setArea(ctx,"messages",false));onMainCall(()->method("thread",String.class).invoke(a,"font-chat"));waitForIdleSync();Thread.sleep(300);
-            said=exactText(a,"This should be in your font");check(said!=null&&!inFont(said),"Turning Messages off left them in the uploaded font");
-            box=(android.widget.EditText)field("composer").get(a);check(inFont(box),"Turning Messages off changed the message box too");
+            runOnMainSync(()->Fonts.setFontFor(ctx,"messages",""));onMainCall(()->method("thread",String.class).invoke(a,"font-chat"));waitForIdleSync();Thread.sleep(300);
+            said=exactText(a,"This should be in your font");check(said!=null&&fontOf(said)==null,"Choosing the phone's font for Messages left them in the uploaded one");
+            box=(android.widget.EditText)field("composer").get(a);check(fontOf(box)==Fonts.sample(ctx,first.id),"Changing Messages changed the message box too");
             onMainCall(()->method("openSettingsPage",String.class).invoke(a,"appearance"));waitForIdleSync();Thread.sleep(300);
-            for(String n:new String[]{"Phone's font",first,second,"Demo Font"})check(exactText(a,n)!=null,"Settings → Appearance doesn't list "+n);
-            check(exactText(a,"Use "+first+" for")!=null,"Settings → Appearance doesn't say where the font is used");
+            for(String n:new String[]{"Your fonts","Font for each part",first.name,second.name,"Demo Font"})check(exactText(a,n)!=null,"Settings → Appearance doesn't show "+n);
             check(described(a,"Demo version")!=null,"The demo font has no note saying some characters use the phone's font");
             shoot("shot-font-settings");
-            runOnMainSync(()->{Fonts.delete(ctx,demoId);Fonts.choose(ctx,"");Fonts.apply(ctx,a.getWindow().getDecorView(),"settings");});
-            check(Fonts.library(ctx).size()==2,"Deleting a font didn't remove it from the list");
+            android.app.Dialog[] picker={null};onMainCall(()->picker[0]=(android.app.Dialog)method("pickFontFor",String.class,String.class).invoke(a,"messages","Messages"));waitForIdleSync();Thread.sleep(400);
+            shoot("shot-font-picker");
+            android.view.View option=null;java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();
+            picker[0].getWindow().getDecorView().findViewsWithText(found,second.name,android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);for(android.view.View v:found)if(option==null)option=v;
+            check(option!=null,"The font picker doesn't list "+second.name);android.view.View pick=option;runOnMainSync(pick::performClick);waitForIdleSync();Thread.sleep(300);
+            check(Fonts.fontFor(ctx,"messages").equals(second.id),"Picking a font for Messages didn't take");
+            runOnMainSync(()->{Fonts.delete(ctx,demo.id);Fonts.useEverywhere(ctx,second.id);});
+            check(Fonts.library(ctx).size()==2&&Fonts.fontFor(ctx,"settings").equals(second.id),"Use everywhere didn't cover every part");
+            runOnMainSync(()->{Fonts.delete(ctx,second.id);Fonts.apply(ctx,a.getWindow().getDecorView(),"settings");});
+            check(Fonts.fontFor(ctx,"titles").isEmpty()&&!Fonts.has(ctx),"Deleting a font left parts of the app pointing at it");
             onMainCall(()->method("thread",String.class).invoke(a,"font-chat"));waitForIdleSync();Thread.sleep(300);
-            box=(android.widget.EditText)field("composer").get(a);check(!inFont(box),"Going back to the phone's font left the message box in the uploaded one");}
-        finally{runOnMainSync(()->{Fonts.setArea(ctx,"messages",true);for(Fonts.Entry e:Fonts.library(ctx))Fonts.delete(ctx,e.id);Fonts.choose(ctx,"");});bad.delete();
+            box=(android.widget.EditText)field("composer").get(a);check(fontOf(box)==null,"Deleting the font left the message box in it");}
+        finally{runOnMainSync(()->{for(Fonts.Entry e:Fonts.library(ctx))Fonts.delete(ctx,e.id);});bad.delete();
             onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("font-chat");}}}
     private void checkThemeAll(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();ChatSettings settings=new ChatSettings(ctx);
         settings.themeAll("default",true);settings.setTheme("smoke","berry");
