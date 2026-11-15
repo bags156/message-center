@@ -1248,7 +1248,9 @@ public final class OnDeviceSmoke extends Instrumentation {
             for(android.view.accessibility.AccessibilityWindowInfo w:getUiAutomation().getWindows())if(w.getType()==android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD)w.getBoundsInScreen(keys);
             if(!keys.isEmpty())break;Thread.sleep(150);}
         check(!keys.isEmpty(),"The keyboard didn't come up in the floating chat");
+        // Measured again once the keyboard has finished sliding up (mid-slide it's only partly there).
         Thread.sleep(900);waitForIdleSync();
+        for(android.view.accessibility.AccessibilityWindowInfo w:getUiAutomation().getWindows())if(w.getType()==android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD)w.getBoundsInScreen(keys);
         int[] at=new int[2];runOnMainSync(()->box.getLocationOnScreen(at));int bottom=at[1]+box.getHeight();
         shoot("shot-floating-keyboard");
         check(bottom<=keys.top+2,"In the floating chat, the keyboard covers the box you type in (its bottom at "+bottom+", the keyboard from "+keys.top+")");
