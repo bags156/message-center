@@ -15,6 +15,10 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -44,43 +48,125 @@ final class Fonts {
     static final long MAX_BYTES = 25L * 1024 * 1024;
 
     private static SharedPreferences prefs(Context c) { return c.getSharedPreferences("paired", Context.MODE_PRIVATE); }
-    static File file(Context c) { return new File(new File(c.getFilesDir(), "fonts"), "custom-font"); }
-    static boolean has(Context c) { return file(c).isFile(); }
-    /** Its name ("Inter"), from the file you picked. */
-    static String name(Context c) { return prefs(c).getString("font_name", "Your font"); }
+    private static File dir(Context c) { return new File(c.getFilesDir(), "fonts"); }
 
-    /** Where the font is used. New fonts start everywhere but Settings (so this page always reads plainly unless you choose). */
-    static Set<String> areas(Context c) {
-        String saved = prefs(c).getString("font_areas", null);
-        Set<String> on = new LinkedHashSet<>();
-        if (saved == null) { for (String[] a : AREAS) if (!a[0].equals("settings")) on.add(a[0]); return on; }
-        for (String a : saved.split(",")) if (!a.isEmpty()) on.add(a);
-        return on;
+    /**
+     * An uploaded font. moved: how many characters it only pretends to have (a demo font's DEMO
+     * marks), which use the phone's font instead; examples names a few. -1 until checked.
+     */
+    static final class Entry {
+        final String id, name, sha, examples; final int moved;
+        Entry(String id, String name, String sha, int moved, String examples) { this.id = id; this.name = name; this.sha = sha; this.moved = moved; this.examples = examples; }
+        JSONObject json() throws JSONException { return new JSONObject().put("id", id).put("name", name).put("sha", sha).put("moved", moved).put("examples", examples); }
     }
-    static void setArea(Context c, String area, boolean on) {
-        Set<String> all = areas(c);
-        if (on) all.add(area); else all.remove(area);
-        prefs(c).edit().putString("font_areas", String.join(",", all)).apply();
+
+    static File fileFor(Context c, String id) { return new File(dir(c), id + ".font"); }
+
+    /** Every font you've uploaded, oldest first. They stay until you delete them. */
+    static synchronized List<Entry> library(Context c) {
+        migrate(c);
+        List<Entry> out = new ArrayList<>();
+        try {
+            JSONArray all = new JSONArray(prefs(c).getString("font_library", "[]"));
+            for (int i = 0; i < all.length(); i++) {
+                JSONObject o = all.getJSONObject(i);
+                if (fileFor(c, o.optString("id")).isFile())
+                    out.add(new Entry(o.optString("id"), o.optString("name", "Your font"), o.optString("sha"), o.optInt("moved", -1), o.optString("examples")));
+            }
+        } catch (JSONException ignored) {}
+        return out;
+    }
+    private static synchronized void save(Context c, List<Entry> all) {
+        JSONArray out = new JSONArray();
+        try { for (Entry e : all) out.put(e.json()); } catch (JSONException ignored) {}
+        prefs(c).edit().putString("font_library", out.toString()).apply();
+    }
+    static Entry entry(Context c, String id) { for (Entry e : library(c)) if (e.id.equals(id)) return e; return null; }
+
+    /** Which uploaded font a part of the app uses ("" for the phone's own). */
+    static String fontFor(Context c, String area) {
+        migrate(c);
+        String id = prefs(c).getString("font_for:" + area, "");
+        return id.isEmpty() || !fileFor(c, id).isFile() ? "" : id;
+    }
+    static void setFontFor(Context c, String area, String id) { prefs(c).edit().putString("font_for:" + area, id).apply(); settingsChanged(); }
+    /** Uses this font in every part of the app. */
+    static void useEverywhere(Context c, String id) { SharedPreferences.Editor e = prefs(c).edit(); for (String[] a : AREAS) e.putString("font_for:" + a[0], id); e.apply(); settingsChanged(); }
+    /** Whether any part of the app uses an uploaded font. */
+    static boolean has(Context c) { for (String[] a : AREAS) if (!fontFor(c, a[0]).isEmpty()) return true; return false; }
+    /** The parts of the app that use this font ("Messages", "Titles"). */
+    static List<String> usedFor(Context c, String id) { List<String> out = new ArrayList<>(); for (String[] a : AREAS) if (fontFor(c, a[0]).equals(id)) out.add(a[1]); return out; }
+    /** The fonts in use, by name ("Inter + Lora"), for Settings' summary. */
+    static String inUse(Context c) {
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        for (String[] a : AREAS) { Entry e = entry(c, fontFor(c, a[0])); if (e != null) names.add(e.name); }
+        return String.join(" + ", names);
+    }
+    /** An uploaded font's name, or "Phone's font". */
+    static String nameOf(Context c, String id) { Entry e = id.isEmpty() ? null : entry(c, id); return e == null ? "Phone's font" : e.name; }
+    /** The parts a newly uploaded font starts in, when no part uses one yet: everywhere but Settings. */
+    private static final String[] FIRST_AREAS = {"messages", "composer", "list", "titles", "menus", "other"};
+
+    /** Deletes an uploaded font; if it was in use, the phone's font is used. */
+    static synchronized void delete(Context c, String id) {
+        List<Entry> all = library(c);
+        all.removeIf(e -> e.id.equals(id));
+        save(c, all);
+        fileFor(c, id).delete();
+        samples.remove(id);
+        SharedPreferences.Editor ed = prefs(c).edit();
+        for (String[] a : AREAS) if (prefs(c).getString("font_for:" + a[0], "").equals(id)) ed.putString("font_for:" + a[0], "");
+        ed.apply();
         settingsChanged();
     }
 
-    // The loaded font, and its bold/italic styles; reloaded when the file or the areas change.
-    // (Only changed through here, so the file is looked at again only after a change: no disk reads per screen update.)
-    private static Typeface loaded; private static volatile boolean fresh; private static Set<String> loadedAreas;
-    private static final Map<Integer, Typeface> styles = new HashMap<>();
+    /** 1.5.53 kept one font, as fonts/custom-font: it becomes the first in the library, still in use. */
+    private static void migrate(Context c) {
+        File old = new File(dir(c), "custom-font");
+        if (!old.isFile()) return;
+        String id = "f" + old.lastModified();
+        if (!old.renameTo(fileFor(c, id))) return;
+        List<Entry> all = new ArrayList<>();
+        try {
+            JSONArray saved = new JSONArray(prefs(c).getString("font_library", "[]"));
+            for (int i = 0; i < saved.length(); i++) { JSONObject o = saved.getJSONObject(i); all.add(new Entry(o.optString("id"), o.optString("name"), o.optString("sha"), o.optInt("moved", -1), o.optString("examples"))); }
+        } catch (JSONException ignored) {}
+        all.add(new Entry(id, prefs(c).getString("font_name", "Your font"), "", -1, ""));
+        save(c, all);
+        String areas = prefs(c).getString("font_areas", null);
+        SharedPreferences.Editor ed = prefs(c).edit().remove("font_name").remove("font_areas");
+        for (String a : areas == null ? FIRST_AREAS : areas.split(",")) if (!a.isEmpty()) ed.putString("font_for:" + a, id);
+        ed.apply();
+    }
+
+    // The font each part of the app uses, and their bold/italic styles; looked up again only after a
+    // change made here (so no disk reads on each screen update). Samples: each uploaded font, loaded once.
+    private static volatile boolean fresh;
+    private static final Map<String, Typeface> byArea = new HashMap<>();
+    private static final Map<Typeface, Typeface[]> styles = new HashMap<>();
+    private static final Map<String, Typeface> samples = new HashMap<>();
     /** Whether a font was ever put on this run's views (so turning it off can put the phone's back). */
     private static boolean everApplied;
 
     private static void settingsChanged() { fresh = false; }
 
-    /** The font (with the phone's font behind it for missing letters), or null if there's none or it won't load. */
-    static Typeface typeface(Context c) {
-        if (fresh) return loaded;
+    private static void refresh(Context c) {
+        if (fresh) return;
         fresh = true;
-        File f = file(c);
-        styles.clear(); loadedAreas = areas(c);
-        loaded = f.isFile() ? load(f) : null;
-        return loaded;
+        byArea.clear(); styles.clear();
+        for (String[] a : AREAS) { String id = fontFor(c, a[0]); Typeface t = id.isEmpty() ? null : sample(c, id); if (t != null) byArea.put(a[0], t); }
+    }
+
+    /** The font a part of the app uses (with the phone's font behind it for missing letters), or null for the phone's own. */
+    static Typeface typeface(Context c, String area) { refresh(c); return byArea.get(area); }
+
+    /** An uploaded font by itself (for its row in Settings), or null if it won't load. */
+    static Typeface sample(Context c, String id) {
+        if (samples.containsKey(id)) return samples.get(id);
+        check(c, id);
+        Typeface t = load(fileFor(c, id));
+        samples.put(id, t);
+        return t;
     }
 
     private static Typeface load(File f) {
@@ -92,14 +178,34 @@ final class Fonts {
         }
     }
 
+    /** Fonts from before this check (moved -1) get it once: their stand-in marks are taken out. */
+    private static void check(Context c, String id) {
+        Entry e = entry(c, id);
+        if (e == null || e.moved >= 0) return;
+        File f = fileFor(c, id);
+        int moved = 0; String examples = "";
+        try {
+            byte[] data = java.nio.file.Files.readAllBytes(f.toPath());
+            FontFile.Fixed fixed = FontFile.fix(data);
+            if (fixed.data != data) {
+                File tmp = new File(dir(c), "fixing");
+                java.nio.file.Files.write(tmp.toPath(), fixed.data);
+                if (load(tmp) != null && tmp.renameTo(f)) { moved = fixed.moved.size(); examples = FontFile.examples(fixed.moved, 3); }
+                else tmp.delete();
+            }
+        } catch (IOException ignored) {}
+        List<Entry> all = library(c);
+        for (int i = 0; i < all.size(); i++) if (all.get(i).id.equals(id)) all.set(i, new Entry(id, e.name, e.sha, moved, examples));
+        save(c, all);
+    }
+
     /**
-     * Copies the picked file in as the app's font, once Android can read it as one. Returns its
-     * name; throws with a message to show when it isn't a font Android can use.
+     * Copies the picked file in as a new font, once Android can read it as one (the first one goes
+     * straight into use). Throws with a message to show when it isn't a font Android can use.
      */
-    static String install(Context c, Uri uri, String pickedName) throws IOException {
-        File dir = file(c).getParentFile();
-        if (dir != null) dir.mkdirs();
-        File incoming = new File(dir, "incoming");
+    static Entry install(Context c, Uri uri, String pickedName) throws IOException {
+        dir(c).mkdirs();
+        File incoming = new File(dir(c), "incoming");
         long total = 0;
         try (InputStream in = c.getContentResolver().openInputStream(uri); OutputStream out = new FileOutputStream(incoming)) {
             if (in == null) throw new IOException("That file couldn't be opened.");
@@ -117,23 +223,48 @@ final class Fonts {
     }
 
     /** The same from a backup: the font's bytes and name. */
-    static String install(Context c, byte[] data, String name) throws IOException {
-        File dir = file(c).getParentFile();
-        if (dir != null) dir.mkdirs();
-        File incoming = new File(dir, "incoming");
+    static Entry install(Context c, byte[] data, String name) throws IOException {
+        dir(c).mkdirs();
+        File incoming = new File(dir(c), "incoming");
         try (OutputStream out = new FileOutputStream(incoming)) { out.write(data); }
         return adopt(c, incoming, name == null || name.isEmpty() ? "Your font" : name);
     }
 
-    private static String adopt(Context c, File incoming, String name) throws IOException {
+    /** Checks the file is a font, adds it to the library (or finds it there, if it's one you already uploaded) and uses it. */
+    private static synchronized Entry adopt(Context c, File incoming, String name) throws IOException {
         if (!looksLikeFont(incoming) || load(incoming) == null) {
             incoming.delete();
             throw new IOException("That isn't a font Android can use. Pick a .ttf or .otf file (web fonts like .woff won't work).");
         }
-        if (!incoming.renameTo(file(c))) { incoming.delete(); throw new IOException("The font couldn't be saved."); }
-        prefs(c).edit().putString("font_name", name).apply();
+        byte[] data = java.nio.file.Files.readAllBytes(incoming.toPath());
+        String sha = sha(data);
+        for (Entry e : library(c)) if (e.sha.equals(sha)) { incoming.delete(); return e; }
+        String id = "f" + System.currentTimeMillis();
+        while (fileFor(c, id).exists()) id = id + "x";
+        FontFile.Fixed fixed = FontFile.fix(data);
+        int moved = 0; String examples = "";
+        if (fixed.data != data) {
+            File tmp = new File(dir(c), "fixing");
+            java.nio.file.Files.write(tmp.toPath(), fixed.data);
+            if (load(tmp) != null && tmp.renameTo(incoming)) { moved = fixed.moved.size(); examples = FontFile.examples(fixed.moved, 3); }
+            else tmp.delete();
+        }
+        if (!incoming.renameTo(fileFor(c, id))) { incoming.delete(); throw new IOException("The font couldn't be saved."); }
+        Entry e = new Entry(id, name, sha, moved, examples);
+        List<Entry> all = library(c);
+        all.add(e);
+        save(c, all);
+        if (!has(c)) { SharedPreferences.Editor ed = prefs(c).edit(); for (String a : FIRST_AREAS) ed.putString("font_for:" + a, id); ed.apply(); }
         settingsChanged();
-        return name;
+        return e;
+    }
+
+    private static String sha(byte[] data) {
+        try {
+            StringBuilder hex = new StringBuilder();
+            for (byte b : java.security.MessageDigest.getInstance("SHA-256").digest(data)) hex.append(String.format("%02x", b));
+            return hex.toString();
+        } catch (Exception e) { return ""; }
     }
 
     /** A TrueType/OpenType font or collection starts with one of these. */
@@ -153,12 +284,6 @@ final class Fonts {
         return n.isEmpty() ? "Your font" : n.length() > 40 ? n.substring(0, 40) : n;
     }
 
-    static void remove(Context c) {
-        file(c).delete();
-        prefs(c).edit().remove("font_name").apply();
-        settingsChanged();
-    }
-
     /** Marks a part of a screen as one of the {@link #AREAS} (everything inside it, unless marked otherwise). */
     static void area(View v, String area) { if (v != null) v.setTag(R.id.font_area, area); }
 
@@ -170,10 +295,10 @@ final class Fonts {
             // Whether this screen has text in the font: with no font, only a screen that had it is looked through (once, to undo it).
             boolean had;
             final ViewTreeObserver.OnGlobalLayoutListener changed = () -> {
-                Typeface font = typeface(c);
-                if (font == null && !had) return;
-                walk(root, defaultArea, font, loadedAreas);
-                had = font != null;
+                refresh(c);
+                if (byArea.isEmpty() && !had) return;
+                walk(root, defaultArea);
+                had = !byArea.isEmpty();
             };
             @Override public void onViewAttachedToWindow(View v) { window = v.getViewTreeObserver(); window.addOnGlobalLayoutListener(changed); had = everApplied; changed.onGlobalLayout(); }
             @Override public void onViewDetachedFromWindow(View v) { if (window != null && window.isAlive()) window.removeOnGlobalLayoutListener(changed); window = null; }
@@ -182,21 +307,29 @@ final class Fonts {
         if (root.isAttachedToWindow()) watch.onViewAttachedToWindow(root);
     }
 
-    /** Puts the font on the text under root where it's chosen, and the phone's back where it no longer is. */
+    /** Puts each part's font on the text under root, and the phone's back where there's none now. */
     static void apply(Context c, View root, String defaultArea) {
-        Typeface font = typeface(c);
-        if (font == null && !everApplied) return;
-        walk(root, defaultArea, font, loadedAreas);
+        refresh(c);
+        if (byArea.isEmpty() && !everApplied) return;
+        walk(root, defaultArea);
     }
 
-    private static void walk(View v, String area, Typeface font, Set<String> on) {
+    private static void walk(View v, String area) {
         Object marked = v.getTag(R.id.font_area);
         if (marked instanceof String) area = (String) marked;
-        if (v instanceof TextView) use((TextView) v, font != null && on != null && on.contains(area) ? font : null);
+        if (v instanceof TextView) use((TextView) v, byArea.get(area));
         if (v instanceof ViewGroup) {
             ViewGroup g = (ViewGroup) v;
-            for (int i = 0; i < g.getChildCount(); i++) walk(g.getChildAt(i), area, font, on);
+            for (int i = 0; i < g.getChildCount(); i++) walk(g.getChildAt(i), area);
         }
+    }
+
+    /** Which uploaded font a piece of text is drawn in now (its plain style), or null for the phone's: for the device checks. */
+    static Typeface fontOf(TextView t) {
+        Object set = t.getTag(R.id.font_set);
+        if (set == null || t.getTypeface() != set) return null;
+        for (Map.Entry<Typeface, Typeface[]> e : styles.entrySet()) for (Typeface x : e.getValue()) if (x == set) return e.getKey();
+        return null;
     }
 
     /** The font for one piece of text, keeping its weight and slant; null puts back what the app chose. */
@@ -218,8 +351,8 @@ final class Fonts {
     private static Typeface styled(Typeface font, Typeface like) {
         boolean bold = like.getWeight() >= 500 || like.isBold(), italic = like.isItalic();
         int key = (bold ? 1 : 0) | (italic ? 2 : 0);
-        Typeface t = styles.get(key);
-        if (t == null) { t = key == 0 ? font : Typeface.create(font, bold ? 700 : 400, italic); styles.put(key, t); }
-        return t;
+        Typeface[] four = styles.computeIfAbsent(font, f -> new Typeface[4]);
+        if (four[key] == null) four[key] = key == 0 ? font : Typeface.create(font, bold ? 700 : 400, italic);
+        return four[key];
     }
 }

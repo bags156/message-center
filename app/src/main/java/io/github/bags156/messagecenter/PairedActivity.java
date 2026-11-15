@@ -4216,7 +4216,7 @@ public class PairedActivity extends Activity {
     private static String settingsTitle(String page){switch(page){case "messages":return "Messages";case "media":return "Photos & media";case "notifications":return "Notifications";
         case "automation":return "Automation";case "appearance":return "Appearance";case "apps":return "Apps";case "connection":return "Connection";case "data":return "Data & about";default:return "Settings";}}
     /** Words people might search for that a setting's own words don't say. */
-    private static String settingKeywords(String title){switch(title){case "Theme":return "dark light black mode night colors";case "Text size":return "font bigger smaller larger";case "Font":return "typeface custom upload ttf otf letters";case "Unread count":return "badge number total inbox";case "Chat color":return "theme bubble colour all chats every conversation";case "Calls in chats":return "phone call log duration missed";
+    private static String settingKeywords(String title){switch(title){case "Theme":return "dark light black mode night colors";case "Text size":return "font bigger smaller larger";case "Font":return "typeface custom upload ttf otf letters fonts";case "Upload a font":return "typeface custom ttf otf letters fonts";case "Unread count":return "badge number total inbox";case "Chat color":return "theme bubble colour all chats every conversation";case "Calls in chats":return "phone call log duration missed";
         case "Undo send":return "unsend delay take back cancel";case "Typing indicators":return "typing privacy";case "Read receipts":return "seen read privacy";case "Bubbles":return "floating chat heads";
         case "Busy auto-reply":return "away driving automatic reply";case "Notifications":return "sound vibration alerts";case "Background activity":return "battery optimization";
         case "Back up app data":return "backup export save";case "Restore from a backup":return "import backup";case "Photo quality":return "pictures compress size";
@@ -4267,7 +4267,7 @@ public class PairedActivity extends Activity {
         long arUntil=PairedService.autoReplyUntil(this);int arrivals=Arrivals.all(this).size();
         settingRow(pages,R.drawable.ic_bolt,0xff14b8a6,"Automation",(arUntil>System.currentTimeMillis()?"Busy reply on":"Busy reply off")+" · "+(arrivals>0?arrivals+" arrival "+(arrivals==1?"text":"texts"):"arrival texts")+" · codes",null,()->openSettingsPage("automation"));
         String themeMode=prefs.getString("theme","system");
-        settingRow(pages,R.drawable.ic_palette,0xffec4899,"Appearance",(themeMode.equals("light")?"Light":themeMode.equals("dark")?"Dark":themeMode.equals("black")?"Black":"Matches phone")+" · text "+scaleLabel(textScale).toLowerCase(Locale.ROOT)+" · chat color"+(Fonts.has(this)?" · "+Fonts.name(this):""),null,()->openSettingsPage("appearance"));
+        settingRow(pages,R.drawable.ic_palette,0xffec4899,"Appearance",(themeMode.equals("light")?"Light":themeMode.equals("dark")?"Dark":themeMode.equals("black")?"Black":"Matches phone")+" · text "+scaleLabel(textScale).toLowerCase(Locale.ROOT)+" · chat color"+(Fonts.has(this)?" · "+Fonts.inUse(this):""),null,()->openSettingsPage("appearance"));
         MusicLinks.App music=MusicApps.chosen(this,false);
         settingRow(pages,R.drawable.ic_apps,0xff0ea5e9,"Apps",(music!=null?"Music in "+music.label+" · podcasts":"Music, podcasts")+", maps & calendar",null,()->openSettingsPage("apps"));
         boolean restricted=batteryRestricted();
@@ -4427,25 +4427,54 @@ public class PairedActivity extends Activity {
         if(settingShown(title,sub,value))addSettingRow(group,r);return line[0];}
     /** An on/off setting with a switch; changing it saves at once and leaves the screen where it is. */
     private static final int PICK_FONT=89;
-    /** Settings → Appearance: your own font, a sample of it, and where it's used. */
-    private void fontSettings(LinearLayout content){LinearLayout group=settingsGroup(content,"Font");boolean has=Fonts.has(this);Typeface font=Fonts.typeface(this);
-        settingRow(group,R.drawable.ic_font,0xfff97316,"Font",has?(font==null?"This file won't load as a font. Upload another":null):"Upload a .ttf or .otf font, then choose where it's used",has?Fonts.name(this):"Phone's font",this::fontMenu);
-        if(!has||font==null)return;
-        TextView sample=text("The quick brown fox jumps over the lazy dog. 123",17,ink,false);sample.setTypeface(font);sample.setPadding(dp(16),dp(4),dp(16),dp(12));sample.setContentDescription("Sample of "+Fonts.name(this));group.addView(sample);
-        LinearLayout where=settingsGroup(content,"Use "+Fonts.name(this)+" for");java.util.Set<String> on=Fonts.areas(this);
+    /**
+     * Settings → Appearance: your uploaded fonts (each in its own lettering, with where it's used; a
+     * bin to delete it), and which font each part of the app uses.
+     */
+    private void fontSettings(LinearLayout content){LinearLayout group=settingsGroup(content,"Your fonts");List<Fonts.Entry> fonts=Fonts.library(this);
+        for(Fonts.Entry e:fonts){Typeface face=Fonts.sample(this,e.id);Fonts.Entry checked=Fonts.entry(this,e.id);List<String> used=Fonts.usedFor(this,e.id);
+            String usage=face==null?"This file won't load as a font":used.isEmpty()?"Not used yet":used.size()==Fonts.AREAS.size()?"Used everywhere":"Used for "+joinAnd(used);
+            if(face!=null&&checked!=null&&checked.moved>0)usage+=" · Demo version: no "+checked.examples+(checked.moved>3?"…":"")+" (the phone's font fills in)";
+            fontRow(group,e,face,usage);}
+        settingRow(group,R.drawable.ic_add,0xfff97316,"Upload a font","A .ttf or .otf file. Your fonts stay here, to use wherever you like",null,()->{
+            try{startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"),PICK_FONT);}catch(Exception x){toast("No file picker is available.");}});
+        if(fonts.isEmpty())return;
+        LinearLayout where=settingsGroup(content,"Font for each part");
         int[] icons={R.drawable.ic_chat,R.drawable.ic_keyboard,R.drawable.ic_apps,R.drawable.ic_text_size,R.drawable.ic_more,R.drawable.ic_settings,R.drawable.ic_app};
         int[] colors={0xff3b82f6,0xff0ea5e9,0xff22c55e,0xff8b5cf6,0xfff59e0b,0xff64748b,0xffec4899};
         for(int i=0;i<Fonts.AREAS.size();i++){String[] a=Fonts.AREAS.get(i);
-            settingSwitch(where,icons[i],colors[i],a[1],a[2],on.contains(a[0]),use->{Fonts.setArea(this,a[0],use);Fonts.apply(this,frame,"settings");});}}
-    private void fontMenu(){boolean has=Fonts.has(this);List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
-        labels.add(has?"Upload a different font":"Upload a font (.ttf or .otf)");actions.add(()->{
-            try{startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"),PICK_FONT);}catch(Exception e){toast("No file picker is available.");}});
-        if(has){labels.add("Use the phone's font");actions.add(()->{Fonts.remove(this);Fonts.apply(this,frame,"settings");settings();toast("Back to the phone's font");});}
-        menuSheet("Font",labels,actions);}
+            settingRow(where,icons[i],colors[i],a[1],a[2],Fonts.nameOf(this,Fonts.fontFor(this,a[0])),()->pickFontFor(a[0],a[1]));}}
+    private static String joinAnd(List<String> items){if(items.size()<=1)return items.isEmpty()?"":items.get(0);return String.join(", ",items.subList(0,items.size()-1))+" and "+items.get(items.size()-1);}
+    /** An uploaded font: its name in its own lettering, where it's used, a bin to delete it. Tapping it offers to use it everywhere. */
+    private void fontRow(LinearLayout group,Fonts.Entry e,Typeface face,String usage){TextView[] line=new TextView[1];
+        LinearLayout r=settingLine(R.drawable.ic_font,0xfff97316,e.name,usage,line);
+        TextView title=(TextView)((LinearLayout)line[0].getParent()).getChildAt(0);
+        // The name shows the font as it is, and the line under it stays plain, whatever font this page is in.
+        title.setTypeface(face!=null?face:Typeface.DEFAULT);title.setTextSize(18);Fonts.area(title,"keep");Fonts.area(line[0],"keep");
+        Runnable delete=()->menuSheet("Delete "+e.name+"?",java.util.Collections.singletonList("Delete"),java.util.Collections.<Runnable>singletonList(()->{
+            Fonts.delete(this,e.id);Fonts.apply(this,frame,"settings");settings();toast(e.name+" deleted");}));
+        r.addView(icon(R.drawable.ic_delete,muted,"Delete "+e.name,delete));
+        pressable(r);r.setOnClickListener(v->{if(face==null){delete.run();return;}
+            menuSheet(e.name,java.util.Arrays.asList("Use everywhere","Delete"),java.util.Arrays.<Runnable>asList(()->{Fonts.useEverywhere(this,e.id);Fonts.apply(this,frame,"settings");settings();},delete));});
+        r.setContentDescription(e.name+". "+usage);
+        if(settingShown("Font",e.name,usage))addSettingRow(group,r);}
+    /** Choose the font for one part of the app: the phone's own or any uploaded one, each shown in its own lettering. */
+    private Dialog pickFontFor(String area,String label){LinearLayout content=vertical();Dialog[] d=new Dialog[1];String now=Fonts.fontFor(this,area);
+        TextView heading=text("Font for "+label,20,ink,true);heading.setPadding(dp(8),dp(4),dp(8),dp(10));content.addView(heading);
+        List<String[]> options=new ArrayList<>();options.add(new String[]{"","Phone's font"});for(Fonts.Entry e:Fonts.library(this))if(Fonts.sample(this,e.id)!=null)options.add(new String[]{e.id,e.name});
+        LinearLayout list=vertical();ScrollView sc=new ScrollView(this);sc.setVerticalScrollBarEnabled(false);sc.addView(list);
+        for(String[] o:options){LinearLayout r=row();r.setPadding(dp(12),dp(12),dp(12),dp(12));r.setMinimumHeight(dp(56));
+            TextView name=text(o[1],19,ink,false);name.setTypeface(o[0].isEmpty()?Typeface.DEFAULT:Fonts.sample(this,o[0]));Fonts.area(name,"keep");r.addView(name,new LinearLayout.LayoutParams(0,-2,1));
+            if(o[0].equals(now)){ImageView mark=new ImageView(this);mark.setImageResource(R.drawable.ic_check);mark.setColorFilter(ChatTheme.of(chatSettings.allTheme()).accent(dark));r.addView(mark,new LinearLayout.LayoutParams(dp(24),dp(24)));}
+            r.setContentDescription(o[1]+(o[0].equals(now)?", in use":""));pressable(r);
+            r.setOnClickListener(v->{d[0].dismiss();Fonts.setFontFor(this,area,o[0]);Fonts.apply(this,frame,"settings");settings();});list.addView(r);}
+        content.addView(sc,new LinearLayout.LayoutParams(-1,-2));int max=Math.round(getResources().getDisplayMetrics().heightPixels*0.6f);
+        sc.post(()->{if(sc.getHeight()>max){ViewGroup.LayoutParams lp=sc.getLayoutParams();lp.height=max;sc.setLayoutParams(lp);}});
+        d[0]=sheet(content);return d[0];}
     /** Takes the picked file as the app's font (checking it is one first). */
     private void useFont(Uri uri){String picked="font";try(android.database.Cursor q=getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null)){if(q!=null&&q.moveToFirst()&&!q.isNull(0))picked=q.getString(0);}catch(Exception ignored){}
-        String name=picked;decoder.execute(()->{try{String done=Fonts.install(this,uri,name);
-            ui.post(()->{if(screen.equals("settings"))settings();toast(done+" is in use. Choose where below.");});}
+        String name=picked;decoder.execute(()->{try{Fonts.Entry done=Fonts.install(this,uri,name);boolean used=!Fonts.usedFor(this,done.id).isEmpty();
+            ui.post(()->{Fonts.apply(this,frame,"settings");if(screen.equals("settings"))settings();toast(used?done.name+" is in use. Change where under Font for each part.":done.name+" added. Pick where to use it under Font for each part.");});}
             catch(Exception e){ui.post(()->toast(e.getMessage()!=null?e.getMessage():"That font couldn't be used."));}});}
     private void settingSwitch(LinearLayout group,int icon,int color,String title,String sub,boolean on,java.util.function.Consumer<Boolean> change){TextView[] line=new TextView[1];LinearLayout r=settingLine(icon,color,title,sub,line);pressable(r);
         android.widget.Switch sw=new android.widget.Switch(this);sw.setChecked(on);sw.setContentDescription(title);

@@ -1,7 +1,8 @@
-Message Center 1.5.53.
+Message Center 1.5.54.
 
-- Your own font: Settings → Appearance → Font → Upload a font, and pick a .ttf or .otf file (from Google Fonts, say). Then choose where it's used, with a switch for each: Messages, Message box, Chat list, Titles, Menus and pop-ups, Settings, and Everything else. It starts on everywhere except Settings. Bold and italic text stay bold and italic, and emoji and other alphabets the font doesn't have use the phone's font. "Use the phone's font" turns it off.
-- Backups include your font, so it comes back when you restore.
-- Web fonts (.woff, .woff2) aren't files Android can use, so the app says so instead of taking them.
+- A font for each part: Settings → Appearance → Font for each part lets Messages, the message box, the chat list, titles, menus, Settings and everything else each use any font you've uploaded, or the phone's own. Each choice is shown in its own lettering.
+- Your fonts stay: every font you upload is kept under Your fonts, shown in its own lettering with where it's used. Tap one for "Use everywhere", or its bin to delete it (anything using it goes back to the phone's font). Uploading the same font again doesn't list it twice. Your first font goes into use everywhere but Settings; later ones wait for you to pick where.
+- Demo fonts: free "demo" versions of fonts leave characters out (often digits like 4 and the apostrophe) and draw a "DEMO" mark in their place, which broke times like 7:40. Now those characters use the phone's font instead, and the font's row says which ones. Fonts you've already uploaded are checked too.
+- Backups include all your fonts and where each is used.
 
 Install over the existing app through Obtainium. Your pairing, conversations and settings are retained.
