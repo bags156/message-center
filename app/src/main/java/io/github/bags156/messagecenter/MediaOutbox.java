@@ -161,8 +161,8 @@ final class MediaOutbox {
         case SENT->"Sent";case DELIVERED->"Delivered";case FAILED->"Not sent • Tap for options";case UNSURE->unconfirmed(j,online);
         default->j.optInt("tries")>0?"Waiting for signal • sends automatically":online?"Queued to send":Outbox.waitingFor(status);};}
     /** Google has it but hasn't confirmed delivery; after a while connected, it's worth deciding about. */
-    static String unconfirmed(JSONObject j,boolean online){return online&&j.optLong("stateAt")>0&&System.currentTimeMillis()-j.optLong("stateAt")>Outbox.CONFIRM_WAIT_MS?"Not confirmed • Tap to send again":"Sent to Google • waiting to confirm delivery";}
-    static String captionLabel(JSONObject j){String media=j.optString("state");return switch(j.optString("captionState")){case SUBMITTING->"Sending text…";case FAILED->"Text not sent • Tap to retry";case UNSURE->"Text sent to Google • waiting to confirm delivery";case ACCEPTED->"Text sent to Google • waiting to confirm delivery";case WAITING->j.optInt("captionTries")>0?"Text waiting for signal • sends automatically":"Text queued";
+    static String unconfirmed(JSONObject j,boolean online){return online&&j.optLong("stateAt")>0&&System.currentTimeMillis()-j.optLong("stateAt")>Outbox.CONFIRM_WAIT_MS?"Not confirmed • Tap to send again":"Google didn't answer • it may not have gone";}
+    static String captionLabel(JSONObject j){String media=j.optString("state");return switch(j.optString("captionState")){case SUBMITTING->"Sending text…";case FAILED->"Text not sent • Tap to retry";case UNSURE->"Text: Google didn't answer • it may not have gone";case ACCEPTED->"Text sent to Google • waiting to confirm delivery";case WAITING->j.optInt("captionTries")>0?"Text waiting for signal • sends automatically":"Text queued";
         default->media.equals(FAILED)||media.equals(UNSURE)?"Text waits for the attachment • Tap to send it now":"Text will follow the attachment";};}
     /** Text that hasn't been tried yet (it's waiting on its attachment). */
     static boolean captionWaiting(JSONObject j){return "pending".equals(j.optString("captionState"))&&!j.optString("caption").isEmpty();}

@@ -28,6 +28,8 @@ final class Outbox {
 
     /** How long a send can go unconfirmed while connected before it's offered to send again. */
     static final long CONFIRM_WAIT_MS = 10 * 60_000L;
+    /** An unsure text the phone never got goes again by itself only this soon after you sent it. */
+    static final long RESEND_WITHIN_MS = 15 * 60_000L;
 
     /** What a message held for the connection is waiting for, from the connection line (PairedService.status). */
     static String waitingFor(String status) {
@@ -42,7 +44,7 @@ final class Outbox {
         switch (o.optString("state")) {
             case HOLD: return "Sending… • Tap to undo";
             case SENDING: case SENT: return o.optString("replaces").isEmpty() ? "Sending…" : "Sending again…";
-            case UNSURE: return online && o.optLong("stateAt") > 0 && now - o.optLong("stateAt") > CONFIRM_WAIT_MS ? "Not confirmed • Tap to send again" : "Sent to Google • waiting to confirm delivery";
+            case UNSURE: return online && o.optLong("stateAt") > 0 && now - o.optLong("stateAt") > CONFIRM_WAIT_MS ? "Not confirmed • Tap to send again" : "Google didn't answer • checking if it went";
             case FAILED: return "Not sent • Tap to retry";
             default: return o.optInt("tries") > 0 ? "Waiting for signal • sends automatically" : online ? "Sending…" : waitingFor(status);
         }
@@ -154,14 +156,60 @@ final class Outbox {
         save(list);
     }
 
-    /** A message arrived in a chat: removes the sent text it's the copy of, and any whose copy never came. True if something changed. */
+    /**
+     * A message arrived in a chat: removes the sent text it's the copy of, and any whose copy never
+     * came. An unsure one (Google never answered the send) goes too when its copy turns up: the same
+     * words, from you, in the same chat, since you sent it. True if something changed.
+     */
     synchronized boolean arrived(JSONObject message) {
         String tmp = message.optString("tmpID"), mid = message.optString("messageID"); long now = System.currentTimeMillis();
         List<JSONObject> list = all();
         boolean changed = list.removeIf(o -> SENT.equals(o.optString("state")) && (now - o.optLong("sentAt") > SENT_GRACE_MS
                 || (!tmp.isEmpty() && tmp.equals(o.optString("tmpID"))) || (!mid.isEmpty() && mid.equals(o.optString("tmpID")))));
+        if (PairedProtocol.outgoing(message)) {
+            String chat = message.optString("conversationID"), text = PairedProtocol.text(message); long when = PairedProtocol.time(message);
+            for (JSONObject o : list) {
+                if (!UNSURE.equals(o.optString("state")) || !chat.equals(o.optString("chat")) || !text.equals(o.optString("text"))) continue;
+                if (when < o.optLong("created") - OutboxEcho.CLOCK_SLACK_MS) continue;
+                list.remove(o); changed = true; break; // one copy settles one text
+            }
+        }
         if (changed) save(list);
         return changed;
+    }
+
+    /** Whether a chat has a text Google never answered about (so it's worth asking Google for the chat's newest messages). */
+    synchronized boolean unsure(String chat) {
+        for (JSONObject o : all()) if (UNSURE.equals(o.optString("state")) && chat.equals(o.optString("chat"))) return true;
+        return false;
+    }
+
+    /** The chats with texts Google never answered about. */
+    synchronized java.util.Set<String> unsureChats() {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        for (JSONObject o : all()) if (UNSURE.equals(o.optString("state"))) out.add(o.optString("chat"));
+        return out;
+    }
+
+    /**
+     * The phone answered with the chat's newest messages and an unsure text isn't among them: it
+     * never got there. It goes again by itself, once; if that's unsure too, it waits for you
+     * ("Not sent • Tap to retry"). Returns how many go again.
+     */
+    synchronized int notOnPhone(String chat) {
+        List<JSONObject> list = all(); int again = 0;
+        for (JSONObject o : list) {
+            if (!UNSURE.equals(o.optString("state")) || !chat.equals(o.optString("chat"))) continue;
+            try {
+                long now = System.currentTimeMillis();
+                if (o.optBoolean("sentAgain")) o.put("state", FAILED).put("error", "Google didn't confirm it twice. Check your connection, then tap to send again.").put("stateAt", now);
+                // A while ago: you may have sent it some other way since, so it's yours to send again (no surprise repeat).
+                else if (now - o.optLong("created") > RESEND_WITHIN_MS) o.put("state", FAILED).put("error", "It didn't reach your phone. Tap to send it again.").put("stateAt", now);
+                else { o.put("state", WAITING).put("sentAgain", true).put("error", "").put("stateAt", now); o.remove("retryAt"); o.remove("tries"); again++; }
+            } catch (Exception ignored) {}
+        }
+        save(list);
+        return again;
     }
 
     /** The next message to send automatically, or null. Unsure and failed items wait for the person. */

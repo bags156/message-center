@@ -1,5 +1,9 @@
-Message Center 1.5.58.
+Message Center 1.5.59.
 
-- Chat heads, step by step: Settings → Notifications → Chat heads now sets each step on its own. "When a message comes in" (100%, for 5 seconds), "Then, settled" (50%, for 2 minutes) and "Then, faded" (15%, until you touch it). Each has its own strength slider, with a head beside it that shows how strong, and the heads on screen show it while you slide. Tap "For 5 seconds" or "For 2 minutes" to change how long a step lasts.
+- Texts that didn't go no longer sit there looking sent. When your connection drops just as you send (switching between Wi-Fi and cell does it), Google may never answer. That used to show "Sent to Google • waiting to confirm delivery" and stay that way. Now it says "Google didn't answer • checking if it went", and the app checks with your phone:
+  - If the text is there, the label goes.
+  - If your phone never got it, it's sent again by itself, once, within 15 minutes of when you sent it.
+  - If that fails too, or it's from longer ago, it says "Not sent • Tap to retry", so nothing goes twice without you choosing.
+- It also checks right after the connection comes back, which is usually when this happens.
 
 Install over the existing app through Obtainium. Your pairing, conversations and settings are retained.

@@ -64,10 +64,10 @@ public class SendRetryTest {
         assertEquals("Waiting to reconnect • sends automatically", Outbox.label(waiting, false, "Connection ended • reconnecting on its own", now));
         assertEquals("a try that couldn't get out", "Waiting for signal • sends automatically", Outbox.label(new JSONObject().put("state", Outbox.WAITING).put("tries", 2), true, "", now));
         JSONObject unsure = new JSONObject().put("state", Outbox.UNSURE).put("stateAt", now - 60_000);
-        assertEquals("Sent to Google • waiting to confirm delivery", Outbox.label(unsure, true, "", now));
+        assertEquals("Google didn't answer • checking if it went", Outbox.label(unsure, true, "", now));
         unsure.put("stateAt", now - Outbox.CONFIRM_WAIT_MS - 1);
         assertEquals("Not confirmed • Tap to send again", Outbox.label(unsure, true, "", now));
-        assertEquals("not while disconnected", "Sent to Google • waiting to confirm delivery", Outbox.label(unsure, false, "", now));
+        assertEquals("not while disconnected", "Google didn't answer • checking if it went", Outbox.label(unsure, false, "", now));
         assertEquals("Sending again…", Outbox.label(new JSONObject().put("state", Outbox.SENDING).put("replaces", "m1"), true, "", now));
     }
 
@@ -88,7 +88,7 @@ public class SendRetryTest {
         box.begin("j1", false);
         box.failed("j1", box.get("j1").optLong("attempt"), "Send outcome unknown. Check the conversation.", false);
         assertEquals("never sent twice on a guess", MediaOutbox.UNSURE, box.get("j1").optString("state"));
-        assertEquals("Sent to Google • waiting to confirm delivery", MediaOutbox.label(box.get("j1"), true, ""));
+        assertEquals("Google didn't answer • it may not have gone", MediaOutbox.label(box.get("j1"), true, ""));
     }
 
     private static JSONObject copy(String id, String status, String text) throws Exception {
