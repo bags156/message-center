@@ -190,7 +190,7 @@ public class PairedActivity extends Activity {
         else if(!bubble()&&!PairedService.emoji().isEmpty()&&login==null)pairing();
         else {updateStatus();PairedService.syncNow();
             // Updates that arrived while this screen was hidden (or a bubble was collapsed) are shown now, then refreshed from Google.
-            if(screen.equals("chat")){renderMessages(false);if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();if(!bubble())PairedService.clearNotification(this,chatId);}
+            if(screen.equals("chat")){renderMessages(false);if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();PairedService.clearNotification(this,chatId);}
             else if(screen.equals("inbox")){if(batteryCard!=null&&!showBatteryCard()){root.removeView(batteryCard);batteryCard=null;}renderInbox();refreshInbox(false);
                 if(!bubble()&&PairedService.ready()&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED)askContactPhotos();}}}
     @Override protected void onPause(){MusicApps.updated=null;saveNote();watchCalls(false);if(resumed)PairedService.screenVisible(false);resumed=false;if(dictation!=null)stopDictation();remember();if(inline!=null)inline.pause();ui.removeCallbacks(typingTick);if(recorder!=null&&!VoiceRecordService.holding())finishRecording(false);if(registered){unregisterReceiver(receiver);registered=false;}super.onPause();}
@@ -934,7 +934,8 @@ public class PairedActivity extends Activity {
         sendButton=new ImageView(this);sendButton.setImageResource(R.drawable.ic_send);sendButton.setImageTintList(ColorStateList.valueOf(theme.onAccent(dark)));sendButton.setBackground(oval(theme.accent(dark)));
         sendButton.setPadding(dp(14),dp(14),dp(14),dp(14));sendButton.setContentDescription("Send");sendButton.setOnClickListener(v->sendOrRecord());sendButton.setOnLongClickListener(v->{if(micShowing())startRecording();else if(dictation==null)scheduleMessage();return true;});
         LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(dp(52),dp(52));sl.setMarginStart(dp(8));compose.addView(sendButton,sl);root.addView(compose);renderAttachments();updateComposeButton();applyIncoming();Perf.end("open: screen",perf);
-        perf=Perf.start();chatSettings.setMarkedUnread(id,false);if(!bubble())PairedService.clearNotification(this,id);Perf.end("open: notification",perf);
+        // Read here, in a bubble or a chat head's window too: its notification goes (a bubble's is quieted, so the bubble stays).
+        perf=Perf.start();chatSettings.setMarkedUnread(id,false);PairedService.clearNotification(this,id);Perf.end("open: notification",perf);
         if(back!=null){restoreSpot=back;renderMessages(false);}else renderMessages(true);perf=Perf.start();if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();
         if(c!=null)requestPhotos(java.util.Collections.singletonList(c));Perf.end("open: after",perf);Perf.end("open: total",perfAll);
     }
@@ -3573,10 +3574,10 @@ public class PairedActivity extends Activity {
     private void snoozeMenu(String id){List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();long now=System.currentTimeMillis();
         java.util.Calendar morning=java.util.Calendar.getInstance();morning.add(java.util.Calendar.DAY_OF_YEAR,1);morning.set(java.util.Calendar.HOUR_OF_DAY,8);morning.set(java.util.Calendar.MINUTE,0);morning.set(java.util.Calendar.SECOND,0);
         // Until it's quiet: off while the chat keeps going, back on by itself after half an hour without new messages.
-        labels.add("Until it's quiet (30 minutes without messages)");actions.add(()->{chatSettings.snoozeUntilQuiet(id);if(!bubble())PairedService.clearNotification(this,id);
+        labels.add("Until it's quiet (30 minutes without messages)");actions.add(()->{chatSettings.snoozeUntilQuiet(id);PairedService.clearNotification(this,id);
             toast("Quiet until this chat has no new messages for 30 minutes. @-mentions still notify you.");refreshAfterSetting();});
         long[] times={now+3_600_000L,now+8*3_600_000L,morning.getTimeInMillis()};String[] names={"For 1 hour","For 8 hours","Until tomorrow, "+timeOnly(morning.getTimeInMillis())};
-        for(int i=0;i<times.length;i++){long until=times[i];labels.add(names[i]);actions.add(()->{chatSettings.setSnooze(id,until);if(!bubble())PairedService.clearNotification(this,id);toast("Snoozed until "+snoozeLabel(id)+". @-mentions still notify you.");refreshAfterSetting();});}
+        for(int i=0;i<times.length;i++){long until=times[i];labels.add(names[i]);actions.add(()->{chatSettings.setSnooze(id,until);PairedService.clearNotification(this,id);toast("Snoozed until "+snoozeLabel(id)+". @-mentions still notify you.");refreshAfterSetting();});}
         if(chatSettings.snoozed(id)){labels.add("Turn off snooze");actions.add(()->{chatSettings.setSnooze(id,0);toast("Notifications on for this chat");refreshAfterSetting();});}
         menuSheet("Snooze notifications",labels,actions);}
     private void refreshAfterSetting(){if(screen.equals("details"))details();else if(screen.equals("inbox"))renderInbox();}
