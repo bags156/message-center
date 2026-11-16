@@ -1165,7 +1165,8 @@ public final class OnDeviceSmoke extends Instrumentation {
      * Chat heads: with "Display over other apps" allowed and chat heads chosen, a new message brings
      * up its chat's head at the strength set for a new message, then the settled one, then the
      * faded one (the steps sped up here from 5 seconds and 2 minutes); two heads sit in one stack,
-     * which spreads out when tapped; tapping a head then opens the chat in a floating window (the
+     * which spreads out when tapped; tapping a head then opens the chat in a floating window, which
+     * clears the chat's notification (the
      * heads step aside meanwhile, and come back stacked when it closes); the settings show each
      * step; dragged (with real touches), the face behind the stack trails the front one and settles
      * back in; dragging one spread-out head onto the × closes just that chat, and
@@ -1204,9 +1205,15 @@ public final class OnDeviceSmoke extends Instrumentation {
             runOnMainSync(()->{heads[0]=ChatHeads.view();shown[0]=((android.view.ViewGroup)heads[0]).getChildCount();});
             check(shown[0]==2,"Tapping the stack didn't spread the heads out ("+shown[0]+")");
             shoot("shot-chat-heads-spread");
+            // The chat's notification, as a new message would leave it: reading it in the floating window clears it.
+            android.app.NotificationManager nm=ctx.getSystemService(android.app.NotificationManager.class);
+            nm.createNotificationChannel(new android.app.NotificationChannel("smoke-heads","Smoke check",android.app.NotificationManager.IMPORTANCE_LOW));
+            nm.notify("chat:head-chat",1,new android.app.Notification.Builder(ctx,"smoke-heads").setSmallIcon(R.drawable.ic_notification).setContentTitle("Hana Head").setContentText("New message").build());
+            check(waitUntil(()->java.util.Arrays.stream(nm.getActiveNotifications()).anyMatch(n->"chat:head-chat".equals(n.getTag())),2000),"The check's stand-in notification didn't show");
             runOnMainSync(()->((android.view.ViewGroup)heads[0]).getChildAt(0).performClick());
             android.app.Activity window=waitForMonitorWithTimeout(floating,6000);
             check(window!=null,"Tapping a chat head didn't open the floating chat");
+            check(waitUntil(()->java.util.Arrays.stream(nm.getActiveNotifications()).noneMatch(n->"chat:head-chat".equals(n.getTag())),3000),"Reading the chat in its floating window left its notification up");
             Thread.sleep(800);runOnMainSync(()->heads[0]=ChatHeads.view());check(heads[0]==null,"The heads stayed on screen over the floating chat");
             int[] size={0,0};android.graphics.Rect full=ctx.getSystemService(android.view.WindowManager.class).getCurrentWindowMetrics().getBounds();
             runOnMainSync(()->{android.view.View d=window.getWindow().getDecorView();size[0]=d.getWidth();size[1]=d.getHeight();});
