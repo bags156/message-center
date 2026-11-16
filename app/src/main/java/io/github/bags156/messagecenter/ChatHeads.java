@@ -20,7 +20,6 @@ import android.provider.Settings;
 import android.util.TypedValue;
 import android.view.Choreographer;
 import android.view.Gravity;
-import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
@@ -348,7 +347,7 @@ final class ChatHeads {
                     if (over != was) {
                         if (targetFace != null) { targetFace.animate().scaleX(over ? 1.25f : 1f).scaleY(over ? 1.25f : 1f).setDuration(120).start(); }
                         if (ring != null) ring.setColor(over ? 0xeee11d48 : 0xcc111827);
-                        if (over) v.performHapticFeedback(HapticFeedbackConstants.CONFIRM);
+                        if (over) buzz();
                     }
                     return true;
                 }
@@ -509,6 +508,27 @@ final class ChatHeads {
         Choreographer.getInstance().removeFrameCallback(t);
         if (t.box != null) t.box.setAlpha(1f);
         try { wm.removeView(t.room); } catch (Exception ignored) {}
+    }
+
+    /** How many times it has buzzed (for the device checks). */
+    static int buzzed;
+    /**
+     * A short, crisp click from the phone's vibration motor as a head reaches the ×. (A view's own
+     * haptics go through Android's touch feedback setting, which can leave them silent.)
+     */
+    private static void buzz() {
+        buzzed++;
+        try {
+            android.os.Vibrator vib = app.getSystemService(android.os.VibratorManager.class).getDefaultVibrator();
+            if (vib == null || !vib.hasVibrator()) return;
+            android.os.VibrationEffect fx;
+            if (vib.areAllPrimitivesSupported(android.os.VibrationEffect.Composition.PRIMITIVE_CLICK))
+                fx = android.os.VibrationEffect.startComposition().addPrimitive(android.os.VibrationEffect.Composition.PRIMITIVE_CLICK, 0.8f).compose();
+            else if (vib.areAllEffectsSupported(android.os.VibrationEffect.EFFECT_CLICK) == android.os.Vibrator.VIBRATION_EFFECT_SUPPORT_YES)
+                fx = android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_CLICK);
+            else fx = android.os.VibrationEffect.createOneShot(25, 180);
+            vib.vibrate(fx);
+        } catch (Exception ignored) {}
     }
 
     private static void dropLifted() {

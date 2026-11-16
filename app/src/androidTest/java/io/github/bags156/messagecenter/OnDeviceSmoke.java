@@ -1222,7 +1222,9 @@ public final class OnDeviceSmoke extends Instrumentation {
             // Spread out, one head dragged onto the × closes just that chat.
             runOnMainSync(()->((android.view.ViewGroup)heads[0]).getChildAt(0).performClick());waitForIdleSync();Thread.sleep(300);
             runOnMainSync(()->{heads[0]=ChatHeads.view();shown[0]=((android.view.ViewGroup)heads[0]).getChildCount();});check(shown[0]==2,"The stack didn't spread out again ("+shown[0]+")");
+            int buzzes=ChatHeads.buzzed;
             dragOntoClose(((android.view.ViewGroup)heads[0]).getChildAt(0),"shot-chat-head-close");Thread.sleep(500);
+            check(ChatHeads.buzzed>buzzes,"Reaching the × didn't vibrate");
             java.util.List<String> left=ChatHeads.heads();
             check(left.size()==1&&left.contains("head-chat-2"),"Dropping one head on the × didn't close just that chat ("+left+")");
             runOnMainSync(()->{heads[0]=ChatHeads.view();shown[0]=heads[0]==null?0:((android.view.ViewGroup)heads[0]).getChildCount();});check(shown[0]==1,"After closing one, the other head isn't on screen ("+shown[0]+")");
