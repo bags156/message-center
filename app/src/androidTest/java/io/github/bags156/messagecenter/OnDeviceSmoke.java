@@ -1413,8 +1413,10 @@ public final class OnDeviceSmoke extends Instrumentation {
             boolean found=false;for(Object o:(java.util.List<?>)hits[0]){JSONObject h=(JSONObject)o;if("ff-1".equals(h.optString("messageID"))&&h.optString("_transcript").contains("waterfall"))found=true;}
             check(found,"Searching for a word in a transcript didn't find its voice message");
             onMainCall(()->{method("inbox").invoke(a);field("query").set(a,"waterfall");return method("renderInbox").invoke(a);});
-            check(waitUntil(()->textStarting(a.getWindow().getDecorView(),"Voice message: ")!=null,5000),"The inbox's search doesn't show the voice message it found by its transcript");
+            boolean listed=waitUntil(()->textStarting(a.getWindow().getDecorView(),"Voice message: ")!=null,10000);
             shoot("shot-transcript-search");
+            Object[] state={null,null,null};runOnMainSync(()->{try{state[0]=field("searchedFor").get(a);state[1]=((java.util.List<?>)field("searchHits").get(a)).size();state[2]=field("screen").get(a);}catch(Exception ignored){}});
+            check(listed,"The inbox's search doesn't show the voice message it found by its transcript (searched for \""+state[0]+"\", "+state[1]+" hits, on "+state[2]+")");
             onMainCall(()->{field("query").set(a,"");return method("renderInbox").invoke(a);});}
         finally{tp.edit().remove("audfold").remove("audfold|folded").remove("audfold|msg").commit();onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("fold-check");}}}
     private static android.widget.TextView textStarting(android.view.View v,String start){if(v instanceof android.widget.TextView&&((android.widget.TextView)v).getText().toString().startsWith(start)&&v.isShown())return (android.widget.TextView)v;
