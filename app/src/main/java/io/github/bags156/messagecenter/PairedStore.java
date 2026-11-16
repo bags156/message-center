@@ -64,6 +64,14 @@ final class PairedStore extends SQLiteOpenHelper {
         }
         return out;
     }
+    /** The message an attachment came in, by its media ID (a LIKE narrows the rows; the match is on the attachment itself). */
+    synchronized JSONObject messageWithMedia(String mediaID) {
+        if(mediaID==null||mediaID.isEmpty())return null;String like="%"+mediaID.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%";
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM items WHERE data LIKE ? ESCAPE '\\' ORDER BY time DESC LIMIT 20",new String[]{like})) {
+            while(c.moveToNext()){JSONObject m=json(c.getString(0));for(JSONObject a:PairedProtocol.media(m))if(mediaID.equals(PairedProtocol.string(a,"mediaID")))return m;}
+        }
+        return null;
+    }
     /** First meaningful incoming or successfully sent outgoing message: enough to decide who owes a reply. */
     synchronized List<JSONObject> replyBoundary(String chat,JSONObject conversation){List<JSONObject> out=new ArrayList<>();
         try(Cursor c=getReadableDatabase().rawQuery("SELECT data FROM items WHERE chat=? ORDER BY time DESC,id DESC",new String[]{chat})){

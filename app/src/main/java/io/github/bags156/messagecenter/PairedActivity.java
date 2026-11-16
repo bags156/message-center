@@ -2960,7 +2960,7 @@ public class PairedActivity extends Activity {
         LinearLayout r=vertical();r.setPadding(dp(12),dp(12),dp(12),dp(12));pressable(r);
         String who=PairedProtocol.outgoing(m,c)?"You":senderFirst(m,c);
         r.addView(text((showChat&&c!=null?PairedProtocol.title(c)+" • ":"")+who+" • "+separatorStamp(PairedProtocol.time(m)),12,muted,false));
-        TextView t=text(m.has("_photoText")?"Text in picture: "+m.optString("_photoText"):displayBody(m),15,ink,false);t.setMaxLines(3);t.setEllipsize(TextUtils.TruncateAt.END);r.addView(t);
+        TextView t=text(m.has("_photoText")?"Text in picture: "+m.optString("_photoText"):m.has("_transcript")?"Voice message: "+m.optString("_transcript"):displayBody(m),15,ink,false);t.setMaxLines(3);t.setEllipsize(TextUtils.TruncateAt.END);r.addView(t);
         r.setOnClickListener(v->openMessage(m));return r;}
     private void openMessage(JSONObject m){String chatID=m.optString("conversationID");if(store.chat(chatID)==null){toast("That conversation isn't synced here.");return;}
         thread(chatID);if(store.message(m.optString("messageID"))==null){toast("That message isn't in the synced history.");return;}ui.post(()->showMessage(m));}
@@ -3962,7 +3962,7 @@ public class PairedActivity extends Activity {
     // Search inside a chat
     private void searchChat(){LinearLayout content=vertical();EditText q=input("Search this conversation");q.setSingleLine(true);content.addView(clearable(q));gap(content,8);
         LinearLayout results=vertical();ScrollView rs=new ScrollView(this);rs.addView(results);content.addView(rs,new LinearLayout.LayoutParams(-1,Math.round(getResources().getDisplayMetrics().heightPixels*0.45f)));
-        TextView hint=text("Searches synced messages and indexed text in downloaded pictures. Use Details → Load older messages to include more history.",13,muted,false);results.addView(hint);
+        TextView hint=text("Searches synced messages, voice message transcripts and indexed text in downloaded pictures. Use Details → Load older messages to include more history.",13,muted,false);results.addView(hint);
         Dialog d=sheet(content);String id=chatId;JSONObject c=store.chat(id);int[] generation={0};
         q.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int cc,int a){}public void afterTextChanged(Editable e){}
             public void onTextChanged(CharSequence s,int st,int b,int cc){String query=s.toString();int g=++generation[0];
@@ -3970,7 +3970,7 @@ public class PairedActivity extends Activity {
                     if(query.trim().length()<2){results.addView(hint);return;}if(found.isEmpty()){results.addView(text("No matches in synced messages",14,muted,false));return;}
                     for(JSONObject m:found){LinearLayout r=vertical();r.setPadding(dp(4),dp(10),dp(4),dp(10));pressable(r);
                         r.addView(text((PairedProtocol.outgoing(m,c)?"You":senderName(m,c))+" • "+separatorStamp(PairedProtocol.time(m)),12,muted,false));
-                        TextView t=text(m.has("_photoText")?"Text in picture: "+m.optString("_photoText"):PairedProtocol.text(m),15,ink,false);t.setMaxLines(3);t.setEllipsize(TextUtils.TruncateAt.END);r.addView(t);
+                        TextView t=text(m.has("_photoText")?"Text in picture: "+m.optString("_photoText"):m.has("_transcript")?"Voice message: "+m.optString("_transcript"):PairedProtocol.text(m),15,ink,false);t.setMaxLines(3);t.setEllipsize(TextUtils.TruncateAt.END);r.addView(t);
                         r.setOnClickListener(v->{d.dismiss();showMessage(m);});results.addView(r);}});});}});
         q.requestFocus();}
     private void showMessage(JSONObject m){if(!screen.equals("chat"))return;int needed=store.countSince(chatId,PairedProtocol.time(m));if(needed>limit)limit=needed+20;
@@ -3980,6 +3980,8 @@ public class PairedActivity extends Activity {
     private List<JSONObject> withPictureHits(List<JSONObject> messages,String words,String chat,int max){
         List<JSONObject> out=new ArrayList<>(messages);Set<String> seen=new HashSet<>();for(JSONObject m:out)seen.add(m.optString("messageID"));
         for(JSONObject m:PhotoText.matches(this,store,words,chat,max))if(seen.add(m.optString("messageID")))out.add(m);
+        // Voice messages, by what was said in them.
+        for(JSONObject m:Transcriber.matches(this,store,words,chat,max))if(seen.add(m.optString("messageID")))out.add(m);
         out.sort((a,b)->Long.compare(PairedProtocol.time(b),PairedProtocol.time(a)));return out.size()>max?new ArrayList<>(out.subList(0,max)):out;
     }
     private void readPhotoText(JSONObject media){withFile(media,"Getting the photo…",file->{toast("Recognizing text on this phone…");PhotoText.scan(this,media,file,true,(recognized,error)->{

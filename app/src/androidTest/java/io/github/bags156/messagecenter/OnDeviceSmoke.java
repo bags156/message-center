@@ -1386,7 +1386,8 @@ public final class OnDeviceSmoke extends Instrumentation {
             onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("voice-bg");}}}
     /**
      * A voice message's transcript folds: Hide makes it one line ("Transcript: …" with Show at its
-     * end), it stays folded when the chat is drawn again, and Show opens it.
+     * end), it stays folded when the chat is drawn again, and Show opens it. And it's searchable:
+     * a word from it finds the voice message, in the inbox's search too.
      */
     private void checkTranscriptFold(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();long now=System.currentTimeMillis();
         String words="So the plan for Saturday is that we meet at the trailhead around eight, hike up to the lake, eat lunch there, and then come down the long way past the waterfall before it gets dark.";
@@ -1406,8 +1407,18 @@ public final class OnDeviceSmoke extends Instrumentation {
             onMainCall(()->method("thread",String.class).invoke(a,"fold-check"));waitForIdleSync();
             check(waitForText("· Show",3000,true),"The transcript opened again when the chat was redrawn");
             pressText("· Show");check(waitForText("Hide",3000,true),"Show didn't open the transcript");
-            check(!tp.getBoolean("audfold|folded",false),"Opening the transcript wasn't remembered");}
-        finally{tp.edit().remove("audfold").remove("audfold|folded").commit();onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("fold-check");}}}
+            check(!tp.getBoolean("audfold|folded",false),"Opening the transcript wasn't remembered");
+            // Searchable: search finds the voice message by what was said in it.
+            Object[] hits={null};onMainCall(()->hits[0]=method("searchMessages",SmartText.Search.class).invoke(a,SmartText.parseSearch("waterfall"),60));
+            boolean found=false;for(Object o:(java.util.List<?>)hits[0]){JSONObject h=(JSONObject)o;if("ff-1".equals(h.optString("messageID"))&&h.optString("_transcript").contains("waterfall"))found=true;}
+            check(found,"Searching for a word in a transcript didn't find its voice message");
+            onMainCall(()->{method("inbox").invoke(a);field("query").set(a,"waterfall");return method("renderInbox").invoke(a);});
+            check(waitUntil(()->textStarting(a.getWindow().getDecorView(),"Voice message: ")!=null,5000),"The inbox's search doesn't show the voice message it found by its transcript");
+            shoot("shot-transcript-search");
+            onMainCall(()->{field("query").set(a,"");return method("renderInbox").invoke(a);});}
+        finally{tp.edit().remove("audfold").remove("audfold|folded").remove("audfold|msg").commit();onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("fold-check");}}}
+    private static android.widget.TextView textStarting(android.view.View v,String start){if(v instanceof android.widget.TextView&&((android.widget.TextView)v).getText().toString().startsWith(start)&&v.isShown())return (android.widget.TextView)v;
+        if(v instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++){android.widget.TextView hit=textStarting(((android.view.ViewGroup)v).getChildAt(i),start);if(hit!=null)return hit;}return null;}
     private static android.view.View described(android.view.View v,String what){if(what.contentEquals(String.valueOf(v.getContentDescription())))return v;
         if(v instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++){android.view.View hit=described(((android.view.ViewGroup)v).getChildAt(i),what);if(hit!=null)return hit;}return null;}
     /** Drags a chat head onto the × with real touches, to wherever the × shows up on screen. */
