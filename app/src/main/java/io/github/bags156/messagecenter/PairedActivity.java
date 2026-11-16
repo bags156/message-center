@@ -2960,7 +2960,7 @@ public class PairedActivity extends Activity {
         LinearLayout r=vertical();r.setPadding(dp(12),dp(12),dp(12),dp(12));pressable(r);
         String who=PairedProtocol.outgoing(m,c)?"You":senderFirst(m,c);
         r.addView(text((showChat&&c!=null?PairedProtocol.title(c)+" • ":"")+who+" • "+separatorStamp(PairedProtocol.time(m)),12,muted,false));
-        TextView t=text(m.has("_photoText")?"Text in picture: "+m.optString("_photoText"):displayBody(m),15,ink,false);t.setMaxLines(3);t.setEllipsize(TextUtils.TruncateAt.END);r.addView(t);
+        TextView t=text(m.has("_photoText")?"Text in picture: "+m.optString("_photoText"):m.has("_transcript")?"Voice message: "+m.optString("_transcript"):displayBody(m),15,ink,false);t.setMaxLines(3);t.setEllipsize(TextUtils.TruncateAt.END);r.addView(t);
         r.setOnClickListener(v->openMessage(m));return r;}
     private void openMessage(JSONObject m){String chatID=m.optString("conversationID");if(store.chat(chatID)==null){toast("That conversation isn't synced here.");return;}
         thread(chatID);if(store.message(m.optString("messageID"))==null){toast("That message isn't in the synced history.");return;}ui.post(()->showMessage(m));}
@@ -3589,22 +3589,44 @@ public class PairedActivity extends Activity {
     /** "Transcribing… 40%" labels on screen, updated without redrawing the chat. */
     private final Map<String,TextView> transcribingLabels=new HashMap<>();private final Map<String,String> transcribeProgress=new HashMap<>();
     /** Under a voice message: a Transcribe link, "Transcribing…", or the saved transcript. */
+    /** Under a voice message: a Transcribe link, "Transcribing…", or the transcript (which folds to one line, and opens again, as you choose). */
     private View transcriptView(JSONObject m,JSONObject media,boolean outgoing,ChatTheme theme){String id=PairedProtocol.string(media,"mediaID"),saved=Transcriber.saved(this,id);
         LinearLayout line=row();line.setGravity(outgoing?Gravity.END:Gravity.START);line.setPadding(dp(14),dp(5),dp(14),0);TextView t;
-        if(saved!=null){t=text(saved,14,ink,false);t.setTypeface(Typeface.create(Typeface.DEFAULT,Typeface.ITALIC));t.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));
-            t.setGravity(outgoing?Gravity.END:Gravity.START);t.setContentDescription("Transcript: "+saved);t.setOnLongClickListener(v->{messageSheet(m);return true;});}
+        if(saved!=null){LinearLayout box=vertical();box.setGravity(outgoing?Gravity.END:Gravity.START);foldableTranscript(box,m,id,saved,"Transcript",outgoing,theme);line.addView(box);return line;}
         else if(transcribing.contains(id)){t=text("Transcribing…"+transcribeProgress.getOrDefault(id,""),13,muted,false);transcribingLabels.put(id,t);}
         else if(id.isEmpty())return line;
         else if(Transcriber.partial(this,id)!=null){
             // Stopped partway: what it got, where it got to, and a way to carry on from there.
             Transcriber.Partial part=Transcriber.partial(this,id);LinearLayout box=vertical();box.setGravity(outgoing?Gravity.END:Gravity.START);
-            if(!part.text.isEmpty()){TextView so=text(part.text,14,ink,false);so.setTypeface(Typeface.create(Typeface.DEFAULT,Typeface.ITALIC));so.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));
-                so.setGravity(outgoing?Gravity.END:Gravity.START);so.setContentDescription("Transcript so far: "+part.text);so.setOnLongClickListener(v->{messageSheet(m);return true;});box.addView(so);}
+            if(!part.text.isEmpty())foldableTranscript(box,m,id,part.text,"Transcript so far",outgoing,theme);
             TextView more=text("Stopped at "+Transcriber.clock(part.untilMs)+(part.totalMs>0?" of "+Transcriber.clock(part.totalMs):"")+" · Finish transcribing",13,theme.accent(dark),true);more.setPadding(0,dp(4),0,dp(2));
             more.setContentDescription("Transcription stopped at "+Transcriber.clock(part.untilMs)+". Finish transcribing from there.");more.setOnClickListener(v->transcribe(media));box.addView(more);
             line.addView(box);return line;}
         else {t=text("Transcribe",14,theme.accent(dark),true);t.setPadding(0,dp(2),0,dp(2));t.setContentDescription("Transcribe this voice message");t.setOnClickListener(v->transcribe(media));}
         line.addView(t);return line;}
+    /**
+     * A transcript and its Hide / Show link. Folded, it's one line ("Transcript: the first words…");
+     * tapping that, or Show, opens it, and tapping the open text, or Hide, folds it again. It changes
+     * in place (the chat isn't redrawn), and each transcript keeps how you left it.
+     */
+    private void foldableTranscript(LinearLayout box,JSONObject m,String id,String words,String label,boolean outgoing,ChatTheme theme){
+        int wide=Math.round(getResources().getDisplayMetrics().widthPixels*0.72f);
+        TextView t=text("",14,ink,false);t.setTypeface(Typeface.create(Typeface.DEFAULT,Typeface.ITALIC));
+        t.setGravity(outgoing?Gravity.END:Gravity.START);t.setOnLongClickListener(v->{messageSheet(m);return true;});
+        TextView toggle=text("",13,theme.accent(dark),true);
+        // Folded: one line, with Show at its end. Open: the whole text, with Hide under it.
+        LinearLayout holder=new LinearLayout(this);holder.setGravity((outgoing?Gravity.END:Gravity.START)|Gravity.CENTER_VERTICAL);holder.addView(t);holder.addView(toggle);
+        Runnable[] show=new Runnable[1];
+        show[0]=()->{boolean folded=Transcriber.folded(this,id);
+            if(folded){holder.setOrientation(LinearLayout.HORIZONTAL);t.setText(label+": "+words);t.setMaxLines(1);t.setEllipsize(android.text.TextUtils.TruncateAt.END);t.setTextColor(muted);t.setMaxWidth(wide-dp(56));
+                toggle.setText("· Show");toggle.setPadding(dp(6),dp(2),0,dp(2));
+                t.setContentDescription(label+", folded: "+words+". Tap to show it all.");toggle.setContentDescription("Show the transcript");}
+            else{holder.setOrientation(LinearLayout.VERTICAL);t.setText(words);t.setMaxLines(Integer.MAX_VALUE);t.setEllipsize(null);t.setTextColor(ink);t.setMaxWidth(wide);
+                toggle.setText("Hide");toggle.setPadding(0,dp(3),0,dp(1));
+                t.setContentDescription(label+": "+words+". Tap to fold it.");toggle.setContentDescription("Hide the transcript");}};
+        View.OnClickListener flip=v->{Transcriber.fold(this,id,!Transcriber.folded(this,id));show[0].run();};
+        t.setOnClickListener(flip);toggle.setOnClickListener(flip);show[0].run();
+        box.addView(holder);}
     private void transcribe(JSONObject media){
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){pendingTranscription=media;
             toast("Android's speech recognizer needs microphone access, even to read a message. Nothing is recorded.");requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},78);return;}
@@ -3940,7 +3962,7 @@ public class PairedActivity extends Activity {
     // Search inside a chat
     private void searchChat(){LinearLayout content=vertical();EditText q=input("Search this conversation");q.setSingleLine(true);content.addView(clearable(q));gap(content,8);
         LinearLayout results=vertical();ScrollView rs=new ScrollView(this);rs.addView(results);content.addView(rs,new LinearLayout.LayoutParams(-1,Math.round(getResources().getDisplayMetrics().heightPixels*0.45f)));
-        TextView hint=text("Searches synced messages and indexed text in downloaded pictures. Use Details → Load older messages to include more history.",13,muted,false);results.addView(hint);
+        TextView hint=text("Searches synced messages, voice message transcripts and indexed text in downloaded pictures. Use Details → Load older messages to include more history.",13,muted,false);results.addView(hint);
         Dialog d=sheet(content);String id=chatId;JSONObject c=store.chat(id);int[] generation={0};
         q.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int cc,int a){}public void afterTextChanged(Editable e){}
             public void onTextChanged(CharSequence s,int st,int b,int cc){String query=s.toString();int g=++generation[0];
@@ -3948,7 +3970,7 @@ public class PairedActivity extends Activity {
                     if(query.trim().length()<2){results.addView(hint);return;}if(found.isEmpty()){results.addView(text("No matches in synced messages",14,muted,false));return;}
                     for(JSONObject m:found){LinearLayout r=vertical();r.setPadding(dp(4),dp(10),dp(4),dp(10));pressable(r);
                         r.addView(text((PairedProtocol.outgoing(m,c)?"You":senderName(m,c))+" • "+separatorStamp(PairedProtocol.time(m)),12,muted,false));
-                        TextView t=text(m.has("_photoText")?"Text in picture: "+m.optString("_photoText"):PairedProtocol.text(m),15,ink,false);t.setMaxLines(3);t.setEllipsize(TextUtils.TruncateAt.END);r.addView(t);
+                        TextView t=text(m.has("_photoText")?"Text in picture: "+m.optString("_photoText"):m.has("_transcript")?"Voice message: "+m.optString("_transcript"):PairedProtocol.text(m),15,ink,false);t.setMaxLines(3);t.setEllipsize(TextUtils.TruncateAt.END);r.addView(t);
                         r.setOnClickListener(v->{d.dismiss();showMessage(m);});results.addView(r);}});});}});
         q.requestFocus();}
     private void showMessage(JSONObject m){if(!screen.equals("chat"))return;int needed=store.countSince(chatId,PairedProtocol.time(m));if(needed>limit)limit=needed+20;
@@ -3958,6 +3980,8 @@ public class PairedActivity extends Activity {
     private List<JSONObject> withPictureHits(List<JSONObject> messages,String words,String chat,int max){
         List<JSONObject> out=new ArrayList<>(messages);Set<String> seen=new HashSet<>();for(JSONObject m:out)seen.add(m.optString("messageID"));
         for(JSONObject m:PhotoText.matches(this,store,words,chat,max))if(seen.add(m.optString("messageID")))out.add(m);
+        // Voice messages, by what was said in them.
+        for(JSONObject m:Transcriber.matches(this,store,words,chat,max))if(seen.add(m.optString("messageID")))out.add(m);
         out.sort((a,b)->Long.compare(PairedProtocol.time(b),PairedProtocol.time(a)));return out.size()>max?new ArrayList<>(out.subList(0,max)):out;
     }
     private void readPhotoText(JSONObject media){withFile(media,"Getting the photo…",file->{toast("Recognizing text on this phone…");PhotoText.scan(this,media,file,true,(recognized,error)->{

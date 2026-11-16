@@ -48,7 +48,51 @@ final class Transcriber {
     static String saved(Context context, String mediaID) { return mediaID.isEmpty() ? null : prefs(context).getString(mediaID, null); }
 
     /** Drops a saved transcript (whole or partway), to transcribe the message again. */
-    static void forget(Context context, String mediaID) { if (!mediaID.isEmpty()) prefs(context).edit().remove(mediaID).remove(mediaID + PART).remove(mediaID + UNTIL).remove(mediaID + TOTAL).apply(); }
+    static void forget(Context context, String mediaID) { if (!mediaID.isEmpty()) prefs(context).edit().remove(mediaID).remove(mediaID + PART).remove(mediaID + UNTIL).remove(mediaID + TOTAL).remove(mediaID + FOLDED).apply(); }
+
+    private static final String FOLDED = "|folded", MSG = "|msg";
+
+    /**
+     * Voice messages whose transcript (whole, or so far) has these words, newest first, each with
+     * "_transcript": the words around the match. chat keeps it to one conversation (blank for all).
+     */
+    static List<org.json.JSONObject> matches(Context c, PairedStore store, String words, String chat, int limit) {
+        List<org.json.JSONObject> out = new ArrayList<>();
+        String q = words.trim().toLowerCase(Locale.ROOT);
+        if (q.length() < 2) return out;
+        SharedPreferences p = prefs(c);
+        SharedPreferences.Editor remember = null;
+        for (java.util.Map.Entry<String, ?> e : p.getAll().entrySet()) {
+            String key = e.getKey(), mediaID;
+            if (!key.contains("|")) mediaID = key;
+            else if (key.endsWith(PART)) { mediaID = key.substring(0, key.length() - PART.length()); if (p.contains(mediaID)) continue; }
+            else continue;
+            if (!(e.getValue() instanceof String)) continue;
+            String text = (String) e.getValue();
+            int at = text.toLowerCase(Locale.ROOT).indexOf(q);
+            if (at < 0) continue;
+            // Which message it's in: remembered after the first look.
+            String known = p.getString(mediaID + MSG, "");
+            org.json.JSONObject m = known.isEmpty() ? null : store.message(known);
+            if (m == null) {
+                m = store.messageWithMedia(mediaID);
+                if (m == null) continue;
+                if (remember == null) remember = p.edit();
+                remember.putString(mediaID + MSG, m.optString("messageID"));
+            }
+            if (PairedProtocol.status(m).contains("DELETED")) continue;
+            if (chat != null && !chat.isEmpty() && !chat.equals(m.optString("conversationID"))) continue;
+            int start = Math.max(0, at - 45), end = Math.min(text.length(), start + 200);
+            MediaOutbox.put(m, "_transcript", (start > 0 ? "…" : "") + text.substring(start, end) + (end < text.length() ? "…" : ""));
+            out.add(m);
+        }
+        if (remember != null) remember.apply();
+        out.sort((a, b) -> Long.compare(PairedProtocol.time(b), PairedProtocol.time(a)));
+        return out.size() > limit ? new ArrayList<>(out.subList(0, limit)) : out;
+    }
+    /** Whether you folded this transcript to one line. */
+    static boolean folded(Context context, String mediaID) { return !mediaID.isEmpty() && prefs(context).getBoolean(mediaID + FOLDED, false); }
+    static void fold(Context context, String mediaID, boolean on) { if (mediaID.isEmpty()) return; SharedPreferences.Editor e = prefs(context).edit(); if (on) e.putBoolean(mediaID + FOLDED, true); else e.remove(mediaID + FOLDED); e.apply(); }
 
     private static final String PART = "|part", UNTIL = "|until", TOTAL = "|total";
     /** Said where a stretch couldn't be made out, instead of leaving it out. */
