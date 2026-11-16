@@ -1412,12 +1412,14 @@ public final class OnDeviceSmoke extends Instrumentation {
             Object[] hits={null};onMainCall(()->hits[0]=method("searchMessages",SmartText.Search.class,int.class).invoke(a,SmartText.parseSearch("waterfall"),60));
             boolean found=false;for(Object o:(java.util.List<?>)hits[0]){JSONObject h=(JSONObject)o;if("ff-1".equals(h.optString("messageID"))&&h.optString("_transcript").contains("waterfall"))found=true;}
             check(found,"Searching for a word in a transcript didn't find its voice message");
-            onMainCall(()->{method("inbox").invoke(a);field("query").set(a,"waterfall");return method("renderInbox").invoke(a);});
-            boolean listed=waitUntil(()->textStarting(a.getWindow().getDecorView(),"Voice message: ")!=null,10000);
-            shoot("shot-transcript-search");
-            Object[] state={null,null,null};runOnMainSync(()->{try{state[0]=field("searchedFor").get(a);state[1]=((java.util.List<?>)field("searchHits").get(a)).size();state[2]=field("screen").get(a);}catch(Exception ignored){}});
-            check(listed,"The inbox's search doesn't show the voice message it found by its transcript (searched for \""+state[0]+"\", "+state[1]+" hits, on "+state[2]+")");
-            onMainCall(()->{field("query").set(a,"");return method("renderInbox").invoke(a);});}
+            // The list (and its search) only shows once paired: a stand-in session, as the birthday check uses, removed after.
+            SessionVault vault=new SessionVault(ctx);boolean had=vault.exists();if(!had)vault.save("synthetic session for the transcript search check only");
+            try{onMainCall(()->{method("inbox").invoke(a);field("query").set(a,"waterfall");return method("renderInbox").invoke(a);});
+                boolean listed=waitUntil(()->textStarting(a.getWindow().getDecorView(),"Voice message: ")!=null,10000);
+                shoot("shot-transcript-search");
+                Object[] state={null,null,null};runOnMainSync(()->{try{state[0]=field("searchedFor").get(a);state[1]=((java.util.List<?>)field("searchHits").get(a)).size();state[2]=field("screen").get(a);}catch(Exception ignored){}});
+                check(listed,"The inbox's search doesn't show the voice message it found by its transcript (searched for \""+state[0]+"\", "+state[1]+" hits, on "+state[2]+")");}
+            finally{onMainCall(()->{field("query").set(a,"");return null;});if(!had)vault.clear();onMainCall(()->method("inbox").invoke(a));waitForIdleSync();}}
         finally{tp.edit().remove("audfold").remove("audfold|folded").remove("audfold|msg").commit();onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("fold-check");}}}
     private static android.widget.TextView textStarting(android.view.View v,String start){if(v instanceof android.widget.TextView&&((android.widget.TextView)v).getText().toString().startsWith(start)&&v.isShown())return (android.widget.TextView)v;
         if(v instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++){android.widget.TextView hit=textStarting(((android.view.ViewGroup)v).getChildAt(i),start);if(hit!=null)return hit;}return null;}
