@@ -48,7 +48,12 @@ final class Transcriber {
     static String saved(Context context, String mediaID) { return mediaID.isEmpty() ? null : prefs(context).getString(mediaID, null); }
 
     /** Drops a saved transcript (whole or partway), to transcribe the message again. */
-    static void forget(Context context, String mediaID) { if (!mediaID.isEmpty()) prefs(context).edit().remove(mediaID).remove(mediaID + PART).remove(mediaID + UNTIL).remove(mediaID + TOTAL).apply(); }
+    static void forget(Context context, String mediaID) { if (!mediaID.isEmpty()) prefs(context).edit().remove(mediaID).remove(mediaID + PART).remove(mediaID + UNTIL).remove(mediaID + TOTAL).remove(mediaID + FOLDED).apply(); }
+
+    private static final String FOLDED = "|folded";
+    /** Whether you folded this transcript to one line. */
+    static boolean folded(Context context, String mediaID) { return !mediaID.isEmpty() && prefs(context).getBoolean(mediaID + FOLDED, false); }
+    static void fold(Context context, String mediaID, boolean on) { if (mediaID.isEmpty()) return; SharedPreferences.Editor e = prefs(context).edit(); if (on) e.putBoolean(mediaID + FOLDED, true); else e.remove(mediaID + FOLDED); e.apply(); }
 
     private static final String PART = "|part", UNTIL = "|until", TOTAL = "|total";
     /** Said where a stretch couldn't be made out, instead of leaving it out. */
