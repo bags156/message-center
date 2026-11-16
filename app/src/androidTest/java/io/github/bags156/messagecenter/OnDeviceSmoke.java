@@ -1409,7 +1409,7 @@ public final class OnDeviceSmoke extends Instrumentation {
             pressText("· Show");check(waitForText("Hide",3000,true),"Show didn't open the transcript");
             check(!tp.getBoolean("audfold|folded",false),"Opening the transcript wasn't remembered");
             // Searchable: search finds the voice message by what was said in it.
-            Object[] hits={null};onMainCall(()->hits[0]=method("searchMessages",SmartText.Search.class).invoke(a,SmartText.parseSearch("waterfall"),60));
+            Object[] hits={null};onMainCall(()->hits[0]=method("searchMessages",SmartText.Search.class,int.class).invoke(a,SmartText.parseSearch("waterfall"),60));
             boolean found=false;for(Object o:(java.util.List<?>)hits[0]){JSONObject h=(JSONObject)o;if("ff-1".equals(h.optString("messageID"))&&h.optString("_transcript").contains("waterfall"))found=true;}
             check(found,"Searching for a word in a transcript didn't find its voice message");
             onMainCall(()->{method("inbox").invoke(a);field("query").set(a,"waterfall");return method("renderInbox").invoke(a);});
