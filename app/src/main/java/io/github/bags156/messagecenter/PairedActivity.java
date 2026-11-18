@@ -184,7 +184,7 @@ public class PairedActivity extends Activity {
     /** Tells ChatBubbles which chat you're in (its Details and Shared count), so that chat's bubble steps aside. */
     private void reportChatOnScreen(){if(bubble())return;boolean inChat=screen.equals("chat")||screen.equals("details")||screen.equals("media")||screen.equals("notes")||screen.equals("note");
         ChatBubbles.showing(this,started&&inChat?chatId:"");}
-    @Override protected void onResume(){super.onResume();resumed=true;Birthdays.loaded=()->{if(!resumed)return;if(screen.equals("inbox"))renderInbox();else if(screen.equals("chat"))renderBirthday();};MusicApps.updated=()->{if(resumed&&screen.equals("chat"))renderMessages(false);};timeFormat=null;dateFormat=null;PairedService.screenVisible(true);refreshDraft();updateTranslationChip();if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
+    @Override protected void onResume(){super.onResume();resumed=true;Birthdays.loaded=()->{if(!resumed)return;if(screen.equals("inbox"))renderInbox();else if(screen.equals("chat"))renderBirthday();};MusicApps.updated=()->{if(resumed&&screen.equals("chat"))renderMessages(false);};timeFormat=null;dateFormat=null;PairedService.screenVisible(true);refreshDraft();updateTranslationChip();refreshTranslationSummary(chatId);if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
         PhotoText.indexDownloaded(this,false);watchCalls(true);if(screen.equals("chat")&&!chatId.isEmpty())loadCalls(chatId);
         if(PairedService.ready()&&screen.equals("pair")){CookieManager.getInstance().removeAllCookies(null);inbox();askNotifications();}
         else if(!bubble()&&!PairedService.emoji().isEmpty()&&login==null)pairing();
@@ -206,7 +206,7 @@ public class PairedActivity extends Activity {
     // ---- Shared building blocks ----
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
     private void base(String name){
-        translationEpoch.incrementAndGet();ui.removeCallbacks(autoVisibleTranslations);ui.removeCallbacks(translationRedraw);translationChip=null;translationStatus=null;if(outgoingTranslation!=null)outgoingTranslation.dismiss();
+        translationEpoch.incrementAndGet();ui.removeCallbacks(autoVisibleTranslations);ui.removeCallbacks(translationRedraw);translationChip=null;translationStatus=null;detailTranslationSummary=null;if(outgoingTranslation!=null)outgoingTranslation.dismiss();
         if(screen.equals("note"))saveNote();noteField=null;noteTags=null;noteFiles=null;notePin=null;noteStatus=null;editing=null;
         if(!name.equals("chat"))stopInline();
         if(screen.equals("inbox")&&!name.equals("inbox")&&scroll!=null){inboxScrollY=scroll.getScrollY();inboxBack=inboxSpotNow();inboxKey=inboxKey();repliedSinceInbox=false;}
@@ -925,7 +925,7 @@ public class PairedActivity extends Activity {
         composerHint=PairedProtocol.rcs(c)?"RCS message":"Text message";composer=new EditText(this);composer.setHint(composerHint);composer.setTextColor(ink);composer.setHintTextColor(muted);composer.setTextSize(17*textScale);
         composer.setBackground(shape(surface,28));composer.setPadding(dp(22),dp(14),dp(22),dp(14));composer.setMaxLines(5);
         composer.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);composer.setText(drafts.getOrDefault(id,""));composer.setSelection(composer.length());
-        composer.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){remember();maybeSendTyping(s);updateComposeButton();updateQuickRow();ui.removeCallbacks(musicCheck);ui.postDelayed(musicCheck,350);}public void afterTextChanged(Editable e){}});
+        composer.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){remember();maybeSendTyping(s);updateComposeButton();updateQuickRow();updateTranslationChip();ui.removeCallbacks(musicCheck);ui.postDelayed(musicCheck,350);}public void afterTextChanged(Editable e){}});
         composer.setOnFocusChangeListener((v,focused)->updateQuickRow());
         composer.setOnReceiveContentListener(new String[]{"image/*","video/*"},keyboardContent);
         compose.addView(composer,new LinearLayout.LayoutParams(0,-2,1));
@@ -937,7 +937,7 @@ public class PairedActivity extends Activity {
             if(box.getMaxHeight()!=most)box.post(()->box.setMaxHeight(most));});
         sendButton=new ImageView(this);sendButton.setImageResource(R.drawable.ic_send);sendButton.setImageTintList(ColorStateList.valueOf(theme.onAccent(dark)));sendButton.setBackground(oval(theme.accent(dark)));
         sendButton.setPadding(dp(14),dp(14),dp(14),dp(14));sendButton.setContentDescription("Send");sendButton.setOnClickListener(v->sendOrRecord());sendButton.setOnLongClickListener(v->{if(micShowing())startRecording();else if(dictation==null)scheduleMessage();return true;});
-        LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(dp(52),dp(52));sl.setMarginStart(dp(8));compose.addView(sendButton,sl);root.addView(compose);renderAttachments();updateComposeButton();applyIncoming();Perf.end("open: screen",perf);
+        LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(dp(52),dp(52));sl.setMarginStart(dp(8));compose.addView(sendButton,sl);root.addView(compose);renderAttachments();updateComposeButton();updateTranslationChip();applyIncoming();Perf.end("open: screen",perf);
         // Read here, in a bubble or a chat head's window too: its notification goes (a bubble's is quieted, so the bubble stays).
         perf=Perf.start();chatSettings.setMarkedUnread(id,false);PairedService.clearNotification(this,id);Perf.end("open: notification",perf);
         if(back!=null){restoreSpot=back;renderMessages(false);}else renderMessages(true);perf=Perf.start();if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();
@@ -972,7 +972,7 @@ public class PairedActivity extends Activity {
         menuSwitch(settings,R.drawable.ic_pin,0xfff59e0b,"Pin to top",chatSettings.pinned(c),on->togglePin(store.chat(id)));
         String notify=chatSettings.muted(id)?"Muted":chatSettings.snoozed(id)?"Snoozed until "+snoozeLabel(id):"On";
         menuRow(settings,R.drawable.ic_bell,0xff8b5cf6,"Notifications",notify,false,closing.apply(()->notificationChoices(id)));
-        menuRow(settings,R.drawable.ic_info,0xff3b82f6,"Translation","Read and send languages",false,closing.apply(()->translationSettings(id)));
+        menuRow(settings,R.drawable.ic_translate,0xff3b82f6,"Translation",translationSummary(id),false,closing.apply(()->translationSettings(id)));
         menuSwitch(settings,R.drawable.ic_eye,0xff3b82f6,"Read receipts",chatSettings.receipts(id),on->toggleReceipts(id));
         gap(content,12);
         // Where it opens, and putting it away.
@@ -1028,6 +1028,7 @@ public class PairedActivity extends Activity {
     private void notificationChoices(String id){boolean muted=chatSettings.muted(id),snoozed=chatSettings.snoozed(id);List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
         labels.add(muted?"Unmute":"Mute");actions.add(()->toggleMute(id));
         if(!muted){labels.add(snoozed?"Snoozed until "+snoozeLabel(id)+": change\u2026":"Snooze\u2026");actions.add(()->snoozeMenu(id));}
+        String own=NotificationPrivacy.own(this,id);labels.add("Message previews: "+NotificationPrivacy.label(own.isEmpty()?NotificationPrivacy.mode(this):own));actions.add(()->chatNotificationContent(id));
         menuSheet("Notifications",labels,actions);}
     /** The first message on screen in the chat and how far down it sits, or null when you're at (or near) the newest message. */
     private Spot currentSpot(){if(scroll==null||items==null)return null;View content=scroll.getChildAt(0);int y=scroll.getScrollY();
@@ -1302,7 +1303,9 @@ public class PairedActivity extends Activity {
         float big=dp(22),small=dp(5);float top=joinPrev?small:big,bottomR=joinNext?small:big;
         GradientDrawable shape=new GradientDrawable();shape.setColor(outgoing?theme.bubble(dark):surface);
         shape.setCornerRadii(outgoing?new float[]{big,big,top,top,bottomR,bottomR,big,big}:new float[]{top,top,big,big,big,big,bottomR,bottomR});b.setBackground(shape);
-        TextView text=text(fallback!=null?fallback:body,17,outgoing?theme.onBubble(dark):ink,false);text.setTextSize(17*textScale);text.setLineSpacing(0,1.1f);text.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));b.addView(text);
+        String mid=m.optString("messageID");String[] tr=translations.get(mid);if(tr!=null&&!tr[3].equals(translationWords(m))){translations.remove(mid);tr=null;}
+        boolean translatedShown=tr!=null&&!showingOriginal.contains(mid);String displayed=translatedShown?tr[0]:(fallback!=null?fallback:body);
+        TextView text=text(displayed,17,outgoing?theme.onBubble(dark):ink,false);text.setTextSize(17*textScale);text.setLineSpacing(0,1.1f);text.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));b.addView(text);
         // One to three emoji alone are shown large, without a bubble.
         if(media.isEmpty()&&target.isEmpty()&&fallback==null){int jumbo=ChatText.emojiOnly(body);if(jumbo>0){text.setTextSize(jumbo==1?48:jumbo==2?40:34);b.setBackground(null);b.setPadding(dp(4),0,dp(4),0);}}
         TextScan scan=TextScan.of(text.getText().toString(),PairedProtocol.time(m)>0?PairedProtocol.time(m):System.currentTimeMillis());
@@ -1321,12 +1324,9 @@ public class PairedActivity extends Activity {
             if(added){text.setText(sp);text.setHighlightColor(Color.TRANSPARENT);text.setMovementMethod(LinkMovementMethod.getInstance());text.setOnLongClickListener(v->{messageSheet(m);return true;});}}
         if(text.getMovementMethod()!=null)holdLinks(text,m);
         b.setOnLongClickListener(v->{messageSheet(m);return true;});b.setOnClickListener(v->tapped(m,b));if(text.getMovementMethod()!=null)text.setOnClickListener(v->tapped(m,b));
-        String[] tr=translations.get(m.optString("messageID"));if(tr!=null&&!tr[3].equals(translationWords(m))){translations.remove(m.optString("messageID"));tr=null;}View translated=null;
-        if(tr!=null){String mid=m.optString("messageID");boolean original=showingOriginal.contains(mid);LinearLayout box=vertical();box.setPadding(dp(14),dp(4),dp(14),dp(2));
-            TextView head=text(original?"Show translation":"Translated from "+tr[1]+" to "+Translation.label(tr[2])+" \u00b7 Show original",11,muted,false);head.setGravity(outgoing?Gravity.END:Gravity.START);box.addView(head);
-            if(!original){TextView said=text(tr[0],15,ink,false);said.setGravity(outgoing?Gravity.END:Gravity.START);said.setTextIsSelectable(true);box.addView(said);}
-            box.setContentDescription(original?"Show translation":"Translated from "+tr[1]+": "+tr[0]);box.setOnClickListener(v->{if(!showingOriginal.remove(mid))showingOriginal.add(mid);renderMessages(false);});
-            translated=box;}
+        View translated=null;
+        if(tr!=null){TextView toggle=text(translatedShown?"Translated · Show original":"Original · Show "+Translation.label(tr[2])+" translation",12,theme.accent(dark),false);toggle.setPadding(dp(14),dp(6),dp(14),dp(6));toggle.setMinHeight(dp(36));toggle.setGravity(outgoing?Gravity.END:Gravity.START);pressable(toggle);
+            toggle.setContentDescription(translatedShown?"Translated from "+tr[1]+" to "+Translation.label(tr[2])+". Show original":"Show translation");toggle.setOnClickListener(v->{if(!showingOriginal.remove(mid))showingOriginal.add(mid);renderMessages(false);});translated=toggle;}
         if(m.optBoolean("_edited")){TextView ed=text("Edited",11,muted,false);ed.setPadding(dp(14),0,dp(14),dp(2));ed.setGravity(outgoing?Gravity.END:Gravity.START);wrap.addView(ed,new LinearLayout.LayoutParams(-1,-2));}
         line.addView(b,new LinearLayout.LayoutParams(-2,-2));wrap.addView(line,new LinearLayout.LayoutParams(-1,-2));bubbleViews.put(m.optString("messageID"),b);
         if(translated!=null)wrap.addView(translated,new LinearLayout.LayoutParams(-1,-2));
@@ -1635,9 +1635,10 @@ public class PairedActivity extends Activity {
             if(pinnedHere)pins.unpin(chatId,mid);else if(pins.pin(chatId,mid,pinText(m),PairedProtocol.time(m)))toast("Up to "+ChatPins.MAX+" pins per chat: the oldest was unpinned.");
             pinShown=0;renderPinBar();});
         String typed=PairedProtocol.text(m),plain=ChatText.replyFallbackBody(typed)!=null?ChatText.replyFallbackBody(typed):typed;
-        if(!plain.isEmpty())sheetAction(content,"Copy text",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Message",plain));});
+        if(!plain.isEmpty())sheetAction(content,translations.containsKey(m.optString("messageID"))?"Copy original":"Copy text",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Message",plain));});
         if(!plain.isEmpty())sheetAction(content,!translations.containsKey(m.optString("messageID"))?"Translate":showingOriginal.contains(m.optString("messageID"))?"Show translation":"Show original",()->{d[0].dismiss();translate(m,plain);});
         if(!plain.isEmpty()&&translations.containsKey(m.optString("messageID")))sheetAction(content,"Translate to another language…",()->{d[0].dismiss();translationChoices(m,plain,"",translationTarget());});
+        String[] translatedCopy=translations.get(m.optString("messageID"));if(translatedCopy!=null){String copy=translatedCopy[0];sheetAction(content,"Select translated text…",()->{d[0].dismiss();selectText(copy);});sheetAction(content,"Copy translation",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Translation",copy));});}
         // Google lets RCS messages be edited for 15 minutes, but only in its own app (not linked devices like this one).
         if(!plain.isEmpty()&&c!=null&&PairedProtocol.outgoing(m,c)&&PairedProtocol.rcs(c)&&System.currentTimeMillis()-PairedProtocol.time(m)<15*60_000L
             &&getPackageManager().getLaunchIntentForPackage(MessageListener.GOOGLE_MESSAGES)!=null)
@@ -1645,7 +1646,7 @@ public class PairedActivity extends Activity {
         // Links in the message can be copied on their own (one, or each of the first three).
         List<String> links=new ArrayList<>(new java.util.LinkedHashSet<>(ChatText.urls(plain)));
         for(String link:links.subList(0,Math.min(3,links.size())))sheetAction(content,links.size()==1?"Copy link":"Copy link: "+ChatText.shortLink(link),()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Link",link));});
-        if(!plain.isEmpty())sheetAction(content,"Select text…",()->{d[0].dismiss();selectText(plain);});
+        if(!plain.isEmpty())sheetAction(content,translations.containsKey(m.optString("messageID"))?"Select original text…":"Select text…",()->{d[0].dismiss();selectText(plain);});
         // Keep a message, photo or file in your notes about them: as a new note, or added to one you have.
         String[] noteTo=c==null?null:noteTarget(m,c);
         if(noteTo!=null&&!noteTo[0].isEmpty()&&(!plain.isEmpty()||!PairedProtocol.media(m).isEmpty())){String what=noteWhat(m),these=what.endsWith("s")?"these ":"this ";
@@ -1839,22 +1840,16 @@ public class PairedActivity extends Activity {
         // What's been shared here; filled in once it's been looked up.
         LinearLayout shared=vertical();content.addView(shared,new LinearLayout.LayoutParams(-1,-2));
         loadShared(id,sh->{if(screen.equals("details")&&chatId.equals(id))fillSharedSummary(shared,sh);});
-        gap(content,20);content.addView(text("This chat",14,muted,true));gap(content,4);
-        sheetAction(content,chatSettings.pinned(c)?"Unpin":"Pin to top",()->{togglePin(c);details();});
-        sheetAction(content,"Theme & background: "+chatSettings.theme(id).label+(chatSettings.background(id).isEmpty()?"":" + picture"),()->chooseTheme(id));
-        if(!group){String name=PairedProtocol.firstName(PairedProtocol.other(c));
-            sheetAction(content,"Their music app: "+theirMusicLabel(id),()->chooseTheirMusic(id,name));
-            TextView why=text("Songs you send "+name+" from another app change to the same song on theirs before they go",13,muted,false);why.setPadding(dp(8),0,dp(16),dp(8));content.addView(why);}
-        sheetAction(content,"Translation: read "+Translation.label(chatSettings.readLanguage(id))+" · send "+Translation.label(chatSettings.sendLanguage(id)),()->translationSettings(id));
-        sheetAction(content,"Read receipts: "+(chatSettings.receipts(id)?"on":"off"),()->toggleReceipts(id));
-        receiptStatusView=text("",13,muted,false);receiptStatusView.setPadding(dp(16),0,dp(16),dp(8));content.addView(receiptStatusView);updateReceiptStatus();
-        if(chatSettings.receipts(id)){sheetAction(content,"Retry read request / refresh Google setting",()->{JSONObject latest=store.latestIncoming(id);
-            if(latest!=null&&chatSettings.seen(id)>=PairedProtocol.time(latest))PairedService.viewedForReceipts(this,store.chat(id),latest,true);
-            PairedService.refreshReceiptSettings();updateReceiptStatus();});}
-        sheetAction(content,chatSettings.muted(id)?"Notifications: muted (tap to unmute)":"Notifications: on (tap to mute)",()->toggleMute(id));
-        sheetAction(content,chatSettings.snoozed(id)?"Snoozed until "+snoozeLabel(id)+" (tap to change)":"Snooze notifications…",()->snoozeMenu(id));
-        String ownShows=NotificationPrivacy.own(this,id);
-        sheetAction(content,"Notifications show: "+(ownShows.isEmpty()?"same as all chats ("+NotificationPrivacy.label(NotificationPrivacy.mode(this)).toLowerCase(Locale.ROOT)+")":NotificationPrivacy.label(ownShows).toLowerCase(Locale.ROOT)),()->chatNotificationContent(id));
+        gap(content,20);content.addView(text("Chat settings",14,muted,true));gap(content,8);LinearLayout preferences=menuGroup(content);
+        menuSwitch(preferences,R.drawable.ic_pin,0xfff59e0b,"Pin to top",chatSettings.pinned(c),on->{togglePin(c);details();});
+        preferenceRow(preferences,R.drawable.ic_palette,0xffec4899,"Theme & background",chatSettings.theme(id).label+(chatSettings.background(id).isEmpty()?"":" · custom background"),()->chooseTheme(id));
+        if(!group){String name=PairedProtocol.firstName(PairedProtocol.other(c)),app=theirMusicLabel(id);String summary=app.equals("off")?"Send links unchanged":app.equals("not known yet")?"Choose their preferred music app":app;
+            preferenceRow(preferences,R.drawable.ic_play,0xff10b981,"Music links",summary,()->chooseTheirMusic(id,name));}
+        detailTranslationSummary=preferenceRow(preferences,R.drawable.ic_translate,0xff3b82f6,"Translation",translationSummary(id),()->translationSettings(id));
+        menuSwitch(preferences,R.drawable.ic_eye,0xff3b82f6,"Send read receipts",chatSettings.receipts(id),on->toggleReceipts(id));
+        if(chatSettings.receipts(id)){receiptStatusView=text("",13,muted,false);receiptStatusView.setPadding(dp(60),0,dp(16),dp(10));preferences.addView(receiptStatusView);updateReceiptStatus();
+            sheetAction(content,"Read receipt status / retry…",()->{JSONObject latest=store.latestIncoming(id);if(latest!=null&&chatSettings.seen(id)>=PairedProtocol.time(latest))PairedService.viewedForReceipts(this,store.chat(id),latest,true);PairedService.refreshReceiptSettings();updateReceiptStatus();});}
+        preferenceRow(preferences,R.drawable.ic_bell,0xff8b5cf6,"Notifications",chatSettings.muted(id)?"Muted":chatSettings.snoozed(id)?"Paused until "+snoozeLabel(id):"On",()->notificationChoices(id));gap(content,14);
         if(group){
             // Google's connection can rename RCS groups for everyone; a group photo can only be set here, on this phone.
             if(PairedProtocol.rcs(c))sheetAction(content,"Rename group…",()->renameGroup(id));
@@ -1905,34 +1900,53 @@ public class PairedActivity extends Activity {
         if(auto){labels.add((selected.isEmpty()?"✓ ":"")+"Detect automatically");actions.add(()->chosen.accept(""));}
         for(String code:Translation.languages(this)){labels.add((code.equals(selected)?"✓ ":"")+Translation.label(code));actions.add(()->chosen.accept(code));}
         menuSheet(title,labels,actions);}
-    private void translationSettings(String id){LinearLayout box=vertical();Dialog[] d=new Dialog[1];
-        box.addView(text("Translation for this chat",20,ink,true));gap(box,8);
-        box.addView(text("Translations stay on your phone. Language packs download the first time (about 20–40 MB per direction). Originals stay available. Sending always asks you to review the translation.",14,muted,false));gap(box,12);
-        sheetAction(box,"Read incoming in: "+Translation.label(chatSettings.readLanguage(id)),()->{d[0].dismiss();languagePicker("Auto-translate incoming messages",chatSettings.readLanguage(id),true,false,code->{
-            chatSettings.setReadLanguage(id,code);autoTranslationAttempts.clear();if(code.isEmpty()&&translationStatus!=null)translationStatus.setVisibility(View.GONE);if(chatId.equals(id)){updateTranslationChip();queueAutoTranslation();}translationSettings(id);});});
-        sheetAction(box,"Default send language: "+Translation.label(chatSettings.sendLanguage(id)),()->{d[0].dismiss();languagePicker("Review outgoing messages in",chatSettings.sendLanguage(id),true,false,code->{
-            chatSettings.setSendLanguage(id,code);if(chatId.equals(id)){composeLanguageOverride=false;composeLanguage=code;composeTranslateChat=id;updateTranslationChip();}translationSettings(id);});});
-        d[0]=sheet(box);}
+    private TextView detailTranslationSummary;
+    private String translationSummary(String id){String read=chatSettings.readLanguage(id),send=chatSettings.sendLanguage(id);
+        if(read.isEmpty()&&send.isEmpty())return "Automatic translation is off";
+        return (read.isEmpty()?"Receive as written":"Read in "+Translation.label(read))+" · "+(send.isEmpty()?"Send as written":"Send in "+Translation.label(send));}
+    /** A title and short description instead of a long settings sentence with values mixed in. */
+    private TextView preferenceRow(LinearLayout group,int icon,int color,String title,String summary,Runnable action){
+        LinearLayout r=row();r.setPadding(dp(14),dp(12),dp(14),dp(12));r.setMinimumHeight(dp(64));r.addView(menuChip(icon,color),new LinearLayout.LayoutParams(dp(32),dp(32)));
+        LinearLayout labels=vertical();labels.setPadding(dp(14),0,dp(10),0);labels.addView(text(title,16,ink,false));TextView value=text(summary,13,muted,false);value.setMaxLines(2);value.setEllipsize(TextUtils.TruncateAt.END);labels.addView(value);
+        r.addView(labels,new LinearLayout.LayoutParams(0,-2,1));r.addView(text("›",22,muted,false));pressable(r);r.setContentDescription(title+": "+summary);r.setOnClickListener(v->action.run());addSettingRow(group,r);return value;}
+    private void refreshTranslationSummary(String id){if(detailTranslationSummary!=null&&chatId.equals(id)){String summary=translationSummary(id);detailTranslationSummary.setText(summary);((View)((View)detailTranslationSummary.getParent()).getParent()).setContentDescription("Translation: "+summary);}}
+    private void setReadingLanguage(String id,String code){chatSettings.setReadLanguage(id,code);autoTranslationAttempts.clear();if(code.isEmpty()&&translationStatus!=null)translationStatus.setVisibility(View.GONE);
+        if(chatId.equals(id)){updateTranslationChip();queueAutoTranslation();}refreshTranslationSummary(id);}
+    private void setSendingLanguage(String id,String code){chatSettings.setSendLanguage(id,code);if(chatId.equals(id)){composeLanguageOverride=false;composeLanguage=code;composeTranslateChat=id;updateTranslationChip();}refreshTranslationSummary(id);}
+    private Dialog translationSheet(View content){int available=Math.min(getWindowManager().getCurrentWindowMetrics().getBounds().height(),root.getHeight()>0?root.getHeight():Integer.MAX_VALUE);final int maxHeight=Math.max(dp(180),Math.round(available*.72f));
+        ScrollView review=new ScrollView(this){@Override protected void onMeasure(int w,int h){super.onMeasure(w,View.MeasureSpec.makeMeasureSpec(Math.min(View.MeasureSpec.getSize(h),maxHeight),View.MeasureSpec.AT_MOST));}};
+        review.addView(content);return sheet(review,WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);}
+    private Dialog translationSettings(String id){LinearLayout box=vertical();Dialog[] d={null};String read=chatSettings.readLanguage(id),send=chatSettings.sendLanguage(id);
+        box.addView(text("Translation",20,ink,true));gap(box,6);box.addView(text("Language settings for this conversation",13,muted,false));gap(box,18);
+        box.addView(text("Messages I receive",14,muted,true));gap(box,6);LinearLayout incoming=menuGroup(box);
+        menuSwitch(incoming,R.drawable.ic_translate,0xff3b82f6,"Translate automatically",!read.isEmpty(),on->{setReadingLanguage(id,on?Translation.defaultLanguage(this):"");d[0].dismiss();translationSettings(id);});
+        if(!read.isEmpty())preferenceRow(incoming,R.drawable.ic_eye,0xff3b82f6,"Read in",Translation.label(read),()->languagePicker("Read messages in",read,false,false,code->{setReadingLanguage(id,code);d[0].dismiss();translationSettings(id);}));
+        TextView incomingHelp=text(read.isEmpty()?"Show received messages as written.":"Detect their language and show the "+Translation.label(read)+" translation.",13,muted,false);incomingHelp.setPadding(dp(8),dp(7),dp(8),0);box.addView(incomingHelp);gap(box,18);
+        box.addView(text("Messages I send",14,muted,true));gap(box,6);LinearLayout outgoing=menuGroup(box);
+        preferenceRow(outgoing,R.drawable.ic_send,0xff8b5cf6,"Send in",send.isEmpty()?"As written":Translation.label(send),()->sendingLanguagePicker("Default sending language",send,code->{setSendingLanguage(id,code);d[0].dismiss();translationSettings(id);},null));
+        TextView outgoingHelp=text(send.isEmpty()?"Send exactly what I type. Choose a language above to translate my messages.":"Write in "+Translation.label(Translation.defaultLanguage(this))+"; review the "+Translation.label(send)+" version before sending.",13,muted,false);outgoingHelp.setPadding(dp(8),dp(7),dp(8),0);box.addView(outgoingHelp);gap(box,18);
+        box.addView(text("You can also translate individual messages. Translation stays on this phone; language packs download once.",12,muted,false));d[0]=translationSheet(box);return d[0];}
+    private void sendingLanguagePicker(String title,String selected,java.util.function.Consumer<String> chosen,Runnable settings){List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
+        labels.add((selected.isEmpty()?"✓ ":"")+"Send as written");actions.add(()->chosen.accept(""));
+        for(String code:Translation.languages(this)){labels.add((code.equals(selected)?"✓ ":"")+Translation.label(code));actions.add(()->chosen.accept(code));}
+        if(settings!=null){labels.add("Chat translation settings…");actions.add(settings);}menuSheet(title,labels,actions);}
     private void resetSentLanguage(){composeLanguageOverride=false;composeLanguage=chatSettings.sendLanguage(chatId);updateTranslationChip();}
     private void updateTranslationChip(){if(translationChip==null)return;
         if(!composeTranslateChat.equals(chatId)){composeTranslateChat=chatId;composeLanguageOverride=false;}if(!composeLanguageOverride)composeLanguage=chatSettings.sendLanguage(chatId);
-        String read=chatSettings.readLanguage(chatId);
-        translationChip.setText((composeLanguage.isEmpty()?"Translate draft":("Send in "+Translation.label(composeLanguage)+" · review"))+(read.isEmpty()?"":"  ·  Read in "+Translation.label(read)));
-        translationChip.setContentDescription(translationChip.getText()+". Translation language options");}
-    private void composeTranslationMenu(){String id=chatId;List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
-        labels.add("This message: "+(composeLanguage.isEmpty()?"original language":Translation.label(composeLanguage)));actions.add(()->languagePicker("Language for this message",composeLanguage,true,false,code->{if(!chatId.equals(id))return;composeLanguageOverride=true;composeLanguage=code;updateTranslationChip();}));
-        labels.add("Translate and preview this draft…");actions.add(()->languagePicker("Preview draft in",composeLanguage.isEmpty()?translationTarget():composeLanguage,false,false,code->{if(chatId.equals(id)){composeLanguageOverride=true;composeLanguage=code;updateTranslationChip();previewOutgoing(false);}}));
-        labels.add("Chat language defaults…");actions.add(()->translationSettings(id));menuSheet("Translation",labels,actions);}
+        boolean typed=composer!=null&&!composer.getText().toString().trim().isEmpty();translationChip.setVisibility(!composeLanguage.isEmpty()||typed?View.VISIBLE:View.GONE);
+        translationChip.setText(composeLanguage.isEmpty()?"Translate…":"Send in "+Translation.label(composeLanguage)+" ▾");translationChip.setContentDescription(composeLanguage.isEmpty()?"Translate this message":"Sending language: "+Translation.label(composeLanguage)+". Change for this message");}
+    private void composeTranslationMenu(){String id=chatId;sendingLanguagePicker("Send this message in",composeLanguage,code->{if(!chatId.equals(id))return;composeLanguageOverride=true;composeLanguage=code;updateTranslationChip();
+        if(!code.isEmpty()&&composer!=null&&!composer.getText().toString().trim().isEmpty())previewOutgoing(false);},()->translationSettings(id));}
     private String translationFiles(){StringBuilder key=new StringBuilder();for(Outgoing o:outgoing)if(!o.sending)key.append(o.file.getPath()).append(':').append(System.identityHashCode(o)).append(';');return key.toString();}
     private void previewOutgoing(boolean scheduling){if(composer==null||outgoingTranslation!=null)return;String original=composer.getText().toString();
         if(original.trim().isEmpty()){toast("Type a message to translate first.");return;}
         String id=chatId,reply=replyId,files=translationFiles(),target=composeLanguage;int epoch=translationEpoch.get();View focused=getCurrentFocus();if(focused!=null)hideKeyboard(focused);
         java.util.concurrent.atomic.AtomicBoolean cancelled=new java.util.concurrent.atomic.AtomicBoolean();
-        LinearLayout content=vertical();content.addView(text("Review in "+Translation.label(target),20,ink,true));gap(content,8);
+        LinearLayout content=vertical();content.addView(text("Send in "+Translation.label(target),20,ink,true));gap(content,8);
         TextView status=text("Detecting language on your phone…",13,muted,false);content.addView(status);gap(content,8);
         TextView result=text("",17,ink,false);result.setTextIsSelectable(true);result.setPadding(dp(12),dp(12),dp(12),dp(12));result.setBackground(shape(surface,12));content.addView(result,new LinearLayout.LayoutParams(-1,-2));
-        TextView originalText=text("Your draft: "+original,13,muted,false);originalText.setMaxLines(3);content.addView(originalText);gap(content,8);
-        final Translation.Result[] translated={null};final String[] source={""};final Dialog[] dialog={null};java.util.concurrent.atomic.AtomicInteger request=new java.util.concurrent.atomic.AtomicInteger();
+        TextView originalText=text("You wrote: "+original,13,muted,false);originalText.setMaxLines(3);content.addView(originalText);gap(content,8);
+        final Translation.Result[] translated={null};final String[] source={""};final Dialog[] dialog={null};LinearLayout options=vertical();options.setVisibility(View.GONE);java.util.concurrent.atomic.AtomicInteger request=new java.util.concurrent.atomic.AtomicInteger();
         TextView send=button(scheduling?"Review translation to schedule":"Review translation to send",true,()->{
             if(translated[0]==null)return;
             if(composer==null||!TranslationPlan.current(chatId,composer.getText().toString(),replyId,translationFiles(),id,original,reply,files)){
@@ -1943,25 +1957,23 @@ public class PairedActivity extends Activity {
             Translation.worker.execute(()->{try{Translation.Result answer=Translation.translate(getApplicationContext(),original,hint,target,
                 step->ui.post(()->{if(!cancelled.get()&&request.get()==attempt)status.setText(step);}),()->cancelled.get()||translationEpoch.get()!=epoch||request.get()!=attempt);
                 ui.post(()->{if(cancelled.get()||request.get()!=attempt||translationEpoch.get()!=epoch||isDestroyed())return;translated[0]=answer;result.setText(answer.text);
-                    status.setText(answer.same?"Already in "+Translation.label(target):Translation.label(answer.from)+" → "+Translation.label(target)+" · offline translation");
+                    status.setText(answer.same?"Already in "+Translation.label(target):Translation.label(answer.from)+" → "+Translation.label(target));
                     send.setText(scheduling?"Schedule in "+Translation.label(target):"Send in "+Translation.label(target));send.setEnabled(true);});
-            }catch(java.util.concurrent.CancellationException ignored){}catch(Exception e){ui.post(()->{if(!cancelled.get()&&request.get()==attempt)status.setText(e.getMessage()==null?"Couldn't translate. Your draft is unchanged.":e.getMessage());});}});};
-        sheetAction(content,"Retry translation",()->run[0].run());
-        sheetAction(content,"Message language: detect / choose…",()->languagePicker("Your draft's language",source[0],false,true,code->{source[0]=code;if(!cancelled.get())run[0].run();}));
-        sheetAction(content,"Keep editing original",()->dialog[0].dismiss());
-        int available=Math.min(getWindowManager().getCurrentWindowMetrics().getBounds().height(),root.getHeight()>0?root.getHeight():Integer.MAX_VALUE);final int maxHeight=Math.max(dp(180),Math.round(available*.72f));
-        ScrollView review=new ScrollView(this){@Override protected void onMeasure(int w,int h){super.onMeasure(w,View.MeasureSpec.makeMeasureSpec(Math.min(View.MeasureSpec.getSize(h),maxHeight),View.MeasureSpec.AT_MOST));}};review.addView(content);
-        dialog[0]=sheet(review,WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);outgoingTranslation=dialog[0];dialog[0].setOnDismissListener(d->{cancelled.set(true);if(outgoingTranslation==dialog[0])outgoingTranslation=null;});run[0].run();}
+            }catch(java.util.concurrent.CancellationException ignored){}catch(Exception e){ui.post(()->{if(!cancelled.get()&&request.get()==attempt){status.setText(e.getMessage()==null?"Couldn't translate. Your draft is unchanged.":e.getMessage());options.setVisibility(View.VISIBLE);}});}});};
+        sheetAction(content,"Edit message",()->dialog[0].dismiss());
+        sheetAction(content,"Translation options…",()->options.setVisibility(options.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE));content.addView(options);
+        sheetAction(options,"Translate again",()->run[0].run());sheetAction(options,"Original language: detect / choose…",()->languagePicker("Original message language",source[0],false,true,code->{source[0]=code;if(!cancelled.get())run[0].run();}));
+        dialog[0]=translationSheet(content);outgoingTranslation=dialog[0];dialog[0].setOnDismissListener(d->{cancelled.set(true);if(outgoingTranslation==dialog[0])outgoingTranslation=null;});run[0].run();}
     /** Any message, including one you sent: choose the target and optionally override detection. */
     private void translate(JSONObject m,String words){String mid=m.optString("messageID");
         if(translations.containsKey(mid)){if(!showingOriginal.remove(mid))showingOriginal.add(mid);renderMessages(false);return;}
         translationChoices(m,words,"",translationTarget());}
     private void translationChoices(JSONObject message,String words,String source,String target){LinearLayout content=vertical();Dialog[] d={null};
         content.addView(text("Translate message",20,ink,true));gap(content,8);
-        sheetAction(content,"From: "+(source.isEmpty()?"Detect automatically":Translation.label(source)),()->{d[0].dismiss();languagePicker("Message language",source,false,true,code->translationChoices(message,words,code,target));});
-        sheetAction(content,"To: "+Translation.label(target),()->{d[0].dismiss();languagePicker("Translate to",target,false,false,code->translationChoices(message,words,source,code));});
+        sheetAction(content,"Original language: "+(source.isEmpty()?"Automatic":Translation.label(source)),()->{d[0].dismiss();languagePicker("Message language",source,false,true,code->translationChoices(message,words,code,target));});
+        sheetAction(content,"Translate into: "+Translation.label(target),()->{d[0].dismiss();languagePicker("Translate to",target,false,false,code->translationChoices(message,words,source,code));});
         TextView why=text("Shown here in the chat. Language packs download once; translation then works offline.",13,muted,false);content.addView(why);
-        sheetAction(content,"Translate to "+Translation.label(target),()->{d[0].dismiss();translateMessage(message,words,source,target);});d[0]=sheet(content);}
+        sheetAction(content,"Translate to "+Translation.label(target),()->{d[0].dismiss();translateMessage(message,words,source,target);});d[0]=translationSheet(content);}
     private void translateMessage(JSONObject message,String words,String source,String target){String id=chatId,mid=message.optString("messageID");int epoch=translationEpoch.get();
         java.util.concurrent.atomic.AtomicBoolean cancelled=new java.util.concurrent.atomic.AtomicBoolean();LinearLayout content=vertical();content.addView(text("Translating to "+Translation.label(target),20,ink,true));
         TextView status=text("Detecting language on your phone…",14,muted,false);content.addView(status);Dialog progress=sheet(content);progress.setOnDismissListener(d->cancelled.set(true));

@@ -909,7 +909,7 @@ public final class OnDeviceSmoke extends Instrumentation {
             finally{none.delete();}
             runOnMainSync(()->{try{((android.widget.EditText)composer.get(a)).setText("");}catch(Exception e){throw new RuntimeException(e);}});
             onMainCall(()->method("details").invoke(a));waitForIdleSync();
-            int[] rows={0};runOnMainSync(()->{java.util.ArrayList<android.view.View> hits=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(hits,"Their music app: Apple Music (from songs they've sent)",android.view.View.FIND_VIEWS_WITH_TEXT);rows[0]=hits.size();});
+            int[] rows={0};runOnMainSync(()->{java.util.ArrayList<android.view.View> hits=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(hits,"Music links: Apple Music (from songs they've sent)",android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);rows[0]=hits.size();});
             check(rows[0]>0,"The chat's details don't say Theo uses Apple Music");shoot("shot-their-music-details");}
         finally{onMainCall(()->method("inbox").invoke(a));waitForIdleSync();found.delete();
             ctx.getSharedPreferences("chat-settings",0).edit().remove("music_learned:their-music").remove("music_their:their-music").commit();
@@ -1075,8 +1075,10 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(shown,"Offline translation did not appear in the chat: "+Translation.lastStep);note("PROBE translate offline engine passed: "+Translation.lastStep);
             if(shown){String[] english={""};onMainCall(()->{String[] result=((java.util.Map<String,String[]>)field("translations").get(a)).get("sr-es");english[0]=result==null?"":result[0];return null;});
                 check(english[0].toLowerCase(java.util.Locale.ROOT).contains("where")&&!english[0].equals(PairedProtocol.text(spanish)),"The Spanish message wasn't translated into English");
+                check(exactText(a,english[0])!=null&&exactText(a,PairedProtocol.text(spanish))==null,"Translation wasn't the single visible bubble version");
+                try(PairedStore store=new PairedStore(ctx)){check(PairedProtocol.text(store.message("sr-es")).equals(PairedProtocol.text(spanish)),"Displaying a translation changed the stored original");}
                 shoot("shot-translated");android.view.View translatedToggle=described(a,"Translated from");runOnMainSync(translatedToggle::performClick);waitForIdleSync();
-                check(described(a,"Show translation")!=null,"Tapping a translation didn't show the original");}
+                check(described(a,"Show translation")!=null&&exactText(a,PairedProtocol.text(spanish))!=null&&exactText(a,english[0])==null,"Tapping Show original did not swap back to the original bubble");}
             checkTranslationPreview(a);
             check(!a.isFinishing(),"The chat closed after Translate");}
         finally{Thread.sleep(500);if(!a.hasWindowFocus()){ctx.startActivity(new android.content.Intent(ctx,PairedActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK|android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));Thread.sleep(1500);}
@@ -1114,8 +1116,18 @@ public final class OnDeviceSmoke extends Instrumentation {
         boolean[] guarded={false};runOnMainSync(()->{for(android.widget.TextView v:viewsOf(dialog[0].getWindow().getDecorView(),android.widget.TextView.class))if(v.getText().toString().contains("changed. Close this preview"))guarded[0]=true;dialog[0].dismiss();});
         check(guarded[0],"Editing the draft did not invalidate its translated preview");
         onMainCall(()->{((android.widget.EditText)field("composer").get(a)).setText("");new ChatSettings(ctx).setReadLanguage("sr-chat","");new ChatSettings(ctx).setSendLanguage("sr-chat","");return null;});
-        note("PROBE translation: native Spanish→English, automatic inline reading, English→Spanish preview and stale-draft guard passed; no messages sent");
+        checkTranslationSettingsPictures(a);
+        note("PROBE translation: native Spanish→English, single-version bubble + original toggle, automatic reading, English→Spanish preview and stale-draft guard passed; no messages sent");
     }
+    private void checkTranslationSettingsPictures(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();ChatSettings settings=new ChatSettings(ctx);android.app.Dialog[] dialog={null};
+        settings.setReadLanguage("sr-chat","en");settings.setSendLanguage("sr-chat","es");
+        try{
+            onMainCall(()->{dialog[0]=(android.app.Dialog)method("translationSettings",String.class).invoke(a,"sr-chat");return null;});shoot("shot-translation-settings");runOnMainSync(()->dialog[0].dismiss());
+            PairedActivity.blackForPictures=true;onMainCall(()->method("details").invoke(a));waitForIdleSync();android.view.View translation=described(a,"Translation:");check(translation!=null,"Translation setting is missing from Details");
+            runOnMainSync(()->{try{android.view.ViewParent parent=translation.getParent();while(parent!=null&&!(parent instanceof android.widget.ScrollView))parent=parent.getParent();android.widget.ScrollView scroll=(android.widget.ScrollView)parent;android.graphics.Rect rect=new android.graphics.Rect();translation.getDrawingRect(rect);((android.view.ViewGroup)scroll.getChildAt(0)).offsetDescendantRectToMyCoords(translation,rect);scroll.scrollTo(0,Math.max(0,rect.top-Math.round(140*ctx.getResources().getDisplayMetrics().density)));}catch(Exception e){throw new RuntimeException(e);}});
+            shoot("shot-translation-details-dark");onMainCall(()->{dialog[0]=(android.app.Dialog)method("translationSettings",String.class).invoke(a,"sr-chat");return null;});shoot("shot-translation-settings-dark");runOnMainSync(()->dialog[0].dismiss());
+        }finally{PairedActivity.blackForPictures=false;settings.setReadLanguage("sr-chat","");settings.setSendLanguage("sr-chat","");onMainCall(()->method("thread",String.class).invoke(a,"sr-chat"));
+            onMainCall(()->{check(((android.widget.TextView)field("translationChip").get(a)).getVisibility()==android.view.View.GONE,"Empty, untranslated chat still shows a translation control");return null;});}}
     /** The first text on screen that says exactly this, or null. */
     private android.widget.TextView exactText(PairedActivity a,String words)throws Exception{android.widget.TextView[] hit={null};
         runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(found,words,android.view.View.FIND_VIEWS_WITH_TEXT);

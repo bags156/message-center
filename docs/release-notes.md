@@ -1,8 +1,9 @@
-Message Center 1.5.70.
+Message Center 1.5.71.
 
-- Translate directly inside a chat, including automatic language detection and an optional per-chat language for incoming messages. Tap Show original at any time.
-- Translate any text message, your own sent messages, or selected words into a language you choose.
-- Choose a sending language for this message or a default for the chat. Review the translated preview before sending or scheduling; your typed draft stays intact. A changed draft, reply or attachment set requires a fresh preview.
-- Translation runs offline on the phone with a source-built open source engine, without depending on a ColorOS service or opening another app. Thirty languages initially; language packs download once from Mozilla (about 20–40 MB per direction). Message text is never uploaded for translation.
+- Translation settings now clearly separate Messages I receive from Messages I send. Incoming translation has an automatic-translation switch and reading language; outgoing messages have a Send in language choice, with As written to leave your text alone.
+- Translated text appears inside the message bubble. Show original switches that same bubble back, with no second copy of the message underneath. Copy original and Copy translation are clearly labeled.
+- The composer hides its translation control when the message is empty and no sending language is set. While typing, Translate… opens a direct language choice for that message; a saved sending language shows Send in Spanish (or your chosen language).
+- Chat Details groups preferences into clear cards with short descriptions. Music links, translation, read receipts and notifications have distinct rows; notification previews and snooze live under Notifications.
+- The sending preview puts the translated text, your original and Send together. Retry and source-language controls are tucked under Translation options. A changed draft, reply or attachment set still requires a fresh preview.
 
-Open chat ⋮ → Translation, or tap Translate draft above the composer. Reading and sending defaults start off. Install over the existing app through Obtainium; pairing, conversations and settings are retained.
+Update through Obtainium over the existing app. Your pairing, messages, language preferences and downloaded language packs are retained.
