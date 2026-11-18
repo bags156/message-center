@@ -213,6 +213,8 @@ jobs:
             note*.png
             android-runtime.txt
             android-crash.txt
+            shot-translated.png
+            shot-translation-preview.png
             emulator.log
           retention-days: 14
 

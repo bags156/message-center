@@ -1073,7 +1073,9 @@ public final class OnDeviceSmoke extends Instrumentation {
             until=android.os.SystemClock.uptimeMillis()+45000;boolean shown=false;
             while(android.os.SystemClock.uptimeMillis()<until&&!(shown=described(a,"Translated from")!=null))Thread.sleep(300);
             check(shown,"Offline translation did not appear in the chat: "+Translation.lastStep);note("PROBE translate offline engine passed: "+Translation.lastStep);
-            if(shown){shoot("shot-translated");runOnMainSync(()->described(a,"Translated from").performClick());waitForIdleSync();
+            if(shown){String[] english={""};onMainCall(()->{String[] result=((java.util.Map<String,String[]>)field("translations").get(a)).get("sr-es");english[0]=result==null?"":result[0];return null;});
+                check(english[0].toLowerCase(java.util.Locale.ROOT).contains("where")&&!english[0].equals(PairedProtocol.text(spanish)),"The Spanish message wasn't translated into English");
+                shoot("shot-translated");android.view.View translatedToggle=described(a,"Translated from");runOnMainSync(translatedToggle::performClick);waitForIdleSync();
                 check(described(a,"Show translation")!=null,"Tapping a translation didn't show the original");}
             checkTranslationPreview(a);
             check(!a.isFinishing(),"The chat closed after Translate");}
@@ -1103,7 +1105,9 @@ public final class OnDeviceSmoke extends Instrumentation {
         android.app.Dialog[] dialog={null};android.widget.TextView[] send={null};until=android.os.SystemClock.uptimeMillis()+45000;
         do{runOnMainSync(()->{try{dialog[0]=(android.app.Dialog)field("outgoingTranslation").get(a);if(dialog[0]!=null)for(android.widget.TextView v:viewsOf(dialog[0].getWindow().getDecorView(),android.widget.TextView.class))if("Send in Spanish".contentEquals(v.getText())&&v.isEnabled())send[0]=v;}catch(Exception e){throw new RuntimeException(e);}});
             if(send[0]!=null)break;Thread.sleep(200);}while(android.os.SystemClock.uptimeMillis()<until);
-        check(send[0]!=null,"The translated composer preview never became ready");shoot("shot-translation-preview");
+        check(send[0]!=null,"The translated composer preview never became ready");String[] preview={""};
+        runOnMainSync(()->{for(android.widget.TextView v:viewsOf(dialog[0].getWindow().getDecorView(),android.widget.TextView.class))if(v.isTextSelectable())preview[0]=v.getText().toString();});
+        check(!preview[0].isEmpty()&&!original.equals(preview[0]),"The Spanish draft preview just echoed the English original");shoot("shot-translation-preview");
         onMainCall(()->{check(original.contentEquals(((android.widget.EditText)field("composer").get(a)).getText()),"Translation overwrote the typed draft");
             ((android.widget.EditText)field("composer").get(a)).setText("Changed while the translation was open");send[0].performClick();return null;});
         check(new Outbox(ctx).forChat("sr-chat").size()==before,"A stale translated preview entered the outbox");
