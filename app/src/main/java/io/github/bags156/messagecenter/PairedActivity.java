@@ -1926,11 +1926,11 @@ public class PairedActivity extends Activity {
     private String translationFiles(){StringBuilder key=new StringBuilder();for(Outgoing o:outgoing)if(!o.sending)key.append(o.file.getPath()).append(':').append(System.identityHashCode(o)).append(';');return key.toString();}
     private void previewOutgoing(boolean scheduling){if(composer==null||outgoingTranslation!=null)return;String original=composer.getText().toString();
         if(original.trim().isEmpty()){toast("Type a message to translate first.");return;}
-        String id=chatId,reply=replyId,files=translationFiles(),target=composeLanguage;int epoch=translationEpoch.get();
+        String id=chatId,reply=replyId,files=translationFiles(),target=composeLanguage;int epoch=translationEpoch.get();View focused=getCurrentFocus();if(focused!=null)hideKeyboard(focused);
         java.util.concurrent.atomic.AtomicBoolean cancelled=new java.util.concurrent.atomic.AtomicBoolean();
         LinearLayout content=vertical();content.addView(text("Review in "+Translation.label(target),20,ink,true));gap(content,8);
         TextView status=text("Detecting language on your phone…",13,muted,false);content.addView(status);gap(content,8);
-        TextView result=text("",17,ink,false);result.setTextIsSelectable(true);ScrollView area=new ScrollView(this);area.addView(result);content.addView(area,new LinearLayout.LayoutParams(-1,dp(160)));
+        TextView result=text("",17,ink,false);result.setTextIsSelectable(true);result.setPadding(dp(12),dp(12),dp(12),dp(12));result.setBackground(shape(surface,12));content.addView(result,new LinearLayout.LayoutParams(-1,-2));
         TextView originalText=text("Your draft: "+original,13,muted,false);originalText.setMaxLines(3);content.addView(originalText);gap(content,8);
         final Translation.Result[] translated={null};final String[] source={""};final Dialog[] dialog={null};java.util.concurrent.atomic.AtomicInteger request=new java.util.concurrent.atomic.AtomicInteger();
         TextView send=button(scheduling?"Review translation to schedule":"Review translation to send",true,()->{
@@ -1949,7 +1949,9 @@ public class PairedActivity extends Activity {
         sheetAction(content,"Retry translation",()->run[0].run());
         sheetAction(content,"Message language: detect / choose…",()->languagePicker("Your draft's language",source[0],false,true,code->{source[0]=code;if(!cancelled.get())run[0].run();}));
         sheetAction(content,"Keep editing original",()->dialog[0].dismiss());
-        dialog[0]=sheet(content);outgoingTranslation=dialog[0];dialog[0].setOnDismissListener(d->{cancelled.set(true);if(outgoingTranslation==dialog[0])outgoingTranslation=null;});run[0].run();}
+        int available=Math.min(getWindowManager().getCurrentWindowMetrics().getBounds().height(),root.getHeight()>0?root.getHeight():Integer.MAX_VALUE);final int maxHeight=Math.max(dp(180),Math.round(available*.72f));
+        ScrollView review=new ScrollView(this){@Override protected void onMeasure(int w,int h){super.onMeasure(w,View.MeasureSpec.makeMeasureSpec(Math.min(View.MeasureSpec.getSize(h),maxHeight),View.MeasureSpec.AT_MOST));}};review.addView(content);
+        dialog[0]=sheet(review,WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);outgoingTranslation=dialog[0];dialog[0].setOnDismissListener(d->{cancelled.set(true);if(outgoingTranslation==dialog[0])outgoingTranslation=null;});run[0].run();}
     /** Any message, including one you sent: choose the target and optionally override detection. */
     private void translate(JSONObject m,String words){String mid=m.optString("messageID");
         if(translations.containsKey(mid)){if(!showingOriginal.remove(mid))showingOriginal.add(mid);renderMessages(false);return;}
