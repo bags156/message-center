@@ -1081,7 +1081,7 @@ public final class OnDeviceSmoke extends Instrumentation {
                 try(PairedStore store=new PairedStore(ctx)){check(PairedProtocol.text(store.message("sr-es")).equals(PairedProtocol.text(spanish)),"Displaying a translation changed the stored original");}
                 shoot("shot-translated");android.view.View translatedToggle=described(a,"Translated from");runOnMainSync(translatedToggle::performClick);waitForIdleSync();
                 check(described(a,"Show translation")!=null&&exactText(a,PairedProtocol.text(spanish))!=null&&exactText(a,english[0])==null,"Tapping Show original did not swap back to the original bubble");}
-            checkTranslationPreview(a);
+            checkTranslationSending(a);
             check(!a.isFinishing(),"The chat closed after Translate");}
         finally{Thread.sleep(500);if(!a.hasWindowFocus()){ctx.startActivity(new android.content.Intent(ctx,PairedActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK|android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));Thread.sleep(1500);}
             onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("sr-chat");}}}
@@ -1093,8 +1093,8 @@ public final class OnDeviceSmoke extends Instrumentation {
             try(java.io.OutputStream marker=new java.io.FileOutputStream(new java.io.File(dir,name+".ok"))){marker.write(1);}
         }
     }
-    /** Real native inference, auto language detection, draft preservation and a stale-preview send guard. */
-    private void checkTranslationPreview(PairedActivity a)throws Exception{
+    /** Real native inference and one-tap sending, with duplicate and stale-draft protection. */
+    private void checkTranslationSending(PairedActivity a)throws Exception{
         android.content.Context ctx=getTargetContext();String original="Hello, how are you? I hope you are having a wonderful day today.";
         String detected=Translation.worker.submit(()->Translation.detect(ctx,"¿Dónde estás? Te espero en la puerta del cine.")).get(30,java.util.concurrent.TimeUnit.SECONDS);
         check("es".equals(detected),"Bundled language detection did not recognize Spanish ("+detected+")");
@@ -1109,22 +1109,54 @@ public final class OnDeviceSmoke extends Instrumentation {
         onMainCall(()->method("setReadingLanguage",String.class).invoke(a,"en"));until=android.os.SystemClock.uptimeMillis()+45000;
         while(android.os.SystemClock.uptimeMillis()<until&&described(a,"Translated from")==null)Thread.sleep(200);
         check(described(a,"Translated from")!=null,"Changing the reading language back didn't resume automatic translation");
-        int before=new Outbox(ctx).forChat("sr-chat").size();
-        onMainCall(()->{((android.widget.EditText)field("composer").get(a)).setText(original);field("composeLanguageOverride").setBoolean(a,true);field("composeLanguage").set(a,"es");method("updateTranslationChip").invoke(a);method("previewOutgoing",boolean.class).invoke(a,false);return null;});
-        android.app.Dialog[] dialog={null};android.widget.TextView[] send={null};until=android.os.SystemClock.uptimeMillis()+45000;
-        do{runOnMainSync(()->{try{dialog[0]=(android.app.Dialog)field("outgoingTranslation").get(a);if(dialog[0]!=null)for(android.widget.TextView v:viewsOf(dialog[0].getWindow().getDecorView(),android.widget.TextView.class))if("Send in Spanish".contentEquals(v.getText())&&v.isEnabled()&&v.isClickable())send[0]=v;}catch(Exception e){throw new RuntimeException(e);}});
-            if(send[0]!=null)break;Thread.sleep(200);}while(android.os.SystemClock.uptimeMillis()<until);
-        check(send[0]!=null,"The translated composer preview never became ready");String[] preview={""};
-        runOnMainSync(()->{for(android.widget.TextView v:viewsOf(dialog[0].getWindow().getDecorView(),android.widget.TextView.class))if(v.isTextSelectable())preview[0]=v.getText().toString();});
-        shoot("shot-translation-preview");check(!preview[0].isEmpty(),"The translated preview is empty");check(!original.equals(preview[0]),"The Spanish draft preview just echoed the English original");
-        onMainCall(()->{check(original.contentEquals(((android.widget.EditText)field("composer").get(a)).getText()),"Translation overwrote the typed draft");
-            ((android.widget.EditText)field("composer").get(a)).setText("Changed while the translation was open");send[0].performClick();return null;});
-        check(new Outbox(ctx).forChat("sr-chat").size()==before,"A stale translated preview entered the outbox");
-        boolean[] guarded={false};runOnMainSync(()->{for(android.widget.TextView v:viewsOf(dialog[0].getWindow().getDecorView(),android.widget.TextView.class))if(v.getText().toString().contains("changed. Close this preview"))guarded[0]=true;dialog[0].dismiss();});
-        check(guarded[0],"Editing the draft did not invalidate its translated preview");
-        onMainCall(()->{((android.widget.EditText)field("composer").get(a)).setText("");new ChatSettings(ctx).setReadLanguage("");new ChatSettings(ctx).setSendLanguage("sr-chat","");return null;});
+        check(!PairedService.ready(),"Translation send checks must run offline");
+        android.content.SharedPreferences prefs=ctx.getSharedPreferences("paired",0);boolean undo=prefs.getBoolean("undo_send",true);prefs.edit().putBoolean("undo_send",false).apply();
+        Outbox out=new Outbox(ctx);ChatSettings settings=new ChatSettings(ctx);
+        try{
+            for(JSONObject queued:out.forChat("sr-chat"))out.remove(queued.optString("id"));
+            java.util.concurrent.CountDownLatch first=new java.util.concurrent.CountDownLatch(1);
+            Translation.worker.submit(()->{first.await(30,java.util.concurrent.TimeUnit.SECONDS);return null;});
+            try{onMainCall(()->{method("setSendingLanguage",String.class,String.class).invoke(a,"sr-chat","es");
+                ((android.widget.EditText)field("composer").get(a)).setText(original);field("replyId").set(a,"sr-es");
+                check(described(a.getWindow().getDecorView(),"Translate this message")==null,"A translation control is visible above the composer");
+                ((android.view.View)field("sendButton").get(a)).performClick();method("send").invoke(a);
+                check(field("translatingOutgoing").getBoolean(a),"Send did not start automatic translation");
+                check(original.contentEquals(((android.widget.EditText)field("composer").get(a)).getText()),"Translation changed the draft before sending");return null;});
+                shoot("shot-translation-sending");
+            }finally{first.countDown();}
+            check(waitUntil(()->out.forChat("sr-chat").size()==1,45000),"One tap did not queue the translated message");
+            JSONObject sent=out.forChat("sr-chat").get(0);String spanish=sent.optString("text");
+            check(!original.equals(spanish)&&spanish.toLowerCase(java.util.Locale.ROOT).contains("hola"),"The outgoing message wasn't translated to Spanish");
+            check("sr-es".equals(sent.optString("reply")),"Automatic translation lost the reply link");
+            Thread.sleep(250);check(out.forChat("sr-chat").size()==1,"Repeated Send queued duplicate translated messages");out.remove(sent.optString("id"));
+            onMainCall(()->{check(((android.widget.EditText)field("composer").get(a)).length()==0,"Successful translated send left the draft behind");
+                ((android.widget.EditText)field("composer").get(a)).setText("Hi");((android.view.View)field("sendButton").get(a)).performClick();return null;});
+            check(waitUntil(()->out.forChat("sr-chat").size()==1,45000),"Short outgoing text didn't translate on Send");
+            sent=out.forChat("sr-chat").get(0);check(sent.optString("text").toLowerCase(java.util.Locale.ROOT).contains("hola"),"Short English greeting didn't use the phone's source language");out.remove(sent.optString("id"));
+            for(boolean changeLanguage:new boolean[]{false,true}){
+                java.util.concurrent.CountDownLatch gate=new java.util.concurrent.CountDownLatch(1);
+                Translation.worker.submit(()->{gate.await(30,java.util.concurrent.TimeUnit.SECONDS);return null;});
+                try{onMainCall(()->{method("setSendingLanguage",String.class,String.class).invoke(a,"sr-chat","es");
+                    ((android.widget.EditText)field("composer").get(a)).setText(original);method("send").invoke(a);
+                    if(changeLanguage)method("setSendingLanguage",String.class,String.class).invoke(a,"sr-chat","fr");
+                    else ((android.widget.EditText)field("composer").get(a)).setText("Changed while the translation was running");return null;});}
+                finally{gate.countDown();}
+                Translation.worker.submit(()->null).get(45,java.util.concurrent.TimeUnit.SECONDS);waitForIdleSync();
+                check(out.forChat("sr-chat").isEmpty(),"Changing "+(changeLanguage?"the sending language":"the draft")+" allowed an outdated translation into the outbox");
+            }
+            onMainCall(()->{method("setSendingLanguage",String.class,String.class).invoke(a,"sr-chat","");
+                ((android.widget.EditText)field("composer").get(a)).setText(original);((android.view.View)field("sendButton").get(a)).performClick();return null;});
+            check(out.forChat("sr-chat").size()==1&&original.equals(out.forChat("sr-chat").get(0).optString("text")),"As written did not send the original text");out.remove(out.forChat("sr-chat").get(0).optString("id"));
+            onMainCall(()->{method("setSendingLanguage",String.class,String.class).invoke(a,"sr-chat","zz");
+                ((android.widget.EditText)field("composer").get(a)).setText(original);method("send").invoke(a);return null;});
+            check(waitUntil(()->onScreen("OK")!=null,15000),"A failed translation didn't explain that the message wasn't sent");
+            check(out.forChat("sr-chat").isEmpty(),"Translation failure sent the original text");
+            onMainCall(()->{check(original.contentEquals(((android.widget.EditText)field("composer").get(a)).getText()),"Translation failure lost the draft");return null;});pressText("OK");
+            onMainCall(()->{method("setSendingLanguage",String.class,String.class).invoke(a,"sr-chat","es");return null;});shoot("shot-translation-composer");
+        }finally{prefs.edit().putBoolean("undo_send",undo).apply();for(JSONObject queued:out.forChat("sr-chat"))out.remove(queued.optString("id"));
+            onMainCall(()->{method("cancelOutgoingTranslation").invoke(a);((android.widget.EditText)field("composer").get(a)).setText("");method("cancelReply").invoke(a);settings.setReadLanguage("");settings.setSendLanguage("sr-chat","");return null;});}
         checkTranslationSettingsPictures(a);
-        note("PROBE translation: native Spanish→English, single-version bubble + original toggle, automatic reading, English→Spanish preview and stale-draft guard passed; no messages sent");
+        note("PROBE translation: native Spanish→English reading; English→Spanish one-tap Send, greeting, duplicate guard, stale draft/language cancellation, As written and failure draft preservation passed; no messages transmitted");
     }
     private void checkTranslationSettingsPictures(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();ChatSettings settings=new ChatSettings(ctx);android.app.Dialog[] dialog={null};
         settings.setReadLanguage("en");settings.setSendLanguage("sr-chat","es");
@@ -1145,7 +1177,7 @@ public final class OnDeviceSmoke extends Instrumentation {
             shoot("shot-translation-details-dark");onMainCall(()->{dialog[0]=(android.app.Dialog)method("translationSettings",String.class).invoke(a,"sr-chat");return null;});shoot("shot-translation-settings-dark");runOnMainSync(()->dialog[0].dismiss());
             onMainCall(()->method("openSettingsPage",String.class).invoke(a,"translation"));shoot("shot-translation-app-settings-dark");
         }finally{PairedActivity.blackForPictures=false;onMainCall(()->{method("setReadingLanguage",String.class).invoke(a,"");method("setSendingLanguage",String.class,String.class).invoke(a,"sr-chat","");return method("thread",String.class).invoke(a,"sr-chat");});
-            onMainCall(()->{check(((android.widget.TextView)field("translationChip").get(a)).getVisibility()==android.view.View.GONE,"Empty, untranslated chat still shows a translation control");return null;});}}
+            check(described(a,"Translate this message")==null&&exactText(a,"Translate…")==null,"The composer still shows a translation control");}}
     /** The first text on screen that says exactly this, or null. */
     private android.widget.TextView exactText(PairedActivity a,String words)throws Exception{android.widget.TextView[] hit={null};
         runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(found,words,android.view.View.FIND_VIEWS_WITH_TEXT);

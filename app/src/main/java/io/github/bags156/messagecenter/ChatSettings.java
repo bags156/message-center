@@ -50,7 +50,7 @@ final class ChatSettings {
      * "off" to leave the song links you send as they are, or "" to go by the links they send.
      */
     String theirMusic(String id) { return prefs.getString("music_their:" + id, ""); }
-    /** Incoming translation is app-wide; outgoing languages stay per chat and need review. */
+    /** Incoming translation is app-wide; outgoing languages stay per chat and apply when Send is tapped. */
     String readLanguage() {
         if (!prefs.contains("translate_read_all")) migrateReadingLanguage();
         return prefs.getString("translate_read_all", "");

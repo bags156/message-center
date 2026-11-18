@@ -19,7 +19,17 @@ public class TranslationPlanTest {
         assertFalse(TranslationPlan.automatic("A longer outgoing message",true,false));
         assertFalse(TranslationPlan.automatic("A longer system notice",false,true));
     }
-    @Test public void stalePreviewCannotSendAfterAnyContextChanges() {
+    @Test public void automaticOutgoingTranslationHandlesShortTextAndLeavesSymbolsAlone() {
+        assertTrue(TranslationPlan.outgoingText("Hi"));
+        assertTrue(TranslationPlan.outgoingText("Meet me at https://example.com"));
+        assertFalse(TranslationPlan.outgoingText("https://example.com"));
+        assertFalse(TranslationPlan.outgoingText("123 👍"));
+        assertFalse(TranslationPlan.outgoingText(""));
+        assertEquals("en",TranslationPlan.outgoingSource("Hi","es","en-US"));
+        assertEquals("en",TranslationPlan.outgoingSource("A longer message without a confident detection","","en"));
+        assertEquals("es",TranslationPlan.outgoingSource("¿Dónde estás? Te espero en la puerta del cine.","es","en"));
+    }
+    @Test public void outdatedTranslationCannotSendAfterAnyContextChanges() {
         assertTrue(TranslationPlan.current("a","hello","reply1","photo1","a","hello","reply1","photo1"));
         assertFalse(TranslationPlan.current("b","hello","reply1","photo1","a","hello","reply1","photo1"));
         assertFalse(TranslationPlan.current("a","changed","reply1","photo1","a","hello","reply1","photo1"));

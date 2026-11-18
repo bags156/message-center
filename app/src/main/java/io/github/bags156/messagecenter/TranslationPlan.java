@@ -20,7 +20,16 @@ final class TranslationPlan {
         String prose=text.replaceAll("(?i)https?://\\S+|www\\.\\S+", "").trim();
         return prose.codePoints().filter(Character::isLetter).count()>=12;
     }
-    /** A reviewed result only belongs to this exact draft, reply and attachment set. */
+    /** Symbols, numbers and links alone are already ready to send. */
+    static boolean outgoingText(String text) {
+        return text!=null&&text.replaceAll("(?i)https?://\\S+|www\\.\\S+", "").codePoints().anyMatch(Character::isLetter);
+    }
+    /** Short outgoing fragments use the phone language, since language ID needs more context. */
+    static String outgoingSource(String text,String detected,String phoneLanguage) {
+        String from=language(detected);
+        return from.isEmpty()||text.replaceAll("(?i)https?://\\S+|www\\.\\S+", "").codePoints().filter(Character::isLetter).count()<12?language(phoneLanguage):from;
+    }
+    /** A translated result only belongs to this exact draft, reply and attachment set. */
     static boolean current(String chat,String text,String reply,String files,String expectedChat,String expectedText,String expectedReply,String expectedFiles) {
         return chat.equals(expectedChat)&&text.equals(expectedText)&&reply.equals(expectedReply)&&files.equals(expectedFiles);
     }
