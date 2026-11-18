@@ -972,7 +972,7 @@ public class PairedActivity extends Activity {
         menuSwitch(settings,R.drawable.ic_pin,0xfff59e0b,"Pin to top",chatSettings.pinned(c),on->togglePin(store.chat(id)));
         String notify=chatSettings.muted(id)?"Muted":chatSettings.snoozed(id)?"Snoozed until "+snoozeLabel(id):"On";
         menuRow(settings,R.drawable.ic_bell,0xff8b5cf6,"Notifications",notify,false,closing.apply(()->notificationChoices(id)));
-        menuRow(settings,R.drawable.ic_translate,0xff3b82f6,"Translation",translationSummary(id),false,closing.apply(()->translationSettings(id)));
+        menuRow(settings,R.drawable.ic_translate,0xff3b82f6,"Sending language",translationSummary(id),false,closing.apply(()->translationSettings(id)));
         menuSwitch(settings,R.drawable.ic_eye,0xff3b82f6,"Read receipts",chatSettings.receipts(id),on->toggleReceipts(id));
         gap(content,12);
         // Where it opens, and putting it away.
@@ -1117,7 +1117,7 @@ public class PairedActivity extends Activity {
             ValueAnimator a=ValueAnimator.ofFloat(blur,0f);a.setDuration(420);a.addUpdateListener(x->{float r=(float)x.getAnimatedValue();content.setRenderEffect(r<0.5f?null:android.graphics.RenderEffect.createBlurEffect(r,r,android.graphics.Shader.TileMode.DECAL));});
             a.addListener(new android.animation.AnimatorListenerAdapter(){@Override public void onAnimationEnd(android.animation.Animator an){content.setRenderEffect(null);}});a.start();box.postDelayed(later,INK_SHOWN_MS);});
         cover.setOnLongClickListener(v->{messageSheet(m);return true;});return box;}
-    private void renderMessages(boolean bottom){if(items==null||!screen.equals("chat"))return;queueAutoTranslation();ui.post(this::updateQuickRow);long perfAll=Perf.start(),perf=perfAll;refreshSavedAttachments();voiceCards.clear();voiceOrder.clear();
+    private void renderMessages(boolean bottom){if(items==null||!screen.equals("chat"))return;refreshReadingLanguage();queueAutoTranslation();ui.post(this::updateQuickRow);long perfAll=Perf.start(),perf=perfAll;refreshSavedAttachments();voiceCards.clear();voiceOrder.clear();
         ScrollView sv=scroll;View content=sv.getChildAt(0);int y,before;boolean atBottom;Spot spot;
         // If the last redraw hasn't been laid out yet, its new views have no positions; keep aiming where it was aiming.
         if(placing!=null&&placingIn==sv){sv.getViewTreeObserver().removeOnPreDrawListener(placing);placing=null;y=placeY;before=placeBefore;atBottom=bottom||placeBottom;spot=atBottom?null:placeSpot;}
@@ -1845,7 +1845,7 @@ public class PairedActivity extends Activity {
         preferenceRow(preferences,R.drawable.ic_palette,0xffec4899,"Theme & background",chatSettings.theme(id).label+(chatSettings.background(id).isEmpty()?"":" · custom background"),()->chooseTheme(id));
         if(!group){String name=PairedProtocol.firstName(PairedProtocol.other(c)),app=theirMusicLabel(id);String summary=app.equals("off")?"Send links unchanged":app.equals("not known yet")?"Choose their preferred music app":app;
             preferenceRow(preferences,R.drawable.ic_play,0xff10b981,"Music links",summary,()->chooseTheirMusic(id,name));}
-        detailTranslationSummary=preferenceRow(preferences,R.drawable.ic_translate,0xff3b82f6,"Translation",translationSummary(id),()->translationSettings(id));
+        detailTranslationSummary=preferenceRow(preferences,R.drawable.ic_translate,0xff3b82f6,"Sending language",translationSummary(id),()->translationSettings(id));
         menuSwitch(preferences,R.drawable.ic_eye,0xff3b82f6,"Send read receipts",chatSettings.receipts(id),on->toggleReceipts(id));
         if(chatSettings.receipts(id)){receiptStatusView=text("",13,muted,false);receiptStatusView.setPadding(dp(60),0,dp(16),dp(10));preferences.addView(receiptStatusView);updateReceiptStatus();
             sheetAction(content,"Read receipt status / retry…",()->{JSONObject latest=store.latestIncoming(id);if(latest!=null&&chatSettings.seen(id)>=PairedProtocol.time(latest))PairedService.viewedForReceipts(this,store.chat(id),latest,true);PairedService.refreshReceiptSettings();updateReceiptStatus();});}
@@ -1893,7 +1893,7 @@ public class PairedActivity extends Activity {
     private final Runnable autoVisibleTranslations=this::translateVisibleMessages;
     private void queueAutoTranslation(){ui.removeCallbacks(autoVisibleTranslations);if(screen.equals("chat"))ui.postDelayed(autoVisibleTranslations,450);}
     private String translationWords(JSONObject m){String words=PairedProtocol.text(m),fallback=ChatText.replyFallbackBody(words);return fallback==null?words:fallback;}
-    private String translationTarget(){String read=chatSettings.readLanguage(chatId);return read.isEmpty()?Translation.defaultLanguage(this):read;}
+    private String translationTarget(){String read=chatSettings.readLanguage();return read.isEmpty()?Translation.defaultLanguage(this):read;}
     private void languagePicker(String title,String selected,boolean off,boolean auto,java.util.function.Consumer<String> chosen){
         List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
         if(off){labels.add((selected.isEmpty()?"✓ ":"")+"Off");actions.add(()->chosen.accept(""));}
@@ -1901,36 +1901,34 @@ public class PairedActivity extends Activity {
         for(String code:Translation.languages(this)){labels.add((code.equals(selected)?"✓ ":"")+Translation.label(code));actions.add(()->chosen.accept(code));}
         menuSheet(title,labels,actions);}
     private TextView detailTranslationSummary;
-    private String translationSummary(String id){String read=chatSettings.readLanguage(id),send=chatSettings.sendLanguage(id);
-        if(read.isEmpty()&&send.isEmpty())return "Automatic translation is off";
-        return (read.isEmpty()?"Receive as written":"Read in "+Translation.label(read))+" · "+(send.isEmpty()?"Send as written":"Send in "+Translation.label(send));}
+    private String translationSummary(String id){String send=chatSettings.sendLanguage(id);return send.isEmpty()?"As written":"Send in "+Translation.label(send);}
     /** A title and short description instead of a long settings sentence with values mixed in. */
     private TextView preferenceRow(LinearLayout group,int icon,int color,String title,String summary,Runnable action){
         LinearLayout r=row();r.setPadding(dp(14),dp(12),dp(14),dp(12));r.setMinimumHeight(dp(64));r.addView(menuChip(icon,color),new LinearLayout.LayoutParams(dp(32),dp(32)));
         LinearLayout labels=vertical();labels.setPadding(dp(14),0,dp(10),0);labels.addView(text(title,16,ink,false));TextView value=text(summary,13,muted,false);value.setMaxLines(2);value.setEllipsize(TextUtils.TruncateAt.END);labels.addView(value);
         r.addView(labels,new LinearLayout.LayoutParams(0,-2,1));r.addView(text("›",22,muted,false));pressable(r);r.setContentDescription(title+": "+summary);r.setOnClickListener(v->action.run());addSettingRow(group,r);return value;}
-    private void refreshTranslationSummary(String id){if(detailTranslationSummary!=null&&chatId.equals(id)){String summary=translationSummary(id);detailTranslationSummary.setText(summary);((View)((View)detailTranslationSummary.getParent()).getParent()).setContentDescription("Translation: "+summary);}}
-    private void setReadingLanguage(String id,String code){chatSettings.setReadLanguage(id,code);autoTranslationAttempts.clear();
-        java.util.Iterator<Map.Entry<String,String[]>> cached=translations.entrySet().iterator();while(cached.hasNext()){Map.Entry<String,String[]> entry=cached.next();JSONObject message=store.message(entry.getKey());if(message!=null&&id.equals(message.optString("conversationID"))){showingOriginal.remove(entry.getKey());cached.remove();}}
-        if(translationStatus!=null)translationStatus.setVisibility(View.GONE);if(chatId.equals(id)){updateTranslationChip();if(screen.equals("chat"))renderMessages(false);queueAutoTranslation();}refreshTranslationSummary(id);}
+    private void refreshTranslationSummary(String id){if(detailTranslationSummary!=null&&chatId.equals(id)){String summary=translationSummary(id);detailTranslationSummary.setText(summary);((View)((View)detailTranslationSummary.getParent()).getParent()).setContentDescription("Sending language: "+summary);}}
+    private String activeReadLanguage;
+    /** Clear translations from every chat when the app-wide reading preference changes. */
+    private void refreshReadingLanguage(){String read=chatSettings.readLanguage();if(read.equals(activeReadLanguage))return;activeReadLanguage=read;
+        translationEpoch.incrementAndGet();autoTranslationAttempts.clear();translations.clear();showingOriginal.clear();
+        if(translationStatus!=null)translationStatus.setVisibility(View.GONE);}
+    private void setReadingLanguage(String code){chatSettings.setReadLanguage(code);refreshReadingLanguage();
+        if(screen.equals("chat"))renderMessages(false);queueAutoTranslation();}
     private void setSendingLanguage(String id,String code){chatSettings.setSendLanguage(id,code);if(chatId.equals(id)){composeLanguageOverride=false;composeLanguage=code;composeTranslateChat=id;updateTranslationChip();}refreshTranslationSummary(id);}
     private Dialog translationSheet(View content){int available=Math.min(getWindowManager().getCurrentWindowMetrics().getBounds().height(),root.getHeight()>0?root.getHeight():Integer.MAX_VALUE);final int maxHeight=Math.max(dp(180),Math.round(available*.72f));
         ScrollView review=new ScrollView(this){@Override protected void onMeasure(int w,int h){super.onMeasure(w,View.MeasureSpec.makeMeasureSpec(Math.min(View.MeasureSpec.getSize(h),maxHeight),View.MeasureSpec.AT_MOST));}};
         review.addView(content);return sheet(review,WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);}
-    private Dialog translationSettings(String id){LinearLayout box=vertical();Dialog[] d={null};String read=chatSettings.readLanguage(id),send=chatSettings.sendLanguage(id);
-        box.addView(text("Translation",20,ink,true));gap(box,6);box.addView(text("Language settings for this conversation",13,muted,false));gap(box,18);
-        box.addView(text("Messages I receive",14,muted,true));gap(box,6);LinearLayout incoming=menuGroup(box);
-        menuSwitch(incoming,R.drawable.ic_translate,0xff3b82f6,"Translate automatically",!read.isEmpty(),on->{setReadingLanguage(id,on?Translation.defaultLanguage(this):"");d[0].dismiss();translationSettings(id);});
-        if(!read.isEmpty())preferenceRow(incoming,R.drawable.ic_eye,0xff3b82f6,"Read in",Translation.label(read),()->languagePicker("Read messages in",read,false,false,code->{setReadingLanguage(id,code);d[0].dismiss();translationSettings(id);}));
-        TextView incomingHelp=text(read.isEmpty()?"Show received messages as written.":"Detect their language and show the "+Translation.label(read)+" translation.",13,muted,false);incomingHelp.setPadding(dp(8),dp(7),dp(8),0);box.addView(incomingHelp);gap(box,18);
-        box.addView(text("Messages I send",14,muted,true));gap(box,6);LinearLayout outgoing=menuGroup(box);
+    private Dialog translationSettings(String id){LinearLayout box=vertical();Dialog[] d={null};String send=chatSettings.sendLanguage(id);
+        box.addView(text("Sending language",20,ink,true));gap(box,6);box.addView(text("For messages I send in this chat",13,muted,false));gap(box,18);
+        LinearLayout outgoing=menuGroup(box);
         preferenceRow(outgoing,R.drawable.ic_send,0xff8b5cf6,"Send in",send.isEmpty()?"As written":Translation.label(send),()->sendingLanguagePicker("Default sending language",send,code->{setSendingLanguage(id,code);d[0].dismiss();translationSettings(id);},null));
         TextView outgoingHelp=text(send.isEmpty()?"Send exactly what I type. Choose a language above to translate my messages.":"Write in "+Translation.label(Translation.defaultLanguage(this))+"; review the "+Translation.label(send)+" version before sending.",13,muted,false);outgoingHelp.setPadding(dp(8),dp(7),dp(8),0);box.addView(outgoingHelp);gap(box,18);
-        box.addView(text("You can also translate individual messages. Translation stays on this phone; language packs download once.",12,muted,false));d[0]=translationSheet(box);return d[0];}
+        box.addView(text("Change the language for just one message above the message box. Incoming translation is in app Settings → Translation.",12,muted,false));d[0]=translationSheet(box);return d[0];}
     private void sendingLanguagePicker(String title,String selected,java.util.function.Consumer<String> chosen,Runnable settings){List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
         labels.add((selected.isEmpty()?"✓ ":"")+"Send as written");actions.add(()->chosen.accept(""));
         for(String code:Translation.languages(this)){labels.add((code.equals(selected)?"✓ ":"")+Translation.label(code));actions.add(()->chosen.accept(code));}
-        if(settings!=null){labels.add("Chat translation settings…");actions.add(settings);}menuSheet(title,labels,actions);}
+        if(settings!=null){labels.add("Sending language for this chat…");actions.add(settings);}menuSheet(title,labels,actions);}
     private void resetSentLanguage(){composeLanguageOverride=false;composeLanguage=chatSettings.sendLanguage(chatId);updateTranslationChip();}
     private void updateTranslationChip(){if(translationChip==null)return;
         if(!composeTranslateChat.equals(chatId)){composeTranslateChat=chatId;composeLanguageOverride=false;}if(!composeLanguageOverride)composeLanguage=chatSettings.sendLanguage(chatId);
@@ -1986,7 +1984,7 @@ public class PairedActivity extends Activity {
                 if(answer.same)toast("Already in "+Translation.label(target));});
         }catch(java.util.concurrent.CancellationException ignored){}catch(Exception e){ui.post(()->{if(cancelled.get())return;progress.dismiss();error(e.getMessage()==null?"Couldn't translate. Your original is unchanged.":e.getMessage());});}});}
     /** Scan only bubbles actually on screen, after scrolling settles. Never sweep/download the archive. */
-    private void translateVisibleMessages(){if(!resumed||!screen.equals("chat")||scroll==null||isDestroyed())return;String target=chatSettings.readLanguage(chatId);if(target.isEmpty())return;
+    private void translateVisibleMessages(){if(!resumed||!screen.equals("chat")||scroll==null||isDestroyed())return;String target=chatSettings.readLanguage();if(target.isEmpty())return;
         String id=chatId;JSONObject chat=store.chat(id);int epoch=translationEpoch.get();int[] viewport=new int[2];scroll.getLocationOnScreen(viewport);
         int submitted=0;for(Map.Entry<String,View> entry:new ArrayList<>(messageViews.entrySet())){
             View view=entry.getValue();int[] pos=new int[2];view.getLocationOnScreen(pos);if(pos[1]+view.getHeight()<viewport[1]||pos[1]>viewport[1]+scroll.getHeight())continue;
@@ -1997,12 +1995,12 @@ public class PairedActivity extends Activity {
             if(submitted++>=12)break;autoTranslationAttempts.add(key);if(autoTranslationAttempts.size()>256)autoTranslationAttempts.remove(autoTranslationAttempts.iterator().next());
             Translation.worker.execute(()->{try{
                 String from=Translation.detect(getApplicationContext(),words);if(from.isEmpty()||from.equals(target))return;
-                Translation.Result answer=Translation.translate(getApplicationContext(),words,from,target,step->ui.post(()->{if(translationEpoch.get()==epoch&&chatSettings.readLanguage(id).equals(target)&&translationStatus!=null){translationStatus.setText(step);translationStatus.setVisibility(View.VISIBLE);}}),
-                    ()->translationEpoch.get()!=epoch||!chatSettings.readLanguage(id).equals(target));
-                ui.post(()->{if(translationEpoch.get()!=epoch||!chatId.equals(id)||!chatSettings.readLanguage(id).equals(target)||isDestroyed())return;
+                Translation.Result answer=Translation.translate(getApplicationContext(),words,from,target,step->ui.post(()->{if(translationEpoch.get()==epoch&&chatSettings.readLanguage().equals(target)&&translationStatus!=null){translationStatus.setText(step);translationStatus.setVisibility(View.VISIBLE);}}),
+                    ()->translationEpoch.get()!=epoch||!chatSettings.readLanguage().equals(target));
+                ui.post(()->{if(translationEpoch.get()!=epoch||!chatId.equals(id)||!chatSettings.readLanguage().equals(target)||isDestroyed())return;
                     translations.put(mid,new String[]{answer.text,Translation.label(answer.from),target,words});if(translationStatus!=null)translationStatus.setVisibility(View.GONE);
                     ui.removeCallbacks(translationRedraw);ui.postDelayed(translationRedraw,400);});
-            }catch(java.util.concurrent.CancellationException ignored){}catch(Exception e){ui.post(()->{if(translationEpoch.get()==epoch&&chatSettings.readLanguage(id).equals(target)&&translationStatus!=null){translationStatus.setText("Translation paused · tap to retry language pack download");translationStatus.setVisibility(View.VISIBLE);}});}});
+            }catch(java.util.concurrent.CancellationException ignored){}catch(Exception e){ui.post(()->{if(translationEpoch.get()==epoch&&chatSettings.readLanguage().equals(target)&&translationStatus!=null){translationStatus.setText("Translation paused · tap to retry language pack download");translationStatus.setVisibility(View.VISIBLE);}});}});
         }}
     /** "Hannah turns 30 today · Say happy birthday": from their contact, in a one-to-one chat; ✕ hides it until next year. */
     private void renderBirthday(){if(birthdayBar==null)return;birthdayBar.removeAllViews();birthdayBar.setVisibility(View.GONE);
@@ -4497,12 +4495,12 @@ public class PairedActivity extends Activity {
     private String settingsPage="",settingsQuery="",settingsShown=null;private boolean keepSettingsPage;
     /** While searching settings: what was typed (rows that don't match aren't added), and the page being searched. */
     private String settingsFilter,settingsFilterPage="";private final List<View[]> settingsGroups=new ArrayList<>();
-    private static final String[] SETTINGS_PAGES={"messages","media","notifications","automation","appearance","apps","connection","data"};
-    private static String settingsTitle(String page){switch(page){case "messages":return "Messages";case "media":return "Photos & media";case "notifications":return "Notifications";
+    private static final String[] SETTINGS_PAGES={"messages","translation","media","notifications","automation","appearance","apps","connection","data"};
+    private static String settingsTitle(String page){switch(page){case "messages":return "Messages";case "translation":return "Translation";case "media":return "Photos & media";case "notifications":return "Notifications";
         case "automation":return "Automation";case "appearance":return "Appearance";case "apps":return "Apps";case "connection":return "Connection";case "data":return "Data & about";default:return "Settings";}}
     /** Words people might search for that a setting's own words don't say. */
     private static String settingKeywords(String title){switch(title){case "Theme":return "dark light black mode night colors";case "Text size":return "font bigger smaller larger";case "Font":return "typeface custom upload ttf otf letters fonts";case "Floating chats":return "bubbles chat heads see-through transparent overlay float";case "Upload a font":return "typeface custom ttf otf letters fonts";case "Unread count":return "badge number total inbox";case "Chat color":return "theme bubble colour all chats every conversation";case "Calls in chats":return "phone call log duration missed";
-        case "Undo send":return "unsend delay take back cancel";case "Typing indicators":return "typing privacy";case "Read receipts":return "seen read privacy";case "Bubbles":return "floating chat heads";
+        case "Translate incoming messages":return "translation receive received automatic detect language english spanish";case "Read messages in":return "translation reading language incoming";case "Undo send":return "unsend delay take back cancel";case "Typing indicators":return "typing privacy";case "Read receipts":return "seen read privacy";case "Bubbles":return "floating chat heads";
         case "Busy auto-reply":return "away driving automatic reply";case "Notifications":return "sound vibration alerts";case "Background activity":return "battery optimization";
         case "Back up app data":return "backup export save";case "Restore from a backup":return "import backup";case "Photo quality":return "pictures compress size";
         case "Video quality":return "compress size";case "Music app":return "spotify apple youtube tidal deezer amazon soundcloud song songs convert links open in";case "Podcast app":return "pocket casts antennapod podcast addict show episode";case "Maps app for addresses":return "google maps waze directions";case "Calendar app for dates":return "event schedule";case "What notifications show":return "privacy preview";case "On the lock screen":return "lock screen locked preview privacy hide unlock";default:return "";}}
@@ -4546,6 +4544,8 @@ public class PairedActivity extends Activity {
         String typing=prefs.getBoolean("send_typing",true)?"Typing shown":"Typing hidden",undo=undoSendOn()?"undo send "+undoSendSeconds()+" s":"no undo send";
         LinearLayout pages=settingsGroup(body,null);
         settingRow(pages,R.drawable.ic_chat,0xff3b82f6,"Messages",typing+" · "+undo+" · suggested replies, effects, previews",null,()->openSettingsPage("messages"));
+        String reading=chatSettings.readLanguage();
+        settingRow(pages,R.drawable.ic_translate,0xff3b82f6,"Translation",reading.isEmpty()?"Incoming messages · off":"Incoming messages · read in "+Translation.label(reading),null,()->openSettingsPage("translation"));
         settingRow(pages,R.drawable.ic_gallery,0xfff59e0b,"Photos & media","Photos "+PhotoQuality.label(photoQuality()).toLowerCase(Locale.ROOT)+" · videos "+PhotoQuality.label(videoQuality()).toLowerCase(Locale.ROOT)+" · text in pictures "+(PhotoText.enabled(this)?"on":"off"),null,()->openSettingsPage("media"));
         boolean allowed=checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED;int nudge=Nudges.minutes(this);
         settingRow(pages,R.drawable.ic_bell,0xff8b5cf6,"Notifications",(allowed?NotificationPrivacy.label(NotificationPrivacy.mode(this)):"Off")+" · "+(nudge<=0?"no reminders":"reminders every "+(nudge==60?"hour":(nudge/60)+" hours"))+" · alerts, bubbles",null,()->openSettingsPage("notifications"));
@@ -4577,6 +4577,13 @@ public class PairedActivity extends Activity {
             settingSwitch(show,R.drawable.ic_tag,0xfff59e0b,"Separate promotions","Texts from businesses and short codes go in Promotions",promotionsSeparate(),on->prefs.edit().putBoolean("promotions_separate",on).apply());
             if(!Avatars.canUsePhonePhotos(this))settingRow(show,R.drawable.ic_contact,0xff22c55e,"Use names and photos from contacts","Full first names (like \"Hannah Kay\") and contact photos",null,()->{if(shouldShowRequestPermissionRationale(Manifest.permission.READ_CONTACTS)||!prefs.getBoolean("asked_contacts",false)){prefs.edit().putBoolean("asked_contacts",true).apply();requestPermissions(new String[]{Manifest.permission.READ_CONTACTS},CONTACTS_PERMISSION);}
                 else startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())));});
+            break;}
+        case "translation":{String read=chatSettings.readLanguage(),last=chatSettings.lastReadLanguage();
+            LinearLayout receive=settingsGroup(content,"Messages I receive");
+            settingSwitch(receive,R.drawable.ic_translate,0xff3b82f6,"Translate incoming messages","For every chat. Detects the language automatically.",!read.isEmpty(),on->{setReadingLanguage(on?(last.isEmpty()?Translation.defaultLanguage(this):last):"");settings();});
+            if(!read.isEmpty())settingRow(receive,R.drawable.ic_eye,0xff3b82f6,"Read messages in","Other languages appear translated inside the message bubble",Translation.label(read),()->languagePicker("Read messages in",read,false,false,code->{setReadingLanguage(code);settings();}));
+            if(settingsFilter==null){note(content,read.isEmpty()?"Received messages appear as written. You can still translate a message by holding it.":"Applies to all chats. Tap Show original to see the original message. Translation runs on this phone; language packs download once.");
+                note(content,"To translate messages you send, choose a Sending language in that chat's Details. Each chat can have its own language.");}
             break;}
         case "media":{LinearLayout send=settingsGroup(content,"What you send");
             settingRow(send,R.drawable.ic_gallery,0xfff59e0b,"Photo quality","Photos prepare on this phone while you type",PhotoQuality.label(photoQuality()),this::choosePhotoQuality);

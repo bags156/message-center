@@ -26,12 +26,27 @@ public class TranslationPlanTest {
         assertFalse(TranslationPlan.current("a","hello","reply2","photo1","a","hello","reply1","photo1"));
         assertFalse(TranslationPlan.current("a","hello","reply1","photo2","a","hello","reply1","photo1"));
     }
-    @Test public void readAndSendDefaultsAreIndependentAndScopedToChat() {
+    @Test public void readingIsAppWideAndSendingStaysIndependentForEachChat() {
         MemoryPrefs prefs=new MemoryPrefs();ChatSettings first=new ChatSettings(prefs);
-        first.setReadLanguage("a","en-US");first.setSendLanguage("a","es-MX");
+        first.setReadLanguage("en-US");first.setSendLanguage("a","es-MX");first.setSendLanguage("b","fr");
         ChatSettings restored=new ChatSettings(prefs);
-        assertEquals("en",restored.readLanguage("a"));assertEquals("es",restored.sendLanguage("a"));
-        assertEquals("",restored.sendLanguage("b"));assertEquals("",restored.readLanguage("b"));
-        restored.setReadLanguage("a","");assertEquals("",restored.readLanguage("a"));assertEquals("es",restored.sendLanguage("a"));
+        assertEquals("en",restored.readLanguage());assertEquals("es",restored.sendLanguage("a"));
+        assertEquals("fr",restored.sendLanguage("b"));assertEquals("",restored.sendLanguage("c"));
+        restored.setReadLanguage("");assertEquals("",restored.readLanguage());assertEquals("en",restored.lastReadLanguage());
+        assertEquals("es",restored.sendLanguage("a"));assertEquals("fr",restored.sendLanguage("b"));
+        assertEquals("",new ChatSettings(prefs).readLanguage());
+    }
+    @Test public void existingReadingChoicesMigrateOnceWithoutChangingSendingLanguages() {
+        MemoryPrefs prefs=new MemoryPrefs();prefs.edit().putString("translate_read:a","es").putString("translate_read:b","en-US")
+            .putString("translate_read:c","en").putString("translate_read:d","").putString("translate_send:a","fr").apply();
+        ChatSettings settings=new ChatSettings(prefs);
+        assertEquals("en",settings.readLanguage());assertEquals("en",settings.lastReadLanguage());assertEquals("fr",settings.sendLanguage("a"));
+        settings.setReadLanguage("");assertEquals("",new ChatSettings(prefs).readLanguage());
+        settings.setReadLanguage("de");assertEquals("de",new ChatSettings(prefs).readLanguage());
+    }
+    @Test public void readingMigrationStartsOffAndResolvesMixedLanguageTiesConsistently() {
+        MemoryPrefs prefs=new MemoryPrefs();assertEquals("",new ChatSettings(prefs).readLanguage());
+        MemoryPrefs mixed=new MemoryPrefs();mixed.edit().putString("translate_read:z","es").putString("translate_read:a","fr").apply();
+        assertEquals("es",new ChatSettings(mixed).readLanguage());
     }
 }

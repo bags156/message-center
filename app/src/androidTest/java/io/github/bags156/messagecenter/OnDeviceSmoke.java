@@ -378,7 +378,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         java.lang.reflect.Field current=field("settingsPage"),screen=field("screen");
         onMainCall(()->open.invoke(a));waitForIdleSync();
         StringBuilder missing=new StringBuilder();
-        for(String p:new String[]{"Messages","Photos & media","Notifications","Automation","Appearance","Apps","Connection","Data & about","Search settings"})if(viewsWithDescription(a,p)==0)missing.append(p).append(", ");
+        for(String p:new String[]{"Messages","Translation","Photos & media","Notifications","Automation","Appearance","Apps","Connection","Data & about","Search settings"})if(viewsWithDescription(a,p)==0)missing.append(p).append(", ");
         check(missing.length()==0,"The settings main page is missing: "+missing);
         check(viewsWithDescription(a,"Unread reminders")==0,"The settings main page still lists every setting");
         shoot("settings-home");
@@ -403,6 +403,8 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(viewsWithDescription(a,"Theme")>0,"Searching settings for \"dark\" didn't find Theme");
         runOnMainSync(()->search[0].setText("undo"));waitForIdleSync();
         check(viewsWithDescription(a,"Undo send")>0&&viewsWithDescription(a,"Theme")==0,"Searching settings for \"undo\" didn't narrow to Undo send");
+        runOnMainSync(()->search[0].setText("language"));waitForIdleSync();
+        check(viewsWithDescription(a,"Translate incoming messages")>0,"Searching for language didn't find app-wide incoming translation");
         runOnMainSync(()->search[0].setText("spotify"));waitForIdleSync();
         check(viewsWithDescription(a,"Music app")>0,"Searching settings for \"spotify\" didn't find Music app");
         shoot("settings-search");
@@ -1098,13 +1100,13 @@ public final class OnDeviceSmoke extends Instrumentation {
         check("es".equals(detected),"Bundled language detection did not recognize Spanish ("+detected+")");
         onMainCall(()->{
             ((java.util.Map<?,?>)field("translations").get(a)).clear();((java.util.Set<?>)field("showingOriginal").get(a)).clear();
-            new ChatSettings(ctx).setReadLanguage("sr-chat","en");method("renderMessages",boolean.class).invoke(a,true);return null;});
+            new ChatSettings(ctx).setReadLanguage("en");method("renderMessages",boolean.class).invoke(a,true);return null;});
         long until=android.os.SystemClock.uptimeMillis()+45000;
         while(android.os.SystemClock.uptimeMillis()<until&&described(a,"Translated from")==null)Thread.sleep(200);
         check(described(a,"Translated from")!=null,"Automatic incoming translation did not appear");
-        onMainCall(()->method("setReadingLanguage",String.class,String.class).invoke(a,"sr-chat","es"));waitForIdleSync();
+        onMainCall(()->method("setReadingLanguage",String.class).invoke(a,"es"));waitForIdleSync();
         check(exactText(a,"¿Dónde estás? Te espero en la puerta del cine.")!=null,"Changing the reading language kept the previous translation on screen");
-        onMainCall(()->method("setReadingLanguage",String.class,String.class).invoke(a,"sr-chat","en"));until=android.os.SystemClock.uptimeMillis()+45000;
+        onMainCall(()->method("setReadingLanguage",String.class).invoke(a,"en"));until=android.os.SystemClock.uptimeMillis()+45000;
         while(android.os.SystemClock.uptimeMillis()<until&&described(a,"Translated from")==null)Thread.sleep(200);
         check(described(a,"Translated from")!=null,"Changing the reading language back didn't resume automatic translation");
         int before=new Outbox(ctx).forChat("sr-chat").size();
@@ -1120,18 +1122,29 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(new Outbox(ctx).forChat("sr-chat").size()==before,"A stale translated preview entered the outbox");
         boolean[] guarded={false};runOnMainSync(()->{for(android.widget.TextView v:viewsOf(dialog[0].getWindow().getDecorView(),android.widget.TextView.class))if(v.getText().toString().contains("changed. Close this preview"))guarded[0]=true;dialog[0].dismiss();});
         check(guarded[0],"Editing the draft did not invalidate its translated preview");
-        onMainCall(()->{((android.widget.EditText)field("composer").get(a)).setText("");new ChatSettings(ctx).setReadLanguage("sr-chat","");new ChatSettings(ctx).setSendLanguage("sr-chat","");return null;});
+        onMainCall(()->{((android.widget.EditText)field("composer").get(a)).setText("");new ChatSettings(ctx).setReadLanguage("");new ChatSettings(ctx).setSendLanguage("sr-chat","");return null;});
         checkTranslationSettingsPictures(a);
         note("PROBE translation: native Spanish→English, single-version bubble + original toggle, automatic reading, English→Spanish preview and stale-draft guard passed; no messages sent");
     }
     private void checkTranslationSettingsPictures(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();ChatSettings settings=new ChatSettings(ctx);android.app.Dialog[] dialog={null};
-        settings.setReadLanguage("sr-chat","en");settings.setSendLanguage("sr-chat","es");
+        settings.setReadLanguage("en");settings.setSendLanguage("sr-chat","es");
         try{
-            onMainCall(()->{dialog[0]=(android.app.Dialog)method("translationSettings",String.class).invoke(a,"sr-chat");return null;});shoot("shot-translation-settings");runOnMainSync(()->dialog[0].dismiss());
-            PairedActivity.blackForPictures=true;onMainCall(()->method("details").invoke(a));waitForIdleSync();android.view.View translation=described(a,"Translation:");check(translation!=null,"Translation setting is missing from Details");
+            onMainCall(()->{dialog[0]=(android.app.Dialog)method("translationSettings",String.class).invoke(a,"sr-chat");
+                check(viewsOf(dialog[0].getWindow().getDecorView(),android.widget.Switch.class).isEmpty(),"Per-chat sending settings still have an incoming translation switch");return null;});shoot("shot-translation-settings");runOnMainSync(()->dialog[0].dismiss());
+            onMainCall(()->method("openSettingsPage",String.class).invoke(a,"translation"));waitForIdleSync();
+            check(exactText(a,"Messages I receive")!=null&&exactText(a,"Read messages in")!=null,"App-wide incoming translation settings are missing");
+            android.view.View toggle=described(a,"Translate incoming messages");check(toggle instanceof android.widget.Switch,"App-wide translation switch is missing");
+            runOnMainSync(()->toggle.performClick());check(settings.readLanguage().isEmpty(),"App-wide switch did not disable receiving translation");
+            check("es".equals(settings.sendLanguage("sr-chat")),"Receiving switch changed the chat's sending language");
+            android.view.View again=described(a,"Translate incoming messages");runOnMainSync(()->again.performClick());
+            check("en".equals(settings.readLanguage()),"Re-enabling incoming translation did not restore the reading language");
+            shoot("shot-translation-app-settings");
+            onMainCall(()->method("thread",String.class).invoke(a,"sr-chat"));
+            PairedActivity.blackForPictures=true;onMainCall(()->method("details").invoke(a));waitForIdleSync();android.view.View translation=described(a,"Sending language:");check(translation!=null,"Sending language is missing from Details");
             runOnMainSync(()->{try{android.view.ViewParent parent=translation.getParent();while(parent!=null&&!(parent instanceof android.widget.ScrollView))parent=parent.getParent();android.widget.ScrollView scroll=(android.widget.ScrollView)parent;android.graphics.Rect rect=new android.graphics.Rect();translation.getDrawingRect(rect);((android.view.ViewGroup)scroll.getChildAt(0)).offsetDescendantRectToMyCoords(translation,rect);scroll.scrollTo(0,Math.max(0,rect.top-Math.round(140*ctx.getResources().getDisplayMetrics().density)));}catch(Exception e){throw new RuntimeException(e);}});
             shoot("shot-translation-details-dark");onMainCall(()->{dialog[0]=(android.app.Dialog)method("translationSettings",String.class).invoke(a,"sr-chat");return null;});shoot("shot-translation-settings-dark");runOnMainSync(()->dialog[0].dismiss());
-        }finally{PairedActivity.blackForPictures=false;onMainCall(()->{method("setReadingLanguage",String.class,String.class).invoke(a,"sr-chat","");method("setSendingLanguage",String.class,String.class).invoke(a,"sr-chat","");return method("thread",String.class).invoke(a,"sr-chat");});
+            onMainCall(()->method("openSettingsPage",String.class).invoke(a,"translation"));shoot("shot-translation-app-settings-dark");
+        }finally{PairedActivity.blackForPictures=false;onMainCall(()->{method("setReadingLanguage",String.class).invoke(a,"");method("setSendingLanguage",String.class,String.class).invoke(a,"sr-chat","");return method("thread",String.class).invoke(a,"sr-chat");});
             onMainCall(()->{check(((android.widget.TextView)field("translationChip").get(a)).getVisibility()==android.view.View.GONE,"Empty, untranslated chat still shows a translation control");return null;});}}
     /** The first text on screen that says exactly this, or null. */
     private android.widget.TextView exactText(PairedActivity a,String words)throws Exception{android.widget.TextView[] hit={null};

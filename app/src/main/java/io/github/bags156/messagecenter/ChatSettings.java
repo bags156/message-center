@@ -50,10 +50,29 @@ final class ChatSettings {
      * "off" to leave the song links you send as they are, or "" to go by the links they send.
      */
     String theirMusic(String id) { return prefs.getString("music_their:" + id, ""); }
-    /** Independent per-chat read/send languages. Empty means off; outgoing always needs review. */
-    String readLanguage(String id) { return prefs.getString("translate_read:" + id, ""); }
+    /** Incoming translation is app-wide; outgoing languages stay per chat and need review. */
+    String readLanguage() {
+        if (!prefs.contains("translate_read_all")) migrateReadingLanguage();
+        return prefs.getString("translate_read_all", "");
+    }
+    String lastReadLanguage() { readLanguage(); return prefs.getString("translate_read_last", ""); }
     String sendLanguage(String id) { return prefs.getString("translate_send:" + id, ""); }
-    void setReadLanguage(String id,String code) { prefs.edit().putString("translate_read:"+id,TranslationPlan.language(code)).apply(); }
+    void setReadLanguage(String code) {
+        String language=TranslationPlan.language(code);
+        SharedPreferences.Editor e=prefs.edit().putString("translate_read_all",language);
+        if(!language.isEmpty())e.putString("translate_read_last",language);
+        e.apply();
+    }
+    /** Carry the most-used old reading language forward once, with stable alphabetical ties. */
+    private void migrateReadingLanguage() {
+        java.util.Map<String,Integer> counts=new java.util.TreeMap<>();
+        for(java.util.Map.Entry<String,?> e:prefs.getAll().entrySet())if(e.getKey().startsWith("translate_read:")&&e.getValue() instanceof String){
+            String code=TranslationPlan.language((String)e.getValue());if(!code.isEmpty())counts.put(code,counts.getOrDefault(code,0)+1);
+        }
+        String chosen="";int most=0;
+        for(java.util.Map.Entry<String,Integer> e:counts.entrySet())if(e.getValue()>most){chosen=e.getKey();most=e.getValue();}
+        setReadLanguage(chosen);
+    }
     void setSendLanguage(String id,String code) { prefs.edit().putString("translate_send:"+id,TranslationPlan.language(code)).apply(); }
     void setTheirMusic(String id, String value) {
         if (value == null || value.isEmpty()) prefs.edit().remove("music_their:" + id).apply(); else prefs.edit().putString("music_their:" + id, value).apply();

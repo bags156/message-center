@@ -225,7 +225,7 @@ jobs:
     needs: [build, device-smoke]
     # One explicit release commit lets the connected GitHub integration publish this update.
     # Build + offline device tests still gate signing; later versions keep the manual trigger.
-    if: github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.publish) || (github.event_name == 'push' && github.event.head_commit.message == 'Release Message Center 1.5.71'))
+    if: github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.publish) || (github.event_name == 'push' && github.event.head_commit.message == 'Release Message Center 1.5.72'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
