@@ -267,7 +267,7 @@ jobs:
         run: |
           VERSION="$(python3 -c 'import json; print(json.load(open("out/release-metadata.json"))["versionName"])')"
           cp signing-certificate.sha256 out/
-          cp dependency-source/dependencies-source.tar.gz out/
+          cp dependency-source/bridge/dependencies-source.tar.gz out/
           cp dependency-source/translation-dependencies-source.tar.gz out/
           FLAGS=()
           if [[ "$VERSION" == *-* ]]; then FLAGS+=(--prerelease --latest=false); fi

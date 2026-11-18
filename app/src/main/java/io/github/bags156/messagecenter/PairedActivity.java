@@ -1487,7 +1487,7 @@ public class PairedActivity extends Activity {
         content.addView(scroll,new LinearLayout.LayoutParams(-1,-2));scroll.post(()->{if(scroll.getHeight()>max){ViewGroup.LayoutParams lp=scroll.getLayoutParams();lp.height=max;scroll.setLayoutParams(lp);}});
         gap(content,12);Dialog[] d=new Dialog[1];
         sheetAction(content,"Copy all",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Message",body));});
-        sheetAction(content,"Translate selected text…",()->{int a=t.getSelectionStart(),b=t.getSelectionEnd();String selected=a>=0&&b>a?body.substring(a,b):body;d[0].dismiss();translationChoices(new JSONObject(),selected,"",translationTarget());});
+        sheetAction(content,"Translate selected text…",()->{int a=Math.min(t.getSelectionStart(),t.getSelectionEnd()),b=Math.max(t.getSelectionStart(),t.getSelectionEnd());String selected=a>=0&&b>a?body.substring(a,b):body;d[0].dismiss();translationChoices(new JSONObject(),selected,"",translationTarget());});
         d[0]=sheet(content);}
     /** Everyone who reacted, with photo or initial, filterable by emoji. */
     private void reactionSheet(JSONObject m,JSONObject c){
