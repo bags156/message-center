@@ -51,13 +51,27 @@ jobs:
           tar -czf dependencies-source.tar.gz vendor go.mod go.sum heic
       - name: Test release update rules
         run: python3 -m unittest discover -s tools -p 'test_*.py' -v
+      - name: Restore source-built translation libraries
+        id: translation-cache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: app/src/main/jniLibs
+          key: translation-native-linux-ndk28-${{ hashFiles('translation-native/*.cpp', 'translation-native/CMakeLists.txt', 'tools/fetch_translation_engine.sh', 'tools/build_translation_engine.sh') }}
       - name: Fetch pinned offline translation source
         run: |
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "cmake;3.22.1"
           bash tools/fetch_translation_engine.sh
           python3 tools/fetch_translation_fixtures.py
           tar --exclude=.git -czf translation-dependencies-source.tar.gz translation-native/engine
-          bash tools/build_translation_engine.sh
+      - name: Build offline translation libraries
+        if: steps.translation-cache.outputs.cache-hit != 'true'
+        run: bash tools/build_translation_engine.sh
+      - name: Cache source-built translation libraries
+        if: steps.translation-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: app/src/main/jniLibs
+          key: translation-native-linux-ndk28-${{ hashFiles('translation-native/*.cpp', 'translation-native/CMakeLists.txt', 'tools/fetch_translation_engine.sh', 'tools/build_translation_engine.sh') }}
       - name: Test, lint, and build Android APK
         run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleRelease :app:assembleDebug :app:assembleDebugAndroidTest
       - name: Verify native libraries for 16 KB Android pages
@@ -180,6 +194,8 @@ jobs:
         if: always()
         run: |
           "$ANDROID_HOME/platform-tools/adb" logcat -d -s AndroidRuntime > android-runtime.txt || true
+          "$ANDROID_HOME/platform-tools/adb" logcat -b crash -d > android-crash.txt || true
+          tail -160 android-crash.txt | sed 's/^/NATIVE /' || true
           # The app's crashes, in the log itself (the report file can't always be downloaded).
           grep -A 40 "FATAL EXCEPTION" android-runtime.txt | head -80 | sed 's/^/CRASH /' || true
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -196,12 +212,15 @@ jobs:
             dialog*.png
             note*.png
             android-runtime.txt
+            android-crash.txt
             emulator.log
           retention-days: 14
 
   release:
     needs: [build, device-smoke]
-    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
+    # One explicit release commit lets the connected GitHub integration publish this update.
+    # Build + offline device tests still gate signing; later versions keep the manual trigger.
+    if: github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.publish) || (github.event_name == 'push' && github.event.head_commit.message == 'Release Message Center 1.5.70'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

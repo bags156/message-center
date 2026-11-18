@@ -29,6 +29,10 @@ Java_io_github_bags156_messagecenter_TranslationNative_translate(JNIEnv* e, jcla
     if (!init()) return nullptr;
     auto text=bytes(e,input), from=bytes(e,source), to=bytes(e,target), model=bytes(e,modelPath),
          vocab=bytes(e,vocabPath), shortlist=bytes(e,shortlistPath);
+    // Marian chooses its binary / SentencePiece readers by filename extension.
+    // Reject a bad path before entering those readers, which can abort on a wrong format.
+    auto ends=[](const std::string& s,const std::string& suffix){return s.size()>=suffix.size() && s.compare(s.size()-suffix.size(),suffix.size(),suffix)==0;};
+    if (!ends(model,".bin") || !ends(vocab,".spm") || !ends(shortlist,".bin")) return nullptr;
     const char* vocabs[] = {vocab.c_str()};
     tk_model_spec spec{from.c_str(),to.c_str(),model.c_str(),vocabs,1,shortlist.c_str(),nullptr,1};
     tk_model* loaded=nullptr; tk_translation_result translated{};

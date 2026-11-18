@@ -1099,7 +1099,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         while(android.os.SystemClock.uptimeMillis()<until&&described(a,"Translated from")==null)Thread.sleep(200);
         check(described(a,"Translated from")!=null,"Automatic incoming translation did not appear");
         int before=new Outbox(ctx).forChat("sr-chat").size();
-        onMainCall(()->{((android.widget.EditText)field("composer").get(a)).setText(original);field("composeLanguage").set(a,"es");method("updateTranslationChip").invoke(a);method("previewOutgoing",boolean.class).invoke(a,false);return null;});
+        onMainCall(()->{((android.widget.EditText)field("composer").get(a)).setText(original);field("composeLanguageOverride").setBoolean(a,true);field("composeLanguage").set(a,"es");method("updateTranslationChip").invoke(a);method("previewOutgoing",boolean.class).invoke(a,false);return null;});
         android.app.Dialog[] dialog={null};android.widget.TextView[] send={null};until=android.os.SystemClock.uptimeMillis()+45000;
         do{runOnMainSync(()->{try{dialog[0]=(android.app.Dialog)field("outgoingTranslation").get(a);if(dialog[0]!=null)for(android.widget.TextView v:viewsOf(dialog[0].getWindow().getDecorView(),android.widget.TextView.class))if("Send in Spanish".contentEquals(v.getText())&&v.isEnabled())send[0]=v;}catch(Exception e){throw new RuntimeException(e);}});
             if(send[0]!=null)break;Thread.sleep(200);}while(android.os.SystemClock.uptimeMillis()<until);

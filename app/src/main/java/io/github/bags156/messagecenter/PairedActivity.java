@@ -184,7 +184,7 @@ public class PairedActivity extends Activity {
     /** Tells ChatBubbles which chat you're in (its Details and Shared count), so that chat's bubble steps aside. */
     private void reportChatOnScreen(){if(bubble())return;boolean inChat=screen.equals("chat")||screen.equals("details")||screen.equals("media")||screen.equals("notes")||screen.equals("note");
         ChatBubbles.showing(this,started&&inChat?chatId:"");}
-    @Override protected void onResume(){super.onResume();resumed=true;Birthdays.loaded=()->{if(!resumed)return;if(screen.equals("inbox"))renderInbox();else if(screen.equals("chat"))renderBirthday();};MusicApps.updated=()->{if(resumed&&screen.equals("chat"))renderMessages(false);};timeFormat=null;dateFormat=null;PairedService.screenVisible(true);refreshDraft();if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
+    @Override protected void onResume(){super.onResume();resumed=true;Birthdays.loaded=()->{if(!resumed)return;if(screen.equals("inbox"))renderInbox();else if(screen.equals("chat"))renderBirthday();};MusicApps.updated=()->{if(resumed&&screen.equals("chat"))renderMessages(false);};timeFormat=null;dateFormat=null;PairedService.screenVisible(true);refreshDraft();updateTranslationChip();if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
         PhotoText.indexDownloaded(this,false);watchCalls(true);if(screen.equals("chat")&&!chatId.isEmpty())loadCalls(chatId);
         if(PairedService.ready()&&screen.equals("pair")){CookieManager.getInstance().removeAllCookies(null);inbox();askNotifications();}
         else if(!bubble()&&!PairedService.emoji().isEmpty()&&login==null)pairing();
@@ -1888,7 +1888,7 @@ public class PairedActivity extends Activity {
     private final java.util.Set<String> autoTranslationAttempts=new java.util.LinkedHashSet<>();
     private final java.util.concurrent.atomic.AtomicInteger translationEpoch=new java.util.concurrent.atomic.AtomicInteger();
     private TextView translationChip,translationStatus;
-    private String composeTranslateChat="",composeLanguage="";
+    private String composeTranslateChat="",composeLanguage="";private boolean composeLanguageOverride;
     private Dialog outgoingTranslation;
     private long translationScrollAt;
     private final Runnable translationRedraw=new Runnable(){public void run(){
@@ -1911,17 +1911,17 @@ public class PairedActivity extends Activity {
         sheetAction(box,"Read incoming in: "+Translation.label(chatSettings.readLanguage(id)),()->{d[0].dismiss();languagePicker("Auto-translate incoming messages",chatSettings.readLanguage(id),true,false,code->{
             chatSettings.setReadLanguage(id,code);autoTranslationAttempts.clear();if(code.isEmpty()&&translationStatus!=null)translationStatus.setVisibility(View.GONE);if(chatId.equals(id)){updateTranslationChip();queueAutoTranslation();}translationSettings(id);});});
         sheetAction(box,"Default send language: "+Translation.label(chatSettings.sendLanguage(id)),()->{d[0].dismiss();languagePicker("Review outgoing messages in",chatSettings.sendLanguage(id),true,false,code->{
-            chatSettings.setSendLanguage(id,code);if(chatId.equals(id)){composeLanguage=code;composeTranslateChat=id;updateTranslationChip();}translationSettings(id);});});
+            chatSettings.setSendLanguage(id,code);if(chatId.equals(id)){composeLanguageOverride=false;composeLanguage=code;composeTranslateChat=id;updateTranslationChip();}translationSettings(id);});});
         d[0]=sheet(box);}
-    private void resetSentLanguage(){composeLanguage=chatSettings.sendLanguage(chatId);updateTranslationChip();}
+    private void resetSentLanguage(){composeLanguageOverride=false;composeLanguage=chatSettings.sendLanguage(chatId);updateTranslationChip();}
     private void updateTranslationChip(){if(translationChip==null)return;
-        if(!composeTranslateChat.equals(chatId)){composeTranslateChat=chatId;composeLanguage=chatSettings.sendLanguage(chatId);}
+        if(!composeTranslateChat.equals(chatId)){composeTranslateChat=chatId;composeLanguageOverride=false;}if(!composeLanguageOverride)composeLanguage=chatSettings.sendLanguage(chatId);
         String read=chatSettings.readLanguage(chatId);
         translationChip.setText((composeLanguage.isEmpty()?"Translate draft":("Send in "+Translation.label(composeLanguage)+" · review"))+(read.isEmpty()?"":"  ·  Read in "+Translation.label(read)));
         translationChip.setContentDescription(translationChip.getText()+". Translation language options");}
     private void composeTranslationMenu(){String id=chatId;List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
-        labels.add("This message: "+(composeLanguage.isEmpty()?"original language":Translation.label(composeLanguage)));actions.add(()->languagePicker("Language for this message",composeLanguage,true,false,code->{if(!chatId.equals(id))return;composeLanguage=code;updateTranslationChip();}));
-        labels.add("Translate and preview this draft…");actions.add(()->languagePicker("Preview draft in",composeLanguage.isEmpty()?translationTarget():composeLanguage,false,false,code->{if(chatId.equals(id)){composeLanguage=code;updateTranslationChip();previewOutgoing(false);}}));
+        labels.add("This message: "+(composeLanguage.isEmpty()?"original language":Translation.label(composeLanguage)));actions.add(()->languagePicker("Language for this message",composeLanguage,true,false,code->{if(!chatId.equals(id))return;composeLanguageOverride=true;composeLanguage=code;updateTranslationChip();}));
+        labels.add("Translate and preview this draft…");actions.add(()->languagePicker("Preview draft in",composeLanguage.isEmpty()?translationTarget():composeLanguage,false,false,code->{if(chatId.equals(id)){composeLanguageOverride=true;composeLanguage=code;updateTranslationChip();previewOutgoing(false);}}));
         labels.add("Chat language defaults…");actions.add(()->translationSettings(id));menuSheet("Translation",labels,actions);}
     private String translationFiles(){StringBuilder key=new StringBuilder();for(Outgoing o:outgoing)if(!o.sending)key.append(o.file.getPath()).append(':').append(System.identityHashCode(o)).append(';');return key.toString();}
     private void previewOutgoing(boolean scheduling){if(composer==null||outgoingTranslation!=null)return;String original=composer.getText().toString();

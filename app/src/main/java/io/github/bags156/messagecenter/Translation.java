@@ -66,11 +66,18 @@ final class Translation {
         check(cancelled);Result result=new Result(said,from,to,false);cache.put(key,result);lastStep="offline translated "+from+" to "+to;return result;
     }
     private static void check(BooleanSupplier cancelled)throws CancellationException {if(cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())throw new CancellationException();}
-    private static File file(Context c,JSONObject spec)throws Exception {return new File(new File(c.getFilesDir(),"translation-models"),spec.getString("sha256"));}
-    private static boolean ready(File f,long size){return f.isFile()&&f.length()==size&&new File(f.getPath()+".ok").isFile();}
+    private static File file(Context c,JSONObject spec)throws Exception {return new File(new File(c.getFilesDir(),"translation-models"),spec.getString("sha256")+"-"+spec.getString("name"));}
+    private static final Set<String> verified=new HashSet<>();
+    private static boolean ready(File f,long size,String expectedHash){
+        if(!f.isFile()||f.length()!=size||!new File(f.getPath()+".ok").isFile())return false;
+        if(verified.contains(f.getPath()))return true;
+        try(InputStream in=new FileInputStream(f)){MessageDigest digest=MessageDigest.getInstance("SHA-256");byte[] b=new byte[65536];int n;while((n=in.read(b))!=-1)digest.update(b,0,n);
+            StringBuilder hash=new StringBuilder();for(byte v:digest.digest())hash.append(String.format(Locale.ROOT,"%02x",v&255));if(!hash.toString().equals(expectedHash))return false;
+            verified.add(f.getPath());return true;}catch(Exception e){return false;}
+    }
     private static void prepare(Context c,String pair,Consumer<String> progress,BooleanSupplier cancelled)throws Exception{
         JSONObject files=models(c).getJSONObject(pair);for(String kind:new String[]{"model","vocab","lex"}){
-            JSONObject spec=files.getJSONObject(kind);File dest=file(c,spec);long expected=spec.getLong("size");if(ready(dest,expected))continue;
+            JSONObject spec=files.getJSONObject(kind);File dest=file(c,spec);long expected=spec.getLong("size");if(ready(dest,expected,spec.getString("sha256")))continue;
             check(cancelled);File dir=dest.getParentFile();if(!dir.isDirectory()&&!dir.mkdirs())throw new Problem("Not enough storage for the language pack.");
             if(dir.getUsableSpace()<expected+20_000_000L)throw new Problem("Free some storage to download this language pack.");
             File part=new File(dest.getPath()+".part");HttpURLConnection conn=null;
@@ -84,7 +91,7 @@ final class Translation {
                     out.getFD().sync();}
                 StringBuilder hash=new StringBuilder();for(byte b:digest.digest())hash.append(String.format(Locale.ROOT,"%02x",b&255));
                 if(total!=expected||!hash.toString().equals(spec.getString("sha256")))throw new IOException("model checksum");
-                if(!part.renameTo(dest))throw new IOException("model install");try(FileOutputStream marker=new FileOutputStream(dest.getPath()+".ok")){marker.write(1);}
+                if(!part.renameTo(dest))throw new IOException("model install");verified.add(dest.getPath());try(FileOutputStream marker=new FileOutputStream(dest.getPath()+".ok")){marker.write(1);}
             }catch(CancellationException e){throw e;}catch(Exception e){throw new Problem("Language pack couldn't download. Check your connection and try again; your original is unchanged.");}
             finally{if(conn!=null)conn.disconnect();part.delete();}
         }

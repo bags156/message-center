@@ -10,7 +10,7 @@ dest = root / 'app/src/androidTest/assets/translation'
 dest.mkdir(parents=True, exist_ok=True)
 for pair in ('es-en', 'en-es'):
     for spec in catalog[pair].values():
-        path = dest / spec['sha256']
+        path = dest / (spec['sha256'] + '-' + spec['name'])
         if path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() == spec['sha256']:
             continue
         with urllib.request.urlopen(spec['url'], timeout=60) as response:
