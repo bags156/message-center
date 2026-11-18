@@ -1102,6 +1102,11 @@ public final class OnDeviceSmoke extends Instrumentation {
         long until=android.os.SystemClock.uptimeMillis()+45000;
         while(android.os.SystemClock.uptimeMillis()<until&&described(a,"Translated from")==null)Thread.sleep(200);
         check(described(a,"Translated from")!=null,"Automatic incoming translation did not appear");
+        onMainCall(()->method("setReadingLanguage",String.class,String.class).invoke(a,"sr-chat","es"));waitForIdleSync();
+        check(exactText(a,"¿Dónde estás? Te espero en la puerta del cine.")!=null,"Changing the reading language kept the previous translation on screen");
+        onMainCall(()->method("setReadingLanguage",String.class,String.class).invoke(a,"sr-chat","en"));until=android.os.SystemClock.uptimeMillis()+45000;
+        while(android.os.SystemClock.uptimeMillis()<until&&described(a,"Translated from")==null)Thread.sleep(200);
+        check(described(a,"Translated from")!=null,"Changing the reading language back didn't resume automatic translation");
         int before=new Outbox(ctx).forChat("sr-chat").size();
         onMainCall(()->{((android.widget.EditText)field("composer").get(a)).setText(original);field("composeLanguageOverride").setBoolean(a,true);field("composeLanguage").set(a,"es");method("updateTranslationChip").invoke(a);method("previewOutgoing",boolean.class).invoke(a,false);return null;});
         android.app.Dialog[] dialog={null};android.widget.TextView[] send={null};until=android.os.SystemClock.uptimeMillis()+45000;

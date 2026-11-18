@@ -1910,8 +1910,9 @@ public class PairedActivity extends Activity {
         LinearLayout labels=vertical();labels.setPadding(dp(14),0,dp(10),0);labels.addView(text(title,16,ink,false));TextView value=text(summary,13,muted,false);value.setMaxLines(2);value.setEllipsize(TextUtils.TruncateAt.END);labels.addView(value);
         r.addView(labels,new LinearLayout.LayoutParams(0,-2,1));r.addView(text("›",22,muted,false));pressable(r);r.setContentDescription(title+": "+summary);r.setOnClickListener(v->action.run());addSettingRow(group,r);return value;}
     private void refreshTranslationSummary(String id){if(detailTranslationSummary!=null&&chatId.equals(id)){String summary=translationSummary(id);detailTranslationSummary.setText(summary);((View)((View)detailTranslationSummary.getParent()).getParent()).setContentDescription("Translation: "+summary);}}
-    private void setReadingLanguage(String id,String code){chatSettings.setReadLanguage(id,code);autoTranslationAttempts.clear();if(code.isEmpty()&&translationStatus!=null)translationStatus.setVisibility(View.GONE);
-        if(chatId.equals(id)){updateTranslationChip();queueAutoTranslation();}refreshTranslationSummary(id);}
+    private void setReadingLanguage(String id,String code){chatSettings.setReadLanguage(id,code);autoTranslationAttempts.clear();
+        java.util.Iterator<Map.Entry<String,String[]>> cached=translations.entrySet().iterator();while(cached.hasNext()){Map.Entry<String,String[]> entry=cached.next();JSONObject message=store.message(entry.getKey());if(message!=null&&id.equals(message.optString("conversationID"))){showingOriginal.remove(entry.getKey());cached.remove();}}
+        if(translationStatus!=null)translationStatus.setVisibility(View.GONE);if(chatId.equals(id)){updateTranslationChip();if(screen.equals("chat"))renderMessages(false);queueAutoTranslation();}refreshTranslationSummary(id);}
     private void setSendingLanguage(String id,String code){chatSettings.setSendLanguage(id,code);if(chatId.equals(id)){composeLanguageOverride=false;composeLanguage=code;composeTranslateChat=id;updateTranslationChip();}refreshTranslationSummary(id);}
     private Dialog translationSheet(View content){int available=Math.min(getWindowManager().getCurrentWindowMetrics().getBounds().height(),root.getHeight()>0?root.getHeight():Integer.MAX_VALUE);final int maxHeight=Math.max(dp(180),Math.round(available*.72f));
         ScrollView review=new ScrollView(this){@Override protected void onMeasure(int w,int h){super.onMeasure(w,View.MeasureSpec.makeMeasureSpec(Math.min(View.MeasureSpec.getSize(h),maxHeight),View.MeasureSpec.AT_MOST));}};
@@ -1996,12 +1997,12 @@ public class PairedActivity extends Activity {
             if(submitted++>=12)break;autoTranslationAttempts.add(key);if(autoTranslationAttempts.size()>256)autoTranslationAttempts.remove(autoTranslationAttempts.iterator().next());
             Translation.worker.execute(()->{try{
                 String from=Translation.detect(getApplicationContext(),words);if(from.isEmpty()||from.equals(target))return;
-                Translation.Result answer=Translation.translate(getApplicationContext(),words,from,target,step->ui.post(()->{if(translationEpoch.get()==epoch&&translationStatus!=null){translationStatus.setText(step);translationStatus.setVisibility(View.VISIBLE);}}),
+                Translation.Result answer=Translation.translate(getApplicationContext(),words,from,target,step->ui.post(()->{if(translationEpoch.get()==epoch&&chatSettings.readLanguage(id).equals(target)&&translationStatus!=null){translationStatus.setText(step);translationStatus.setVisibility(View.VISIBLE);}}),
                     ()->translationEpoch.get()!=epoch||!chatSettings.readLanguage(id).equals(target));
                 ui.post(()->{if(translationEpoch.get()!=epoch||!chatId.equals(id)||!chatSettings.readLanguage(id).equals(target)||isDestroyed())return;
                     translations.put(mid,new String[]{answer.text,Translation.label(answer.from),target,words});if(translationStatus!=null)translationStatus.setVisibility(View.GONE);
                     ui.removeCallbacks(translationRedraw);ui.postDelayed(translationRedraw,400);});
-            }catch(java.util.concurrent.CancellationException ignored){}catch(Exception e){ui.post(()->{if(translationEpoch.get()==epoch&&translationStatus!=null){translationStatus.setText("Translation paused · tap to retry language pack download");translationStatus.setVisibility(View.VISIBLE);}});}});
+            }catch(java.util.concurrent.CancellationException ignored){}catch(Exception e){ui.post(()->{if(translationEpoch.get()==epoch&&chatSettings.readLanguage(id).equals(target)&&translationStatus!=null){translationStatus.setText("Translation paused · tap to retry language pack download");translationStatus.setVisibility(View.VISIBLE);}});}});
         }}
     /** "Hannah turns 30 today · Say happy birthday": from their contact, in a one-to-one chat; ✕ hides it until next year. */
     private void renderBirthday(){if(birthdayBar==null)return;birthdayBar.removeAllViews();birthdayBar.setVisibility(View.GONE);
