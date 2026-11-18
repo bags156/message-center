@@ -1110,11 +1110,11 @@ public final class OnDeviceSmoke extends Instrumentation {
         int before=new Outbox(ctx).forChat("sr-chat").size();
         onMainCall(()->{((android.widget.EditText)field("composer").get(a)).setText(original);field("composeLanguageOverride").setBoolean(a,true);field("composeLanguage").set(a,"es");method("updateTranslationChip").invoke(a);method("previewOutgoing",boolean.class).invoke(a,false);return null;});
         android.app.Dialog[] dialog={null};android.widget.TextView[] send={null};until=android.os.SystemClock.uptimeMillis()+45000;
-        do{runOnMainSync(()->{try{dialog[0]=(android.app.Dialog)field("outgoingTranslation").get(a);if(dialog[0]!=null)for(android.widget.TextView v:viewsOf(dialog[0].getWindow().getDecorView(),android.widget.TextView.class))if("Send in Spanish".contentEquals(v.getText())&&v.isEnabled())send[0]=v;}catch(Exception e){throw new RuntimeException(e);}});
+        do{runOnMainSync(()->{try{dialog[0]=(android.app.Dialog)field("outgoingTranslation").get(a);if(dialog[0]!=null)for(android.widget.TextView v:viewsOf(dialog[0].getWindow().getDecorView(),android.widget.TextView.class))if("Send in Spanish".contentEquals(v.getText())&&v.isEnabled()&&v.isClickable())send[0]=v;}catch(Exception e){throw new RuntimeException(e);}});
             if(send[0]!=null)break;Thread.sleep(200);}while(android.os.SystemClock.uptimeMillis()<until);
         check(send[0]!=null,"The translated composer preview never became ready");String[] preview={""};
         runOnMainSync(()->{for(android.widget.TextView v:viewsOf(dialog[0].getWindow().getDecorView(),android.widget.TextView.class))if(v.isTextSelectable())preview[0]=v.getText().toString();});
-        check(!preview[0].isEmpty()&&!original.equals(preview[0]),"The Spanish draft preview just echoed the English original");shoot("shot-translation-preview");
+        shoot("shot-translation-preview");check(!preview[0].isEmpty(),"The translated preview is empty");check(!original.equals(preview[0]),"The Spanish draft preview just echoed the English original");
         onMainCall(()->{check(original.contentEquals(((android.widget.EditText)field("composer").get(a)).getText()),"Translation overwrote the typed draft");
             ((android.widget.EditText)field("composer").get(a)).setText("Changed while the translation was open");send[0].performClick();return null;});
         check(new Outbox(ctx).forChat("sr-chat").size()==before,"A stale translated preview entered the outbox");

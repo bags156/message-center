@@ -1943,7 +1943,7 @@ public class PairedActivity extends Activity {
         if(original.trim().isEmpty()){toast("Type a message to translate first.");return;}
         String id=chatId,reply=replyId,files=translationFiles(),target=composeLanguage;int epoch=translationEpoch.get();View focused=getCurrentFocus();if(focused!=null)hideKeyboard(focused);
         java.util.concurrent.atomic.AtomicBoolean cancelled=new java.util.concurrent.atomic.AtomicBoolean();
-        LinearLayout content=vertical();content.addView(text("Send in "+Translation.label(target),20,ink,true));gap(content,8);
+        LinearLayout content=vertical();content.addView(text("Review translation",20,ink,true));gap(content,8);
         TextView status=text("Detecting language on your phone…",13,muted,false);content.addView(status);gap(content,8);
         TextView result=text("",17,ink,false);result.setTextIsSelectable(true);result.setPadding(dp(12),dp(12),dp(12),dp(12));result.setBackground(shape(surface,12));content.addView(result,new LinearLayout.LayoutParams(-1,-2));
         TextView originalText=text("You wrote: "+original,13,muted,false);originalText.setMaxLines(3);content.addView(originalText);gap(content,8);
