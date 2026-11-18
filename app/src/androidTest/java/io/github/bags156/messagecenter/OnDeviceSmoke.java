@@ -1039,10 +1039,10 @@ public final class OnDeviceSmoke extends Instrumentation {
         finally{Birthdays.setForChecks(new java.util.HashMap<>());onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("bday-chat");}}}
     /**
      * Suggested replies and Translate. Replies come from Android where the phone has a reply model,
-     * else the built-in ones (this test phone has none, so those show). Translation depends on the
-     * phone, so this checks nothing breaks and notes what this one did.
+     * else the built-in ones (this test phone has none, so those show). Translation uses real
+     * source-built native inference with test-only packs, even without a system translation service.
      */
-    private void checkSuggestionsAndTranslate(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();long now=System.currentTimeMillis();
+    private void checkSuggestionsAndTranslate(PairedActivity a)throws Exception{installTranslationFixtures();android.content.Context ctx=getTargetContext();long now=System.currentTimeMillis();
         try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'sr-chat',name:'Sam Suggest',type:'RCS',lastMessageTimestamp:"+now*1000+",participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'ss',number:'+15557770133'},fullName:'Sam Suggest',firstName:'Sam'}]}"));
             String[][] said={{"sr-1","Hey, are you free this weekend?"},{"sr-2","Want to grab lunch tomorrow?"}};
             for(int i=0;i<said.length;i++)store.message(new JSONObject().put("messageID",said[i][0]).put("conversationID","sr-chat").put("participantID","ss").put("timestamp",(now-60_000L+i*1000)*1000)
@@ -1069,15 +1069,49 @@ public final class OnDeviceSmoke extends Instrumentation {
             JSONObject spanish=new JSONObject().put("messageID","sr-es").put("conversationID","sr-chat").put("participantID","ss").put("timestamp",System.currentTimeMillis()*1000)
                 .put("messageStatus",new JSONObject().put("status","INCOMING_COMPLETE")).put("messageInfo",new org.json.JSONArray().put(new JSONObject().put("messageContent",new JSONObject().put("content","¿Dónde estás? Te espero en la puerta del cine."))));
             try(PairedStore store=new PairedStore(ctx)){store.message(spanish,0,true);}onMainCall(()->method("renderMessages",boolean.class).invoke(a,true));waitForIdleSync();
-            onMainCall(()->method("translate",JSONObject.class,String.class).invoke(a,spanish,PairedProtocol.text(spanish)));
+            onMainCall(()->method("translateMessage",JSONObject.class,String.class,String.class,String.class).invoke(a,spanish,PairedProtocol.text(spanish),"es","en"));
             until=android.os.SystemClock.uptimeMillis()+45000;boolean shown=false;
             while(android.os.SystemClock.uptimeMillis()<until&&!(shown=described(a,"Translated from")!=null))Thread.sleep(300);
-            note("PROBE translate "+(shown?"translated on the phone":"no on-device translation here (hands off to a translation app)")+": "+Translation.lastStep);
+            check(shown,"Offline translation did not appear in the chat: "+Translation.lastStep);note("PROBE translate offline engine passed: "+Translation.lastStep);
             if(shown){shoot("shot-translated");runOnMainSync(()->described(a,"Translated from").performClick());waitForIdleSync();
                 check(described(a,"Show translation")!=null,"Tapping a translation didn't show the original");}
+            checkTranslationPreview(a);
             check(!a.isFinishing(),"The chat closed after Translate");}
         finally{Thread.sleep(500);if(!a.hasWindowFocus()){ctx.startActivity(new android.content.Intent(ctx,PairedActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK|android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));Thread.sleep(1500);}
             onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("sr-chat");}}}
+    /** Hash-verified packs are in the test APK, never in the release. No network is used here. */
+    private void installTranslationFixtures()throws Exception{
+        java.io.File dir=new java.io.File(getTargetContext().getFilesDir(),"translation-models");dir.mkdirs();
+        for(String name:getContext().getAssets().list("translation")){
+            try(java.io.InputStream in=getContext().getAssets().open("translation/"+name);java.io.OutputStream out=new java.io.FileOutputStream(new java.io.File(dir,name))){byte[] b=new byte[65536];int n;while((n=in.read(b))!=-1)out.write(b,0,n);}
+            try(java.io.OutputStream marker=new java.io.FileOutputStream(new java.io.File(dir,name+".ok"))){marker.write(1);}
+        }
+    }
+    /** Real native inference, auto language detection, draft preservation and a stale-preview send guard. */
+    private void checkTranslationPreview(PairedActivity a)throws Exception{
+        android.content.Context ctx=getTargetContext();String original="Hello, how are you? I hope you are having a wonderful day today.";
+        String detected=Translation.worker.submit(()->Translation.detect(ctx,"¿Dónde estás? Te espero en la puerta del cine.")).get(30,java.util.concurrent.TimeUnit.SECONDS);
+        check("es".equals(detected),"Bundled language detection did not recognize Spanish ("+detected+")");
+        onMainCall(()->{
+            ((java.util.Map<?,?>)field("translations").get(a)).clear();((java.util.Set<?>)field("showingOriginal").get(a)).clear();
+            new ChatSettings(ctx).setReadLanguage("sr-chat","en");method("renderMessages",boolean.class).invoke(a,true);return null;});
+        long until=android.os.SystemClock.uptimeMillis()+45000;
+        while(android.os.SystemClock.uptimeMillis()<until&&described(a,"Translated from")==null)Thread.sleep(200);
+        check(described(a,"Translated from")!=null,"Automatic incoming translation did not appear");
+        int before=new Outbox(ctx).forChat("sr-chat").size();
+        onMainCall(()->{((android.widget.EditText)field("composer").get(a)).setText(original);field("composeLanguage").set(a,"es");method("updateTranslationChip").invoke(a);method("previewOutgoing",boolean.class).invoke(a,false);return null;});
+        android.app.Dialog[] dialog={null};android.widget.TextView[] send={null};until=android.os.SystemClock.uptimeMillis()+45000;
+        do{runOnMainSync(()->{try{dialog[0]=(android.app.Dialog)field("outgoingTranslation").get(a);if(dialog[0]!=null)for(android.widget.TextView v:viewsOf(dialog[0].getWindow().getDecorView(),android.widget.TextView.class))if("Send in Spanish".contentEquals(v.getText())&&v.isEnabled())send[0]=v;}catch(Exception e){throw new RuntimeException(e);}});
+            if(send[0]!=null)break;Thread.sleep(200);}while(android.os.SystemClock.uptimeMillis()<until);
+        check(send[0]!=null,"The translated composer preview never became ready");shoot("shot-translation-preview");
+        onMainCall(()->{check(original.contentEquals(((android.widget.EditText)field("composer").get(a)).getText()),"Translation overwrote the typed draft");
+            ((android.widget.EditText)field("composer").get(a)).setText("Changed while the translation was open");send[0].performClick();return null;});
+        check(new Outbox(ctx).forChat("sr-chat").size()==before,"A stale translated preview entered the outbox");
+        boolean[] guarded={false};runOnMainSync(()->{for(android.widget.TextView v:viewsOf(dialog[0].getWindow().getDecorView(),android.widget.TextView.class))if(v.getText().toString().contains("changed. Close this preview"))guarded[0]=true;dialog[0].dismiss();});
+        check(guarded[0],"Editing the draft did not invalidate its translated preview");
+        onMainCall(()->{((android.widget.EditText)field("composer").get(a)).setText("");new ChatSettings(ctx).setReadLanguage("sr-chat","");new ChatSettings(ctx).setSendLanguage("sr-chat","");return null;});
+        note("PROBE translation: native Spanish→English, automatic inline reading, English→Spanish preview and stale-draft guard passed; no messages sent");
+    }
     /** The first text on screen that says exactly this, or null. */
     private android.widget.TextView exactText(PairedActivity a,String words)throws Exception{android.widget.TextView[] hit={null};
         runOnMainSync(()->{java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(found,words,android.view.View.FIND_VIEWS_WITH_TEXT);

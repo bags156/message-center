@@ -21,7 +21,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -51,6 +51,13 @@ jobs:
           tar -czf dependencies-source.tar.gz vendor go.mod go.sum heic
       - name: Test release update rules
         run: python3 -m unittest discover -s tools -p 'test_*.py' -v
+      - name: Fetch pinned offline translation source
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "cmake;3.22.1"
+          bash tools/fetch_translation_engine.sh
+          python3 tools/fetch_translation_fixtures.py
+          tar --exclude=.git -czf translation-dependencies-source.tar.gz translation-native/engine
+          bash tools/build_translation_engine.sh
       - name: Test, lint, and build Android APK
         run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleRelease :app:assembleDebug :app:assembleDebugAndroidTest
       - name: Verify native libraries for 16 KB Android pages
@@ -72,7 +79,9 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dependency-source
-          path: bridge/dependencies-source.tar.gz
+          path: |
+            bridge/dependencies-source.tar.gz
+            translation-dependencies-source.tar.gz
           if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -240,9 +249,10 @@ jobs:
           VERSION="$(python3 -c 'import json; print(json.load(open("out/release-metadata.json"))["versionName"])')"
           cp signing-certificate.sha256 out/
           cp dependency-source/dependencies-source.tar.gz out/
+          cp dependency-source/translation-dependencies-source.tar.gz out/
           FLAGS=()
           if [[ "$VERSION" == *-* ]]; then FLAGS+=(--prerelease --latest=false); fi
           (cd out && sha256sum message-center.apk > SHA256SUMS)
           gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" "${FLAGS[@]}" \
             --title "Message Center $VERSION" --notes-file docs/release-notes.md \
-            out/message-center.apk out/SHA256SUMS out/signing-certificate.sha256 out/release-metadata.json out/dependencies-source.tar.gz
+            out/message-center.apk out/SHA256SUMS out/signing-certificate.sha256 out/release-metadata.json out/dependencies-source.tar.gz out/translation-dependencies-source.tar.gz

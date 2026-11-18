@@ -50,6 +50,11 @@ final class ChatSettings {
      * "off" to leave the song links you send as they are, or "" to go by the links they send.
      */
     String theirMusic(String id) { return prefs.getString("music_their:" + id, ""); }
+    /** Independent per-chat read/send languages. Empty means off; outgoing always needs review. */
+    String readLanguage(String id) { return prefs.getString("translate_read:" + id, ""); }
+    String sendLanguage(String id) { return prefs.getString("translate_send:" + id, ""); }
+    void setReadLanguage(String id,String code) { prefs.edit().putString("translate_read:"+id,TranslationPlan.language(code)).apply(); }
+    void setSendLanguage(String id,String code) { prefs.edit().putString("translate_send:"+id,TranslationPlan.language(code)).apply(); }
     void setTheirMusic(String id, String value) {
         if (value == null || value.isEmpty()) prefs.edit().remove("music_their:" + id).apply(); else prefs.edit().putString("music_their:" + id, value).apply();
     }

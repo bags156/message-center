@@ -35,3 +35,12 @@ The emoji picker's names and keywords (app/src/main/assets/emoji.tsv) come from 
 by Miles Johnson, MIT license (https://github.com/milesj/emojibase), which draws on Unicode CLDR
 annotations, Unicode License v3 (https://www.unicode.org/license.txt). Emoji are drawn with the
 phone's own emoji font.
+
+In-chat translation uses translate-kit 0.1.0 (Apache-2.0) by Marcos Holgado,
+https://github.com/marcosholgado/translate-kit, pinned at 2dcdcb1559ed405d65ae1ff1e786d3a5ebb933c4.
+It links CLD2 (Apache-2.0), Mozilla Bergamot (MPL-2.0), Marian NMT (MIT), and the
+components listed in translation-native/THIRD_PARTY_LICENSES.md. The release's
+translation-dependencies-source archive includes the pinned source, patches and licenses.
+Downloaded translation models are Mozilla/University of Edinburgh's Bergamot models,
+from Firefox Remote Settings; model metadata and SHA-256 values are pinned in
+app/src/main/assets/translation-models.json. Models are not included in the release APK.

@@ -206,6 +206,7 @@ public class PairedActivity extends Activity {
     // ---- Shared building blocks ----
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
     private void base(String name){
+        translationEpoch.incrementAndGet();ui.removeCallbacks(autoVisibleTranslations);ui.removeCallbacks(translationRedraw);translationChip=null;translationStatus=null;if(outgoingTranslation!=null)outgoingTranslation.dismiss();
         if(screen.equals("note"))saveNote();noteField=null;noteTags=null;noteFiles=null;notePin=null;noteStatus=null;editing=null;
         if(!name.equals("chat"))stopInline();
         if(screen.equals("inbox")&&!name.equals("inbox")&&scroll!=null){inboxScrollY=scroll.getScrollY();inboxBack=inboxSpotNow();inboxKey=inboxKey();repliedSinceInbox=false;}
@@ -889,7 +890,7 @@ public class PairedActivity extends Activity {
         scroll.setSmoothScrollingEnabled(false);pinnedBottom=true;keepSpot=null;
         if(!keeperAdded){keeperAdded=true;getWindow().getDecorView().getViewTreeObserver().addOnPreDrawListener(this::keepPlace);}
         scroll.setOnScrollChangeListener((v,x,y,ox,oy)->{View ch=scroll.getChildAt(0);pinnedBottom=ch!=null&&ch.getHeight()-scroll.getHeight()-y<dp(80);
-            if(placing==null)keepSpot=pinnedBottom?null:spotAt(y);updateJumpButton();if(y<oy&&moreSaved&&y<scroll.getHeight())showOlderSaved();else if(y==0&&oy>0)loadOlderMessages();});
+            translationScrollAt=android.os.SystemClock.uptimeMillis();queueAutoTranslation();if(placing==null)keepSpot=pinnedBottom?null:spotAt(y);updateJumpButton();if(y<oy&&moreSaved&&y<scroll.getHeight())showOlderSaved();else if(y==0&&oy>0)loadOlderMessages();});
         ScrollView chatScroll=scroll;View.OnLayoutChangeListener keepBottom=(v,l,t,r,b,ol,ot,or,ob)->{if(pinnedBottom&&scroll==chatScroll&&(b-t)!=(ob-ot))chatScroll.scrollTo(0,items.getHeight());};
         items.addOnLayoutChangeListener(keepBottom);scroll.addOnLayoutChangeListener(keepBottom);
         typingRow=row();typingRow.setPadding(dp(14),dp(2),dp(14),dp(6));typingRow.setVisibility(View.GONE);
@@ -916,6 +917,9 @@ public class PairedActivity extends Activity {
         recordWave=new Waveform(this);recordWave.liveMode();recordWave.setColors(danger,danger);LinearLayout.LayoutParams rw=new LinearLayout.LayoutParams(0,dp(32),1);rw.setMarginStart(dp(14));rw.setMarginEnd(dp(14));recordBar.addView(recordWave,rw);
         ImageView sendRec=roundIcon(R.drawable.ic_send,theme.accent(dark),theme.onAccent(dark),44);pressDim(sendRec);sendRec.setContentDescription("Send voice message");sendRec.setOnClickListener(v->finishRecording(true));recordBar.addView(sendRec);root.addView(recordBar);
         quickRow=row();quickScroll=new HorizontalScrollView(this);Fonts.area(quickScroll,"composer");quickScroll.setHorizontalScrollBarEnabled(false);quickScroll.setPadding(dp(12),dp(2),dp(12),dp(4));quickScroll.addView(quickRow);quickScroll.setVisibility(View.GONE);root.addView(quickScroll);
+        translationStatus=text("",12,muted,false);translationStatus.setPadding(dp(16),dp(3),dp(16),dp(3));translationStatus.setVisibility(View.GONE);
+        translationStatus.setOnClickListener(v->{autoTranslationAttempts.clear();queueAutoTranslation();});root.addView(translationStatus);
+        translationChip=text("",12,theme.accent(dark),true);translationChip.setPadding(dp(16),dp(8),dp(16),dp(8));pressable(translationChip);translationChip.setOnClickListener(v->composeTranslationMenu());root.addView(translationChip);updateTranslationChip();
         LinearLayout compose=row();compose.setPadding(dp(4),dp(4),dp(8),0);composeRow=compose;Fonts.area(compose,"composer");
         compose.addView(icon(R.drawable.ic_add,ink,"Attach photos, videos, or files",this::attach));
         composerHint=PairedProtocol.rcs(c)?"RCS message":"Text message";composer=new EditText(this);composer.setHint(composerHint);composer.setTextColor(ink);composer.setHintTextColor(muted);composer.setTextSize(17*textScale);
@@ -968,6 +972,7 @@ public class PairedActivity extends Activity {
         menuSwitch(settings,R.drawable.ic_pin,0xfff59e0b,"Pin to top",chatSettings.pinned(c),on->togglePin(store.chat(id)));
         String notify=chatSettings.muted(id)?"Muted":chatSettings.snoozed(id)?"Snoozed until "+snoozeLabel(id):"On";
         menuRow(settings,R.drawable.ic_bell,0xff8b5cf6,"Notifications",notify,false,closing.apply(()->notificationChoices(id)));
+        menuRow(settings,R.drawable.ic_info,0xff3b82f6,"Translation","Read and send languages",false,closing.apply(()->translationSettings(id)));
         menuSwitch(settings,R.drawable.ic_eye,0xff3b82f6,"Read receipts",chatSettings.receipts(id),on->toggleReceipts(id));
         gap(content,12);
         // Where it opens, and putting it away.
@@ -1111,7 +1116,7 @@ public class PairedActivity extends Activity {
             ValueAnimator a=ValueAnimator.ofFloat(blur,0f);a.setDuration(420);a.addUpdateListener(x->{float r=(float)x.getAnimatedValue();content.setRenderEffect(r<0.5f?null:android.graphics.RenderEffect.createBlurEffect(r,r,android.graphics.Shader.TileMode.DECAL));});
             a.addListener(new android.animation.AnimatorListenerAdapter(){@Override public void onAnimationEnd(android.animation.Animator an){content.setRenderEffect(null);}});a.start();box.postDelayed(later,INK_SHOWN_MS);});
         cover.setOnLongClickListener(v->{messageSheet(m);return true;});return box;}
-    private void renderMessages(boolean bottom){if(items==null||!screen.equals("chat"))return;ui.post(this::updateQuickRow);long perfAll=Perf.start(),perf=perfAll;refreshSavedAttachments();voiceCards.clear();voiceOrder.clear();
+    private void renderMessages(boolean bottom){if(items==null||!screen.equals("chat"))return;queueAutoTranslation();ui.post(this::updateQuickRow);long perfAll=Perf.start(),perf=perfAll;refreshSavedAttachments();voiceCards.clear();voiceOrder.clear();
         ScrollView sv=scroll;View content=sv.getChildAt(0);int y,before;boolean atBottom;Spot spot;
         // If the last redraw hasn't been laid out yet, its new views have no positions; keep aiming where it was aiming.
         if(placing!=null&&placingIn==sv){sv.getViewTreeObserver().removeOnPreDrawListener(placing);placing=null;y=placeY;before=placeBefore;atBottom=bottom||placeBottom;spot=atBottom?null:placeSpot;}
@@ -1316,9 +1321,9 @@ public class PairedActivity extends Activity {
             if(added){text.setText(sp);text.setHighlightColor(Color.TRANSPARENT);text.setMovementMethod(LinkMovementMethod.getInstance());text.setOnLongClickListener(v->{messageSheet(m);return true;});}}
         if(text.getMovementMethod()!=null)holdLinks(text,m);
         b.setOnLongClickListener(v->{messageSheet(m);return true;});b.setOnClickListener(v->tapped(m,b));if(text.getMovementMethod()!=null)text.setOnClickListener(v->tapped(m,b));
-        String[] tr=translations.get(m.optString("messageID"));View translated=null;
+        String[] tr=translations.get(m.optString("messageID"));if(tr!=null&&!tr[3].equals(translationWords(m))){translations.remove(m.optString("messageID"));tr=null;}View translated=null;
         if(tr!=null){String mid=m.optString("messageID");boolean original=showingOriginal.contains(mid);LinearLayout box=vertical();box.setPadding(dp(14),dp(4),dp(14),dp(2));
-            TextView head=text(original?"Show translation":"Translated from "+tr[1]+" \u00b7 Show original",11,muted,false);head.setGravity(outgoing?Gravity.END:Gravity.START);box.addView(head);
+            TextView head=text(original?"Show translation":"Translated from "+tr[1]+" to "+Translation.label(tr[2])+" \u00b7 Show original",11,muted,false);head.setGravity(outgoing?Gravity.END:Gravity.START);box.addView(head);
             if(!original){TextView said=text(tr[0],15,ink,false);said.setGravity(outgoing?Gravity.END:Gravity.START);said.setTextIsSelectable(true);box.addView(said);}
             box.setContentDescription(original?"Show translation":"Translated from "+tr[1]+": "+tr[0]);box.setOnClickListener(v->{if(!showingOriginal.remove(mid))showingOriginal.add(mid);renderMessages(false);});
             translated=box;}
@@ -1476,12 +1481,13 @@ public class PairedActivity extends Activity {
     }
     /** Shows a message's text so part of it can be selected with the usual handles and copied or shared. */
     private void selectText(String body){LinearLayout content=vertical();
-        TextView hint=text("Press and hold a word, drag the handles, then tap Copy.",13,muted,false);content.addView(hint);gap(content,10);
+        TextView hint=text("Press and hold a word and drag the handles. Copy or translate the selected words.",13,muted,false);content.addView(hint);gap(content,10);
         TextView t=text(body,17,ink,false);t.setTextIsSelectable(true);t.setLineSpacing(0,1.15f);t.setPadding(dp(14),dp(12),dp(14),dp(12));t.setBackground(shape(surface,16));
         ScrollView scroll=new ScrollView(this);scroll.addView(t);int max=Math.round(getResources().getDisplayMetrics().heightPixels*0.55f);
         content.addView(scroll,new LinearLayout.LayoutParams(-1,-2));scroll.post(()->{if(scroll.getHeight()>max){ViewGroup.LayoutParams lp=scroll.getLayoutParams();lp.height=max;scroll.setLayoutParams(lp);}});
         gap(content,12);Dialog[] d=new Dialog[1];
         sheetAction(content,"Copy all",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Message",body));});
+        sheetAction(content,"Translate selected text…",()->{int a=t.getSelectionStart(),b=t.getSelectionEnd();String selected=a>=0&&b>a?body.substring(a,b):body;d[0].dismiss();translationChoices(new JSONObject(),selected,"",translationTarget());});
         d[0]=sheet(content);}
     /** Everyone who reacted, with photo or initial, filterable by emoji. */
     private void reactionSheet(JSONObject m,JSONObject c){
@@ -1582,19 +1588,21 @@ public class PairedActivity extends Activity {
     private void send(){if(composer==null)return;
         if(!musicPending.isEmpty()){if(!sendAfterMusic){sendAfterMusic=true;showMusicNote("Finding it on "+musicPendingApp+"\u2026 sends in a moment",false);
             ui.postDelayed(()->{if(sendAfterMusic){sendAfterMusic=false;musicPending="";send();}},8000);}return;}
-        repliedSinceInbox=true;unreadSince=-1;String body=composer.getText().toString(),id=chatId,reply=replyId;JSONObject c=store.chat(id);
+        if(!composeLanguage.isEmpty()&&!composer.getText().toString().trim().isEmpty()){previewOutgoing(false);return;}sendBody(composer.getText().toString());}
+    private void sendBody(String body){if(composer==null)return;
+        repliedSinceInbox=true;unreadSince=-1;String id=chatId,reply=replyId;JSONObject c=store.chat(id);
         boolean files=false;for(Outgoing o:outgoing)if(!o.sending)files=true;
         if(body.trim().isEmpty()&&!files)return;if(c==null){error("Refresh this conversation before sending.");return;}
         if(sendButton!=null)sendButton.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM);
         // "Happy birthday" sets off balloons here too, as it does on iPhones.
         String fx=effectsOn()?Effects.phrase(body):"";if(Effects.fullScreen(fx))ui.postDelayed(()->{if(screen.equals("chat")&&chatId.equals(id))playEffect(fx,null,body.trim());},280);
         if(files){sendAttachments(c,body.trim(),reply);return;}
-        if(undoSendOn()){long hold=undoSendMs();JSONObject held=outbox.add(id,body,reply,hold);drafts.remove(id);composer.setText("");cancelReply();renderMessages(true);
+        if(undoSendOn()){long hold=undoSendMs();JSONObject held=outbox.add(id,body,reply,hold);drafts.remove(id);composer.setText("");resetSentLanguage();cancelReply();renderMessages(true);
             String hid=held.optString("id");ui.postDelayed(()->releaseHeld(hid),hold);return;}
         // Its own guard (not the one for loading): a slow or stuck load never stops you sending.
         if(sendingText)return;sendingText=true;ui.postDelayed(()->sendingText=false,30_000);
         PairedService.sendOrQueue(this,id,body,reply,(value,e)->{sendingText=false;
-            if(!e.isEmpty()){error(e);return;}if("queued".equals(value))toast("Saved. It will send when Message Center reconnects.");drafts.remove(id);if(screen.equals("chat")&&chatId.equals(id)){composer.setText("");cancelReply();}
+            if(!e.isEmpty()){error(e);return;}if("queued".equals(value))toast("Saved. It will send when Message Center reconnects.");drafts.remove(id);if(screen.equals("chat")&&chatId.equals(id)){composer.setText("");resetSentLanguage();cancelReply();}
             if(screen.equals("chat")&&chatId.equals(id))loadMessages(false);});}
     private void startChat(String typed){if(!PairedService.ready()){toast("Connect first, then start a chat.");return;}String n=ChatText.normalizeNumber(typed),value=n.isEmpty()?typed:n;
         PairedService.execute(c->c.createChat(value),(raw,e)->{if(!e.isEmpty()){error(e);return;}try{JSONObject chat=new JSONObject(raw);store.chat(chat);
@@ -1629,6 +1637,7 @@ public class PairedActivity extends Activity {
         String typed=PairedProtocol.text(m),plain=ChatText.replyFallbackBody(typed)!=null?ChatText.replyFallbackBody(typed):typed;
         if(!plain.isEmpty())sheetAction(content,"Copy text",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Message",plain));});
         if(!plain.isEmpty())sheetAction(content,!translations.containsKey(m.optString("messageID"))?"Translate":showingOriginal.contains(m.optString("messageID"))?"Show translation":"Show original",()->{d[0].dismiss();translate(m,plain);});
+        if(!plain.isEmpty()&&translations.containsKey(m.optString("messageID")))sheetAction(content,"Translate to another language…",()->{d[0].dismiss();translationChoices(m,plain,"",translationTarget());});
         // Google lets RCS messages be edited for 15 minutes, but only in its own app (not linked devices like this one).
         if(!plain.isEmpty()&&c!=null&&PairedProtocol.outgoing(m,c)&&PairedProtocol.rcs(c)&&System.currentTimeMillis()-PairedProtocol.time(m)<15*60_000L
             &&getPackageManager().getLaunchIntentForPackage(MessageListener.GOOGLE_MESSAGES)!=null)
@@ -1836,6 +1845,7 @@ public class PairedActivity extends Activity {
         if(!group){String name=PairedProtocol.firstName(PairedProtocol.other(c));
             sheetAction(content,"Their music app: "+theirMusicLabel(id),()->chooseTheirMusic(id,name));
             TextView why=text("Songs you send "+name+" from another app change to the same song on theirs before they go",13,muted,false);why.setPadding(dp(8),0,dp(16),dp(8));content.addView(why);}
+        sheetAction(content,"Translation: read "+Translation.label(chatSettings.readLanguage(id))+" · send "+Translation.label(chatSettings.sendLanguage(id)),()->translationSettings(id));
         sheetAction(content,"Read receipts: "+(chatSettings.receipts(id)?"on":"off"),()->toggleReceipts(id));
         receiptStatusView=text("",13,muted,false);receiptStatusView.setPadding(dp(16),0,dp(16),dp(8));content.addView(receiptStatusView);updateReceiptStatus();
         if(chatSettings.receipts(id)){sheetAction(content,"Retry read request / refresh Google setting",()->{JSONObject latest=store.latestIncoming(id);
@@ -1872,16 +1882,113 @@ public class PairedActivity extends Activity {
             :getPackageManager().getLaunchIntentForPackage(MessageListener.GOOGLE_MESSAGES);
         try{startActivity(open);toast("Copied. In Google Messages, hold your message and tap Edit (the pencil). The change shows here too.");}
         catch(Exception e){toast("Google Messages couldn't be opened.");}}
-    // Translations of messages (messageID → {words, the language they were in}), and the ones showing their original instead.
-    private final Map<String,String[]> translations=new HashMap<>();private final java.util.Set<String> showingOriginal=new java.util.HashSet<>();
-    /** Android's on-device translation, shown under the message; where the phone has none, the words go to its translation app's pop-up. */
-    private void translate(JSONObject m,String words){String id=m.optString("messageID");
-        if(translations.containsKey(id)){if(!showingOriginal.remove(id))showingOriginal.add(id);renderMessages(false);return;}
-        toast("Translating\u2026");
-        decoder.execute(()->{Translation.Result r=Translation.onDevice(this,words);ui.post(()->{
-            if(r!=null&&r.same){toast("This is already in "+r.from+".");return;}
-            if(r!=null){translations.put(id,new String[]{r.text,r.from});renderMessages(false);return;}
-            if(!Translation.handOff(this,words))toast("Android on this phone can't translate that, and there's no translation app. Google Translate can.");});});}
+    // Translation preferences are backed up with chat-settings; translated text stays in memory.
+    private final Map<String,String[]> translations=new java.util.LinkedHashMap<String,String[]>(128,.75f,true){protected boolean removeEldestEntry(Map.Entry<String,String[]> e){return size()>128;}};
+    private final java.util.Set<String> showingOriginal=new java.util.HashSet<>();
+    private final java.util.Set<String> autoTranslationAttempts=new java.util.LinkedHashSet<>();
+    private final java.util.concurrent.atomic.AtomicInteger translationEpoch=new java.util.concurrent.atomic.AtomicInteger();
+    private TextView translationChip,translationStatus;
+    private String composeTranslateChat="",composeLanguage="";
+    private Dialog outgoingTranslation;
+    private long translationScrollAt;
+    private final Runnable translationRedraw=new Runnable(){public void run(){
+        if(!screen.equals("chat")||isDestroyed())return;
+        if(android.os.SystemClock.uptimeMillis()-translationScrollAt<400){ui.postDelayed(this,400);return;}
+        renderMessages(false);}};
+    private final Runnable autoVisibleTranslations=this::translateVisibleMessages;
+    private void queueAutoTranslation(){ui.removeCallbacks(autoVisibleTranslations);if(screen.equals("chat"))ui.postDelayed(autoVisibleTranslations,450);}
+    private String translationWords(JSONObject m){String words=PairedProtocol.text(m),fallback=ChatText.replyFallbackBody(words);return fallback==null?words:fallback;}
+    private String translationTarget(){String read=chatSettings.readLanguage(chatId);return read.isEmpty()?Translation.defaultLanguage(this):read;}
+    private void languagePicker(String title,String selected,boolean off,boolean auto,java.util.function.Consumer<String> chosen){
+        List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
+        if(off){labels.add((selected.isEmpty()?"✓ ":"")+"Off");actions.add(()->chosen.accept(""));}
+        if(auto){labels.add((selected.isEmpty()?"✓ ":"")+"Detect automatically");actions.add(()->chosen.accept(""));}
+        for(String code:Translation.languages(this)){labels.add((code.equals(selected)?"✓ ":"")+Translation.label(code));actions.add(()->chosen.accept(code));}
+        menuSheet(title,labels,actions);}
+    private void translationSettings(String id){LinearLayout box=vertical();Dialog[] d=new Dialog[1];
+        box.addView(text("Translation for this chat",20,ink,true));gap(box,8);
+        box.addView(text("Translations stay on your phone. Language packs download the first time (about 20–40 MB per direction). Originals stay available. Sending always asks you to review the translation.",14,muted,false));gap(box,12);
+        sheetAction(box,"Read incoming in: "+Translation.label(chatSettings.readLanguage(id)),()->{d[0].dismiss();languagePicker("Auto-translate incoming messages",chatSettings.readLanguage(id),true,false,code->{
+            chatSettings.setReadLanguage(id,code);autoTranslationAttempts.clear();if(code.isEmpty()&&translationStatus!=null)translationStatus.setVisibility(View.GONE);if(chatId.equals(id)){updateTranslationChip();queueAutoTranslation();}translationSettings(id);});});
+        sheetAction(box,"Default send language: "+Translation.label(chatSettings.sendLanguage(id)),()->{d[0].dismiss();languagePicker("Review outgoing messages in",chatSettings.sendLanguage(id),true,false,code->{
+            chatSettings.setSendLanguage(id,code);if(chatId.equals(id)){composeLanguage=code;composeTranslateChat=id;updateTranslationChip();}translationSettings(id);});});
+        d[0]=sheet(box);}
+    private void resetSentLanguage(){composeLanguage=chatSettings.sendLanguage(chatId);updateTranslationChip();}
+    private void updateTranslationChip(){if(translationChip==null)return;
+        if(!composeTranslateChat.equals(chatId)){composeTranslateChat=chatId;composeLanguage=chatSettings.sendLanguage(chatId);}
+        String read=chatSettings.readLanguage(chatId);
+        translationChip.setText((composeLanguage.isEmpty()?"Translate draft":("Send in "+Translation.label(composeLanguage)+" · review"))+(read.isEmpty()?"":"  ·  Read in "+Translation.label(read)));
+        translationChip.setContentDescription(translationChip.getText()+". Translation language options");}
+    private void composeTranslationMenu(){String id=chatId;List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
+        labels.add("This message: "+(composeLanguage.isEmpty()?"original language":Translation.label(composeLanguage)));actions.add(()->languagePicker("Language for this message",composeLanguage,true,false,code->{if(!chatId.equals(id))return;composeLanguage=code;updateTranslationChip();}));
+        labels.add("Translate and preview this draft…");actions.add(()->languagePicker("Preview draft in",composeLanguage.isEmpty()?translationTarget():composeLanguage,false,false,code->{if(chatId.equals(id)){composeLanguage=code;updateTranslationChip();previewOutgoing(false);}}));
+        labels.add("Chat language defaults…");actions.add(()->translationSettings(id));menuSheet("Translation",labels,actions);}
+    private String translationFiles(){StringBuilder key=new StringBuilder();for(Outgoing o:outgoing)if(!o.sending)key.append(o.file.getPath()).append(':').append(System.identityHashCode(o)).append(';');return key.toString();}
+    private void previewOutgoing(boolean scheduling){if(composer==null||outgoingTranslation!=null)return;String original=composer.getText().toString();
+        if(original.trim().isEmpty()){toast("Type a message to translate first.");return;}
+        String id=chatId,reply=replyId,files=translationFiles(),target=composeLanguage;int epoch=translationEpoch.get();
+        java.util.concurrent.atomic.AtomicBoolean cancelled=new java.util.concurrent.atomic.AtomicBoolean();
+        LinearLayout content=vertical();content.addView(text("Review in "+Translation.label(target),20,ink,true));gap(content,8);
+        TextView status=text("Detecting language on your phone…",13,muted,false);content.addView(status);gap(content,8);
+        TextView result=text("",17,ink,false);result.setTextIsSelectable(true);ScrollView area=new ScrollView(this);area.addView(result);content.addView(area,new LinearLayout.LayoutParams(-1,dp(160)));
+        TextView originalText=text("Your draft: "+original,13,muted,false);originalText.setMaxLines(3);content.addView(originalText);gap(content,8);
+        final Translation.Result[] translated={null};final String[] source={""};final Dialog[] dialog={null};java.util.concurrent.atomic.AtomicInteger request=new java.util.concurrent.atomic.AtomicInteger();
+        TextView send=button(scheduling?"Review translation to schedule":"Review translation to send",true,()->{
+            if(translated[0]==null)return;
+            if(composer==null||!TranslationPlan.current(chatId,composer.getText().toString(),replyId,translationFiles(),id,original,reply,files)){
+                status.setText("Your draft, reply or attachments changed. Close this preview and translate again.");return;}
+            String words=translated[0].text;dialog[0].dismiss();if(scheduling)scheduleBody(words);else sendBody(words);
+        });send.setEnabled(false);content.addView(send);
+        Runnable[] run={null};run[0]=()->{int attempt=request.incrementAndGet();translated[0]=null;send.setEnabled(false);status.setText("Translating on your phone…");result.setText("");String hint=source[0];
+            Translation.worker.execute(()->{try{Translation.Result answer=Translation.translate(getApplicationContext(),original,hint,target,
+                step->ui.post(()->{if(!cancelled.get()&&request.get()==attempt)status.setText(step);}),()->cancelled.get()||translationEpoch.get()!=epoch||request.get()!=attempt);
+                ui.post(()->{if(cancelled.get()||request.get()!=attempt||translationEpoch.get()!=epoch||isDestroyed())return;translated[0]=answer;result.setText(answer.text);
+                    status.setText(answer.same?"Already in "+Translation.label(target):Translation.label(answer.from)+" → "+Translation.label(target)+" · offline translation");
+                    send.setText(scheduling?"Schedule in "+Translation.label(target):"Send in "+Translation.label(target));send.setEnabled(true);});
+            }catch(java.util.concurrent.CancellationException ignored){}catch(Exception e){ui.post(()->{if(!cancelled.get()&&request.get()==attempt)status.setText(e.getMessage()==null?"Couldn't translate. Your draft is unchanged.":e.getMessage());});}});};
+        sheetAction(content,"Retry translation",()->run[0].run());
+        sheetAction(content,"Message language: detect / choose…",()->languagePicker("Your draft's language",source[0],false,true,code->{source[0]=code;if(!cancelled.get())run[0].run();}));
+        sheetAction(content,"Keep editing original",()->dialog[0].dismiss());
+        dialog[0]=sheet(content);outgoingTranslation=dialog[0];dialog[0].setOnDismissListener(d->{cancelled.set(true);if(outgoingTranslation==dialog[0])outgoingTranslation=null;});run[0].run();}
+    /** Any message, including one you sent: choose the target and optionally override detection. */
+    private void translate(JSONObject m,String words){String mid=m.optString("messageID");
+        if(translations.containsKey(mid)){if(!showingOriginal.remove(mid))showingOriginal.add(mid);renderMessages(false);return;}
+        translationChoices(m,words,"",translationTarget());}
+    private void translationChoices(JSONObject message,String words,String source,String target){LinearLayout content=vertical();Dialog[] d={null};
+        content.addView(text("Translate message",20,ink,true));gap(content,8);
+        sheetAction(content,"From: "+(source.isEmpty()?"Detect automatically":Translation.label(source)),()->{d[0].dismiss();languagePicker("Message language",source,false,true,code->translationChoices(message,words,code,target));});
+        sheetAction(content,"To: "+Translation.label(target),()->{d[0].dismiss();languagePicker("Translate to",target,false,false,code->translationChoices(message,words,source,code));});
+        TextView why=text("Shown here in the chat. Language packs download once; translation then works offline.",13,muted,false);content.addView(why);
+        sheetAction(content,"Translate to "+Translation.label(target),()->{d[0].dismiss();translateMessage(message,words,source,target);});d[0]=sheet(content);}
+    private void translateMessage(JSONObject message,String words,String source,String target){String id=chatId,mid=message.optString("messageID");int epoch=translationEpoch.get();
+        java.util.concurrent.atomic.AtomicBoolean cancelled=new java.util.concurrent.atomic.AtomicBoolean();LinearLayout content=vertical();content.addView(text("Translating to "+Translation.label(target),20,ink,true));
+        TextView status=text("Detecting language on your phone…",14,muted,false);content.addView(status);Dialog progress=sheet(content);progress.setOnDismissListener(d->cancelled.set(true));
+        Translation.worker.execute(()->{try{Translation.Result answer=Translation.translate(getApplicationContext(),words,source,target,
+            step->ui.post(()->{if(!cancelled.get())status.setText(step);}),()->cancelled.get()||translationEpoch.get()!=epoch);
+            ui.post(()->{if(cancelled.get()||translationEpoch.get()!=epoch||isDestroyed())return;
+                progress.dismiss();if(mid.isEmpty()){selectText(answer.text);return;}
+                translations.put(mid,new String[]{answer.text,Translation.label(answer.from),target,words});showingOriginal.remove(mid);renderMessages(false);
+                if(answer.same)toast("Already in "+Translation.label(target));});
+        }catch(java.util.concurrent.CancellationException ignored){}catch(Exception e){ui.post(()->{if(cancelled.get())return;progress.dismiss();error(e.getMessage()==null?"Couldn't translate. Your original is unchanged.":e.getMessage());});}});}
+    /** Scan only bubbles actually on screen, after scrolling settles. Never sweep/download the archive. */
+    private void translateVisibleMessages(){if(!resumed||!screen.equals("chat")||scroll==null||isDestroyed())return;String target=chatSettings.readLanguage(chatId);if(target.isEmpty())return;
+        String id=chatId;JSONObject chat=store.chat(id);int epoch=translationEpoch.get();int[] viewport=new int[2];scroll.getLocationOnScreen(viewport);
+        int submitted=0;for(Map.Entry<String,View> entry:new ArrayList<>(messageViews.entrySet())){
+            View view=entry.getValue();int[] pos=new int[2];view.getLocationOnScreen(pos);if(pos[1]+view.getHeight()<viewport[1]||pos[1]>viewport[1]+scroll.getHeight())continue;
+            JSONObject message=store.message(entry.getKey());if(message==null)continue;String words=translationWords(message),mid=entry.getKey();
+            if(!TranslationPlan.automatic(words,PairedProtocol.outgoing(message,chat),PairedProtocol.notice(message)))continue;
+            String[] existing=translations.get(mid);if(existing!=null&&existing[2].equals(target)&&existing[3].equals(words))continue;
+            String key=id+":"+mid+":"+target+":"+words;if(autoTranslationAttempts.contains(key))continue;
+            if(submitted++>=12)break;autoTranslationAttempts.add(key);if(autoTranslationAttempts.size()>256)autoTranslationAttempts.remove(autoTranslationAttempts.iterator().next());
+            Translation.worker.execute(()->{try{
+                String from=Translation.detect(getApplicationContext(),words);if(from.isEmpty()||from.equals(target))return;
+                Translation.Result answer=Translation.translate(getApplicationContext(),words,from,target,step->ui.post(()->{if(translationEpoch.get()==epoch&&translationStatus!=null){translationStatus.setText(step);translationStatus.setVisibility(View.VISIBLE);}}),
+                    ()->translationEpoch.get()!=epoch||!chatSettings.readLanguage(id).equals(target));
+                ui.post(()->{if(translationEpoch.get()!=epoch||!chatId.equals(id)||!chatSettings.readLanguage(id).equals(target)||isDestroyed())return;
+                    translations.put(mid,new String[]{answer.text,Translation.label(answer.from),target,words});if(translationStatus!=null)translationStatus.setVisibility(View.GONE);
+                    ui.removeCallbacks(translationRedraw);ui.postDelayed(translationRedraw,400);});
+            }catch(java.util.concurrent.CancellationException ignored){}catch(Exception e){ui.post(()->{if(translationEpoch.get()==epoch&&translationStatus!=null){translationStatus.setText("Translation paused · tap to retry language pack download");translationStatus.setVisibility(View.VISIBLE);}});}});
+        }}
     /** "Hannah turns 30 today · Say happy birthday": from their contact, in a one-to-one chat; ✕ hides it until next year. */
     private void renderBirthday(){if(birthdayBar==null)return;birthdayBar.removeAllViews();birthdayBar.setVisibility(View.GONE);
         JSONObject c=store.chat(chatId);Birthdays.Birthday b=Birthdays.forChat(this,c);if(b==null)return;
@@ -2791,7 +2898,7 @@ public class PairedActivity extends Activity {
             }catch(Exception e){problem=e.getMessage()==null?"The attachment couldn't be saved. Check free space.":e.getMessage();break;}}
             String error=problem;ui.post(()->{for(Outgoing o:batch)o.sending=false;
                 if(fromComposer){busy=false;outgoing.removeAll(saved);if(composer!=null)composer.setEnabled(true);
-                    if(!saved.isEmpty()){drafts.remove(id);repliedSinceInbox=true;if(screen.equals("chat")&&chatId.equals(id)){if(composer!=null)composer.setText("");cancelReply();}}}
+                    if(!saved.isEmpty()){drafts.remove(id);repliedSinceInbox=true;if(screen.equals("chat")&&chatId.equals(id)){if(composer!=null)composer.setText("");resetSentLanguage();cancelReply();}}}
                 else for(Outgoing o:batch)if(!saved.contains(o))discardPicked(o);
                 if(screen.equals("chat")){if(fromComposer)renderAttachments();renderMessages(true);}if(!error.isEmpty())toast(error);
                 if(!saved.isEmpty())PairedService.flushAttachments(app);
@@ -3086,7 +3193,8 @@ public class PairedActivity extends Activity {
 
     // Scheduled send
     /** Long-press send: pick when to send. Text only; it goes out through the outbox at that time. */
-    private void scheduleMessage(){if(composer==null)return;String text=composer.getText().toString().trim();if(text.isEmpty()){toast("Type a message first, then hold send to schedule it.");return;}
+    private void scheduleMessage(){if(composer==null)return;if(!composeLanguage.isEmpty()){previewOutgoing(true);return;}scheduleBody(composer.getText().toString().trim());}
+    private void scheduleBody(String text){if(text.isEmpty()){toast("Type a message first, then hold send to schedule it.");return;}
         java.util.Calendar now=java.util.Calendar.getInstance();List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
         java.util.Calendar evening=(java.util.Calendar)now.clone();evening.set(java.util.Calendar.HOUR_OF_DAY,18);evening.set(java.util.Calendar.MINUTE,0);evening.set(java.util.Calendar.SECOND,0);
         if(evening.after(now)){long at=evening.getTimeInMillis();labels.add("Later today, "+timeOnly(at));actions.add(()->schedule(text,at));}
@@ -3098,7 +3206,7 @@ public class PairedActivity extends Activity {
         new android.app.DatePickerDialog(this,(dp,y,mo,d)->new android.app.TimePickerDialog(this,(tp,h,mi)->{java.util.Calendar at=java.util.Calendar.getInstance();at.set(y,mo,d,h,mi,0);
             if(at.getTimeInMillis()<System.currentTimeMillis()+30_000){toast("Pick a time in the future.");return;}schedule(text,at.getTimeInMillis());},c.get(java.util.Calendar.HOUR_OF_DAY),(c.get(java.util.Calendar.MINUTE)/5+1)*5%60,android.text.format.DateFormat.is24HourFormat(this)).show(),
             c.get(java.util.Calendar.YEAR),c.get(java.util.Calendar.MONTH),c.get(java.util.Calendar.DAY_OF_MONTH)).show();}
-    private void schedule(String text,long at){Scheduled.add(this,chatId,text,replyId,at);drafts.remove(chatId);if(composer!=null)composer.setText("");cancelReply();renderMessages(true);
+    private void schedule(String text,long at){Scheduled.add(this,chatId,text,replyId,at);drafts.remove(chatId);if(composer!=null)composer.setText("");resetSentLanguage();cancelReply();renderMessages(true);
         if(!getSystemService(android.app.AlarmManager.class).canScheduleExactAlarms())
             new AlertDialog.Builder(this).setMessage("Scheduled. Android may send it a few minutes late while the phone sleeps unless Message Center is allowed to set exact alarms.")
                 .setPositiveButton("Allow exact timing",(d,w)->{try{startActivity(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:"+getPackageName())));}catch(Exception ignored){}}).setNegativeButton("OK",null).show();
@@ -4733,5 +4841,5 @@ public class PairedActivity extends Activity {
     private void pairing(){base("pair");header("Pair this phone",null);connection();String emoji=PairedService.emoji();shownEmoji=emoji;TextView symbol=text(emoji.isEmpty()?"…":emoji,72,ink,false);symbol.setGravity(Gravity.CENTER);root.addView(symbol);gap(root,16);
         note(root,"Open Google Messages → Device pairing and approve the matching emoji. Return here afterward.\n\nIf Google reports no device, check that Device pairing uses the same Google account you just signed into.");root.addView(button("Open Google Messages",true,this::openGoogle));gap(root,8);root.addView(button("Back to inbox",false,this::inbox));}
     private void openGoogle(){Intent intent=getPackageManager().getLaunchIntentForPackage("com.google.android.apps.messaging");if(intent!=null)startActivity(intent);else toast("Google Messages is not installed.");}
-    @Override protected void onDestroy(){stopInline();if(drafts!=null)drafts.prefs().unregisterOnSharedPreferenceChangeListener(draftChanged);destroyLogin();cancelRecording();stopAudio();decoder.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy(){translationEpoch.incrementAndGet();ui.removeCallbacks(autoVisibleTranslations);ui.removeCallbacks(translationRedraw);if(outgoingTranslation!=null)outgoingTranslation.dismiss();stopInline();if(drafts!=null)drafts.prefs().unregisterOnSharedPreferenceChangeListener(draftChanged);destroyLogin();cancelRecording();stopAudio();decoder.shutdownNow();super.onDestroy();}
 }

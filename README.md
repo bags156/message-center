@@ -2,7 +2,7 @@
 
 An experimental Android client for Google Messages, with the paired connection running **on the phone**. No additional server, Matrix account, or Beeper account is required. Google Messages remains the default SMS/RCS app and must stay installed and online.
 
-**Current release: 1.5.4. The paired-client architecture began in 0.2.0.** It replaces the notification-based approach in 0.1.x. Compiling and offline device tests do not verify Google sign-in, live RCS delivery, complete history, or ColorOS background reliability. Those require testing on a paired phone.
+**Current release: 1.5.70. The paired-client architecture began in 0.2.0.** It replaces the notification-based approach in 0.1.x. Compiling and offline device tests do not verify Google sign-in, live RCS delivery, complete history, or ColorOS background reliability. Those require testing on a paired phone.
 
 ## Install and connect
 
@@ -104,3 +104,13 @@ CI also installs the app on an Android emulator and checks JNI loading, Keystore
 ## License
 
 AGPL-3.0-or-later. See LICENSE and NOTICES. Release dependency-source archives contain the pinned third-party sources and license notices needed to inspect or rebuild the connection library.
+
+## Translation inside the chat
+
+Chat ⋮ → Translation sets separate languages for reading incoming messages and reviewing outgoing messages. Both start off. Incoming text in another detected language is translated beneath its bubble, with Show original. Only messages actually on screen are processed; short or ambiguous text can be translated manually by choosing its source language.
+
+Hold any text message (including one you sent) → Translate to choose a target language. Select text → Translate selected text translates just the selection. Use Translate draft above the composer for a language for this message or per-chat defaults. Send opens an offline translation preview for review; it keeps the typed draft until you send. Editing the draft, reply or attachments invalidates the preview. Replies, captions, undo-send and scheduling use the ordinary outbox with the reviewed text.
+
+The source-built Bergamot/translate-kit engine and CLD2 language detector run on the phone, independently of ColorOS's translation service. Only hash-verified language packs are downloaded from Mozilla, about 20–40 MB per direction; after that the pair works offline. No message text is uploaded to a translation service, no translation app is needed, and there is no API key. Thirty languages are available initially (the picker lists them); non-English pairs translate through English and may be less accurate. Original messages remain available. Preferences are included in settings backups; downloaded models and translated text are not.
+
+To build from source, install Android NDK 28.2.13676358 and CMake 3.22.1, run `bash tools/build_translation_engine.sh` before Gradle (along with the existing Go bridge build). The engine and its submodules are pinned in `tools/fetch_translation_engine.sh`; notices are under `translation-native/`. `python3 tools/fetch_translation_fixtures.py` adds Spanish/English models only to the test APK for the offline device checks, never to the release APK.

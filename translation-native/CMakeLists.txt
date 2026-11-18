@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(message_translation LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(TRANSLATEKIT_WITH_ENGINE ON CACHE BOOL "" FORCE)
+add_subdirectory(engine/core translatekit)
+add_library(message-translation SHARED translation_jni.cpp)
+target_link_libraries(message-translation PRIVATE translatekit_core log)
+target_link_options(message-translation PRIVATE "-Wl,-z,max-page-size=16384" "-Wl,-z,common-page-size=16384")
