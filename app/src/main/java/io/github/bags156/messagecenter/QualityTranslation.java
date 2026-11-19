@@ -40,6 +40,7 @@ final class QualityTranslation {
     private static DownloadManager manager(Context c){return c.getSystemService(DownloadManager.class);}
     static int state(Context c){long id=id(c);if(id==0)return 0;
         try(Cursor q=manager(c).query(new DownloadManager.Query().setFilterById(id))){return q!=null&&q.moveToFirst()?q.getInt(q.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)):0;}catch(Exception ignored){return 0;}}
+    static boolean stored(Context c){File f=file(c);return id(c)!=0||f!=null&&f.exists();}
     static boolean pending(Context c){int s=state(c);return verifying.get()||s==DownloadManager.STATUS_PENDING||s==DownloadManager.STATUS_RUNNING||s==DownloadManager.STATUS_PAUSED;}
     static String status(Context c){if(ready(c))return enabled(c)?"Stronger translator · on this phone":"Compact translator · stronger model available";
         if(verifying.get())return "Checking the downloaded model…";String failed=prefs(c).getString("error","");if(!failed.isEmpty())return failed;
@@ -54,8 +55,10 @@ final class QualityTranslation {
     static void start(Context c)throws Exception{Context app=c.getApplicationContext();if(ready(app)){use(app,true);return;}
         if(pending(app)){prefs(app).edit().putBoolean("requested",true).apply();return;}
         File f=file(app);if(f==null)throw new IOException("Phone storage is unavailable.");File dir=f.getParentFile();if(!dir.isDirectory()&&!dir.mkdirs())throw new IOException("Could not create the model folder.");
+        long previous=id(app);if(previous!=0)manager(app).remove(previous);generation.incrementAndGet();
+        prefs(app).edit().remove("download").putBoolean("enabled",false).putString("error","").apply();
+        if(f.exists()&&!f.delete())throw new IOException("The previous model download could not be removed. Try again.");marker(app).delete();
         if(dir.getUsableSpace()<SIZE+512_000_000L)throw new IOException("Free at least 4.7 GB to download the stronger translator.");
-        long previous=id(app);if(previous!=0)manager(app).remove(previous);f.delete();marker(app).delete();generation.incrementAndGet();
         DownloadManager.Request request=new DownloadManager.Request(Uri.parse(URL)).setTitle("Stronger message translation").setDescription("4.1 GB · stays on this phone")
             .setAllowedNetworkTypes(DownloadManager.Request.NETWORK_WIFI).setAllowedOverMetered(false).setAllowedOverRoaming(false).setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED).setDestinationUri(Uri.fromFile(f));
         long next=manager(app).enqueue(request);prefs(app).edit().putLong("download",next).putBoolean("requested",true).putString("error","").apply();}

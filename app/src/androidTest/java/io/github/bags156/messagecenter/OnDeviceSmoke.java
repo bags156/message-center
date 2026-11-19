@@ -2245,6 +2245,10 @@ public final class OnDeviceSmoke extends Instrumentation {
         long beforeMemory=android.os.Debug.getPss();QualityTranslation.use(ctx,false);QualityTranslation.release();waitForIdleSync();
         check(!Translation.worker.submit(()->QualityNative.loaded()).get(60,java.util.concurrent.TimeUnit.SECONDS),"The large model stayed loaded after switching to compact");
         note("QUALITY MEMORY PSS KiB before unload="+beforeMemory+" after="+android.os.Debug.getPss());
+        // Replacing a failed full-size download must reclaim its space before checking the new download budget.
+        new java.io.File(ctx.getFilesDir(),"quality-model-verified").delete();
+        QualityTranslation.start(ctx);check(QualityTranslation.state(ctx)!=0,"Retry did not reclaim the old model's storage before enqueue");QualityTranslation.remove(ctx);
+        check(!model.exists()&&!QualityTranslation.stored(ctx),"Cancelling a model retry left the large file behind");
         result.putString("stream","QUALITY_TRANSLATION_SMOKE_PASS: pinned Q8 weights, colloquial English/Spanish, literal preservation, native cancellation and one-tap offline outbox send\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){StringBuilder where=new StringBuilder();for(StackTraceElement frame:e.getStackTrace())if(frame.getClassName().contains("OnDeviceSmoke")&&where.length()<250)where.append(" at ").append(frame.getMethodName()).append(':').append(frame.getLineNumber());
         result.putString("stream","QUALITY_TRANSLATION_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+where+"\n");finish(Activity.RESULT_CANCELED,result);}}
