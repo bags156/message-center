@@ -1,0 +1,12 @@
+package io.github.bags156.messagecenter;
+
+import java.util.function.BooleanSupplier;
+
+/** Source-built llama.cpp. All calls, including unload, belong on Translation.worker. */
+final class QualityNative {
+    static { System.loadLibrary("message-quality"); }
+    static native byte[] translate(byte[] prefix,byte[] text,byte[] suffix,byte[] model,BooleanSupplier cancelled);
+    static native void unload();
+    static native boolean loaded();
+    private QualityNative() {}
+}

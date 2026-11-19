@@ -20,3 +20,7 @@ translation-native/engine/
 translation-dependencies-source.tar.gz
 app/src/androidTest/assets/translation/
 app/src/main/jniLibs/
+
+# Reproducible stronger-translation source and outputs
+quality-native/engine/
+quality-native/build/

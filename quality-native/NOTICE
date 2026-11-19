@@ -1,0 +1,8 @@
+Gemma is provided under and subject to the Gemma Terms of Use found at https://ai.google.dev/gemma/terms.
+
+Stronger translation uses TranslateGemma 4B, provided by Google under the Gemma Terms of Use and Prohibited Use Policy (GEMMA_TERMS_OF_USE.txt).
+
+The separately downloaded model is a modified version of google/translategemma-4b-it: Menterium IT Solutions GmbH extracted its text decoder, converted it to GGUF, and quantized it to Q8_0. The weights were not otherwise changed. Source: https://huggingface.co/Menterium/translategemma-4b-it-GGUF at d1709f49e90452b9189e0144cc6826d199616921.
+Model SHA-256: cb8ef0b14bc7f80297ac219399fb17c6504742b00b6b4c8173069fd5d55b1063.
+
+The source-built inference runtime is llama.cpp, Copyright Georgi Gerganov and contributors, MIT (LLAMA_LICENSE), pinned to 78e05298f0d68abff41d08d79fa7469264b2aff0. It has no network backend enabled. Model download is an explicit Android DownloadManager request; message text is processed on this phone.

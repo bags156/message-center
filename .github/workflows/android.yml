@@ -72,6 +72,25 @@ jobs:
         with:
           path: app/src/main/jniLibs
           key: translation-native-linux-ndk28-${{ hashFiles('translation-native/*.cpp', 'translation-native/CMakeLists.txt', 'tools/fetch_translation_engine.sh', 'tools/build_translation_engine.sh') }}
+      - name: Restore stronger translation library
+        id: quality-cache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: app/src/main/jniLibs/*/libmessage-quality.so
+          key: quality-native-ndk28-${{ hashFiles('quality-native/*.cpp', 'quality-native/*.h', 'quality-native/CMakeLists.txt', 'tools/fetch_quality_engine.sh', 'tools/build_quality_engine.sh') }}
+      - name: Fetch stronger translation runtime source
+        run: |
+          bash tools/fetch_quality_engine.sh
+          tar --exclude=.git -czf quality-dependencies-source.tar.gz quality-native/engine quality-native/LLAMA_LICENSE quality-native/NOTICE quality-native/GEMMA_TERMS_OF_USE.txt
+      - name: Build stronger offline translation library
+        if: steps.quality-cache.outputs.cache-hit != 'true'
+        run: bash tools/build_quality_engine.sh
+      - name: Cache stronger translation library
+        if: steps.quality-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: app/src/main/jniLibs/*/libmessage-quality.so
+          key: quality-native-ndk28-${{ hashFiles('quality-native/*.cpp', 'quality-native/*.h', 'quality-native/CMakeLists.txt', 'tools/fetch_quality_engine.sh', 'tools/build_quality_engine.sh') }}
       - name: Test, lint, and build Android APK
         run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleRelease :app:assembleDebug :app:assembleDebugAndroidTest
       - name: Verify native libraries for 16 KB Android pages
@@ -96,6 +115,7 @@ jobs:
           path: |
             bridge/dependencies-source.tar.gz
             translation-dependencies-source.tar.gz
+            quality-dependencies-source.tar.gz
           if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -218,11 +238,67 @@ jobs:
             emulator.log
           retention-days: 14
 
+  quality-smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: device-smoke-apks
+          path: apks
+      - name: Run real stronger-model checks on Android
+        run: |
+          export PATH="$ANDROID_HOME/platform-tools:$PATH"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/quality-avds"
+          mkdir -p "$ANDROID_AVD_HOME"
+          sudo chmod 666 /dev/kvm
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "emulator" "system-images;android-35;google_apis;x86_64"
+          echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --force --name quality-test --path "$ANDROID_AVD_HOME/quality-test.avd" --package "system-images;android-35;google_apis;x86_64" --device pixel_6
+          echo 'disk.dataPartition.size=8G' >> "$ANDROID_AVD_HOME/quality-test.avd/config.ini"
+          "$ANDROID_HOME/emulator/emulator" -avd quality-test -memory 6144 -cores 4 -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > quality-emulator.log 2>&1 &
+          timeout 180 adb wait-for-device
+          timeout 240 bash -c 'until adb shell getprop sys.boot_completed | tr -d "\r" | grep -q 1; do sleep 2; done'
+          adb shell input keyevent 82
+          adb shell settings put global hide_error_dialogs 1 || true
+          adb install apks/debug/app-debug.apk
+          adb install apks/androidTest/debug/app-debug-androidTest.apk
+          python3 tools/prepare_quality_fixture.py
+          adb shell am instrument -w -e quality run io.github.bags156.messagecenter.test/io.github.bags156.messagecenter.OnDeviceSmoke | tee quality-test.txt
+          adb exec-out run-as io.github.bags156.messagecenter cat cache/probe.txt > quality-probe.txt || true
+          adb exec-out run-as io.github.bags156.messagecenter cat cache/shot-quality-settings.png > quality-settings.png || true
+          grep -q QUALITY_TRANSLATION_SMOKE_PASS quality-test.txt
+      - name: Collect Android quality diagnostics
+        if: always()
+        run: |
+          export PATH="$ANDROID_HOME/platform-tools:$PATH"
+          adb logcat -d -b crash > quality-crash.txt || true
+          adb logcat -d -v brief AndroidRuntime:E libc:F '*:S' > quality-runtime.txt || true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: quality-smoke-report
+          path: |
+            quality-test.txt
+            quality-probe.txt
+            quality-settings.png
+            quality-crash.txt
+            quality-runtime.txt
+            quality-emulator.log
+          retention-days: 14
+
   release:
-    needs: [build, device-smoke]
+    needs: [build, device-smoke, quality-smoke]
     # One explicit release commit lets the connected GitHub integration publish this update.
     # Build + offline device tests still gate signing; later versions keep the manual trigger.
-    if: github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.publish) || (github.event_name == 'push' && github.event.head_commit.message == 'Release Message Center 1.5.73'))
+    if: github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.publish) || (github.event_name == 'push' && github.event.head_commit.message == 'Release Message Center 1.5.74'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -271,9 +347,10 @@ jobs:
           cp signing-certificate.sha256 out/
           cp dependency-source/bridge/dependencies-source.tar.gz out/
           cp dependency-source/translation-dependencies-source.tar.gz out/
+          cp dependency-source/quality-dependencies-source.tar.gz out/
           FLAGS=()
           if [[ "$VERSION" == *-* ]]; then FLAGS+=(--prerelease --latest=false); fi
           (cd out && sha256sum message-center.apk > SHA256SUMS)
           gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" "${FLAGS[@]}" \
             --title "Message Center $VERSION" --notes-file docs/release-notes.md \
-            out/message-center.apk out/SHA256SUMS out/signing-certificate.sha256 out/release-metadata.json out/dependencies-source.tar.gz out/translation-dependencies-source.tar.gz
+            out/message-center.apk out/SHA256SUMS out/signing-certificate.sha256 out/release-metadata.json out/dependencies-source.tar.gz out/translation-dependencies-source.tar.gz out/quality-dependencies-source.tar.gz

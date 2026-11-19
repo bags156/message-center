@@ -57,6 +57,9 @@ final class ChatSettings {
     }
     String lastReadLanguage() { readLanguage(); return prefs.getString("translate_read_last", ""); }
     String sendLanguage(String id) { return prefs.getString("translate_send:" + id, ""); }
+    /** Empty follows the phone language; "auto" explicitly opts into detecting outgoing text. */
+    String writeLanguage(String id) { return prefs.getString("translate_write:" + id, ""); }
+    void setWriteLanguage(String id,String code) { prefs.edit().putString("translate_write:"+id,"auto".equals(code)?"auto":TranslationPlan.language(code)).apply(); }
     void setReadLanguage(String code) {
         String language=TranslationPlan.language(code);
         SharedPreferences.Editor e=prefs.edit().putString("translate_read_all",language);

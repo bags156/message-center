@@ -46,6 +46,16 @@ public class TranslationPlanTest {
         assertEquals("es",restored.sendLanguage("a"));assertEquals("fr",restored.sendLanguage("b"));
         assertEquals("",new ChatSettings(prefs).readLanguage());
     }
+    @Test public void declaredWritingLanguageAvoidsIncorrectDetectionOfLongDrafts() {
+        String words="Sam and I are on our way, but we're running a little late.";
+        assertEquals("en",TranslationPlan.outgoingSource(words,"es","en-US",""));
+        assertEquals("fr",TranslationPlan.outgoingSource(words,"es","en","fr"));
+        assertEquals("es",TranslationPlan.outgoingSource(words,"es","en","auto"));
+        MemoryPrefs prefs=new MemoryPrefs();ChatSettings settings=new ChatSettings(prefs);
+        settings.setWriteLanguage("a","en-US");settings.setWriteLanguage("b","auto");settings.setSendLanguage("a","es");
+        ChatSettings restored=new ChatSettings(prefs);
+        assertEquals("en",restored.writeLanguage("a"));assertEquals("auto",restored.writeLanguage("b"));assertEquals("",restored.writeLanguage("c"));assertEquals("es",restored.sendLanguage("a"));
+    }
     @Test public void existingReadingChoicesMigrateOnceWithoutChangingSendingLanguages() {
         MemoryPrefs prefs=new MemoryPrefs();prefs.edit().putString("translate_read:a","es").putString("translate_read:b","en-US")
             .putString("translate_read:c","en").putString("translate_read:d","").putString("translate_send:a","fr").apply();

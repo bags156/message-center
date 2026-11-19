@@ -29,6 +29,10 @@ final class TranslationPlan {
         String from=language(detected);
         return from.isEmpty()||text.replaceAll("(?i)https?://\\S+|www\\.\\S+", "").codePoints().filter(Character::isLetter).count()<12?language(phoneLanguage):from;
     }
+    /** A declared writing language avoids misidentifying names, slang and mixed-language drafts. */
+    static String outgoingSource(String text,String detected,String phoneLanguage,String configured) {
+        return "auto".equals(configured)?outgoingSource(text,detected,phoneLanguage):language(configured==null||configured.isEmpty()?phoneLanguage:configured);
+    }
     /** A translated result only belongs to this exact draft, reply and attachment set. */
     static boolean current(String chat,String text,String reply,String files,String expectedChat,String expectedText,String expectedReply,String expectedFiles) {
         return chat.equals(expectedChat)&&text.equals(expectedText)&&reply.equals(expectedReply)&&files.equals(expectedFiles);

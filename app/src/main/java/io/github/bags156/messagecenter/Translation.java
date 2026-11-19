@@ -37,6 +37,7 @@ final class Translation {
     }
     static List<String> languages(Context c){Set<String> codes=new HashSet<>();Iterator<String> keys=models(c).keys();while(keys.hasNext())for(String code:keys.next().split("-"))codes.add(code);
         List<String> out=new ArrayList<>(codes);out.sort(Comparator.comparing(Translation::label));return out;}
+    static String engineKey(Context c){return QualityTranslation.enabled(c)?"stronger-q8":"compact";}
     static String label(String code){return code==null||code.isEmpty()?"Off":Locale.forLanguageTag(code).getDisplayLanguage(Locale.getDefault());}
     static String defaultLanguage(Context c){String code=TranslationPlan.language(Locale.getDefault().toLanguageTag());return languages(c).contains(code)?code:"en";}
     /** Confidence checked, local language ID. Unknown/very short text is left for a source-language choice. */
@@ -54,7 +55,8 @@ final class Translation {
         if(from.isEmpty())from=detect(c,words);
         if(from.isEmpty())throw new Problem("Language unclear. Choose the message's language and try again.");
         if(from.equals(to))return new Result(words,from,to,true);
-        String key=from+"\u0000"+to+"\u0000"+words;Result saved=cache.get(key);if(saved!=null)return saved;
+        boolean stronger=QualityTranslation.enabled(c);String key=(stronger?"stronger":"compact")+"\u0000"+from+"\u0000"+to+"\u0000"+words;Result saved=cache.get(key);if(saved!=null)return saved;
+        if(stronger){String said=QualityTranslation.translate(c,words,from,to,progress,cancelled);check(cancelled);Result result=new Result(said,from,to,false);cache.put(key,result);lastStep="stronger offline translated "+from+" to "+to;return result;}
         String[] route=TranslationPlan.route(from,to);if(route.length==0)throw new Problem("Choose a translation language.");
         for(String pair:route)if(models(c).optJSONObject(pair)==null)throw new Problem(label(from)+" to "+label(to)+" is not available offline yet.");
         for(String pair:route)prepare(c,pair,progress,cancelled);
