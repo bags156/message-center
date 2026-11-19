@@ -19,8 +19,11 @@ if not match:
 path = match[1].strip()
 if "/Android/data/" + PACKAGE + "/files/quality-models/" not in path or not path.endswith(".gguf"):
     raise RuntimeError("Unexpected fixture destination")
-remote = "run-as " + PACKAGE + " sh -c " + shlex.quote("cat > " + shlex.quote(path))
-process = subprocess.Popen(["adb", "exec-in", remote], stdin=subprocess.PIPE)
+# run-as does not enter the app's external-storage mount namespace on this image.
+# The isolated userdebug emulator permits root adb for fixture provisioning only.
+subprocess.check_call(["adb", "shell", "test", "-w", str(pathlib.PurePosixPath(path).parent)])
+remote = "cat > " + shlex.quote(path)
+process = subprocess.Popen(["adb", "shell", "-T", remote], stdin=subprocess.PIPE)
 digest = hashlib.sha256()
 total = last = 0
 try:
@@ -40,10 +43,10 @@ try:
     if total != size or digest.hexdigest() != sha:
         raise RuntimeError("Model size or SHA-256 mismatch")
     # Check the bytes Android can actually open, not just those sent to adb's stdin.
-    remote_size = subprocess.check_output(["adb", "shell", "run-as", PACKAGE, "stat", "-c", "%s", path], text=True).strip()
+    remote_size = subprocess.check_output(["adb", "shell", "stat", "-c", "%s", path], text=True).strip()
     if remote_size != str(size):
         raise RuntimeError(f"Emulator stored {remote_size} bytes; expected {size}")
-    remote_sha = subprocess.check_output(["adb", "shell", "run-as", PACKAGE, "sha256sum", path], text=True).split()[0]
+    remote_sha = subprocess.check_output(["adb", "shell", "sha256sum", path], text=True).split()[0]
     if remote_sha != sha:
         raise RuntimeError("The emulator's stored model failed SHA-256 verification")
 except BaseException:

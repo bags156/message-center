@@ -270,6 +270,11 @@ jobs:
           adb shell settings put global hide_error_dialogs 1 || true
           adb install apks/debug/app-debug.apk
           adb install apks/androidTest/debug/app-debug-androidTest.apk
+          # Only fixture provisioning uses the userdebug emulator's root adb. The app and
+          # instrumentation still run under their ordinary app UID/storage namespace.
+          adb root
+          adb wait-for-device
+          test "$(adb shell id -u | tr -d '\r')" = 0
           python3 tools/prepare_quality_fixture.py
           adb shell am instrument -w -e quality run io.github.bags156.messagecenter.test/io.github.bags156.messagecenter.OnDeviceSmoke | tee quality-test.txt
           adb exec-out run-as io.github.bags156.messagecenter cat cache/probe.txt > quality-probe.txt || true
