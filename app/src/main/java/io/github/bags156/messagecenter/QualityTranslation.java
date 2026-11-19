@@ -70,7 +70,7 @@ final class QualityTranslation {
             catch(CancellationException ignored){}catch(Exception e){prefs(app).edit().putString("error","Model verification failed · tap to download again").apply();}
             finally{verifying.set(false);}
         });}
-    static void verify(Context c,BooleanSupplier cancelled)throws Exception{File f=file(c);if(f==null||f.length()!=SIZE)throw new IOException("The model download is incomplete.");
+    static void verify(Context c,BooleanSupplier cancelled)throws Exception{File f=file(c);if(f==null||f.length()!=SIZE)throw new IOException("The model download is incomplete ("+(f==null?"storage unavailable":f.length()+" of "+SIZE+" bytes")+").");
         MessageDigest hash=MessageDigest.getInstance("SHA-256");try(InputStream in=new BufferedInputStream(new FileInputStream(f))){byte[] buf=new byte[1024*1024];int n;while((n=in.read(buf))!=-1){if(cancelled.getAsBoolean())throw new CancellationException();hash.update(buf,0,n);}}
         StringBuilder digest=new StringBuilder();for(byte b:hash.digest())digest.append(String.format(java.util.Locale.ROOT,"%02x",b&255));
         if(!SHA.equals(digest.toString()))throw new IOException("The model failed its integrity check.");if(cancelled.getAsBoolean())throw new CancellationException();

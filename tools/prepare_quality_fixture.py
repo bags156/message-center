@@ -39,6 +39,13 @@ try:
         raise RuntimeError("Emulator fixture write failed")
     if total != size or digest.hexdigest() != sha:
         raise RuntimeError("Model size or SHA-256 mismatch")
+    # Check the bytes Android can actually open, not just those sent to adb's stdin.
+    remote_size = subprocess.check_output(["adb", "shell", "run-as", PACKAGE, "stat", "-c", "%s", path], text=True).strip()
+    if remote_size != str(size):
+        raise RuntimeError(f"Emulator stored {remote_size} bytes; expected {size}")
+    remote_sha = subprocess.check_output(["adb", "shell", "run-as", PACKAGE, "sha256sum", path], text=True).split()[0]
+    if remote_sha != sha:
+        raise RuntimeError("The emulator's stored model failed SHA-256 verification")
 except BaseException:
     process.terminate()
     process.wait(timeout=30)

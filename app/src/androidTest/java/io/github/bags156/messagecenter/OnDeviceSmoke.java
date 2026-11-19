@@ -2212,7 +2212,9 @@ public final class OnDeviceSmoke extends Instrumentation {
     /** Separate large-model run: real pinned weights, no account, pairing or network message sends. */
     private void qualitySmoke(){Bundle result=new Bundle();android.content.Context ctx=getTargetContext();try{
         java.io.File model=QualityTranslation.file(ctx);check(model!=null,"Model storage is unavailable");model.getParentFile().mkdirs();
-        if(qualityMode.equals("prepare")){QualityTranslation.start(ctx);check(QualityTranslation.state(ctx)!=0,"Android rejected the model download request");QualityTranslation.remove(ctx);result.putString("stream","QUALITY_MODEL_PATH="+model.getAbsolutePath()+"\n");finish(Activity.RESULT_OK,result);return;}
+        // DownloadManager cancellation may finish deleting its destination after remove returns.
+        // Exercise enqueue/cancel at the end of the run, never against the streamed fixture.
+        if(qualityMode.equals("prepare")){result.putString("stream","QUALITY_MODEL_PATH="+model.getAbsolutePath()+"\n");finish(Activity.RESULT_OK,result);return;}
         check(!PairedService.ready(),"Quality checks require an offline, unpaired app");
         Translation.worker.submit(()->{QualityTranslation.verify(ctx,()->false);return null;}).get(180,java.util.concurrent.TimeUnit.SECONDS);QualityTranslation.use(ctx,true);
         PairedActivity activity=(PairedActivity)startActivitySync(new Intent(ctx,PairedActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));waitForIdleSync();
