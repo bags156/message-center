@@ -25,4 +25,13 @@ public class QualityPlanTest {
         assertTrue(QualityPlan.preserves("Hello 🙂🙂", "Hola 🙂🙂"));
         assertFalse(QualityPlan.preserves("Hello 🙂🙂", "Hola 🙂"));
     }
+    @Test public void joinedEmojiFlagsAndAddedReactionsKeepTheirIdentity() {
+        assertTrue(QualityPlan.preserves("Hello 👩‍🚀 🇺🇸 1️⃣", "Hola 👩‍🚀 🇺🇸 1️⃣"));
+        assertFalse(QualityPlan.preserves("Hello 👩‍🚀", "Hola 👩🚀"));
+        assertFalse(QualityPlan.preserves("Hello 🇺🇸", "Hola 🇸🇺"));
+        assertFalse(QualityPlan.preserves("Hello ❤️", "Hola ❤"));
+        assertFalse(QualityPlan.preserves("Hello", "Hola ❤️"));
+        assertFalse(QualityPlan.preserves("Hello 🙂", "Hola 🙂🙂"));
+    }
+
 }

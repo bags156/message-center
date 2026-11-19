@@ -2242,7 +2242,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         note("QUALITY SEND "+queued.optString("text"));out.remove(queued.optString("id"));
         onMainCall(()->method("openSettingsPage",String.class).invoke(activity,"translation"));shoot("shot-quality-settings");
         check(exactText(activity,"Translation quality")!=null,"App settings have no translation-quality control");
-        int beforeMemory=android.os.Debug.getPss();QualityTranslation.use(ctx,false);QualityTranslation.release();waitForIdleSync();
+        long beforeMemory=android.os.Debug.getPss();QualityTranslation.use(ctx,false);QualityTranslation.release();waitForIdleSync();
         check(!Translation.worker.submit(()->QualityNative.loaded()).get(60,java.util.concurrent.TimeUnit.SECONDS),"The large model stayed loaded after switching to compact");
         note("QUALITY MEMORY PSS KiB before unload="+beforeMemory+" after="+android.os.Debug.getPss());
         result.putString("stream","QUALITY_TRANSLATION_SMOKE_PASS: pinned Q8 weights, colloquial English/Spanish, literal preservation, native cancellation and one-tap offline outbox send\n");finish(Activity.RESULT_OK,result);

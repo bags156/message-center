@@ -84,7 +84,7 @@ final class QualityTranslation {
                 if(cancelled.getAsBoolean())throw new CancellationException();if(answer==null)throw new Translation.Problem("The stronger translator could not finish. Your original is unchanged.");
                 String text=new String(answer,StandardCharsets.UTF_8).trim();if(!QualityPlan.preserves(body,text))throw new Translation.Problem("Translation changed a link, code, time or emoji. Your original is unchanged.");
                 result.append(piece,0,first).append(text).append(piece,last,piece.length());}
-            return result.toString();
+            String translated=result.toString();if(!QualityPlan.preserves(words,translated))throw new Translation.Problem("Translation changed a link, code, time or emoji. Your original is unchanged.");return translated;
         }catch(LinkageError e){throw new Translation.Problem("The stronger translation engine could not start. Your original is unchanged.");}
         catch(IllegalStateException e){if(cancelled.getAsBoolean())throw new CancellationException();throw new Translation.Problem(e.getMessage()==null?"Translation could not finish. Your original is unchanged.":e.getMessage());}
         finally{idle.removeCallbacks(unload);idle.postDelayed(unload,20_000);}
