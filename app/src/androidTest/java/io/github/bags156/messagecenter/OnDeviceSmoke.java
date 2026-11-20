@@ -2339,6 +2339,22 @@ public final class OnDeviceSmoke extends Instrumentation {
         Outbox out=new Outbox(ctx);check(waitUntil(()->out.forChat("quality-chat").size()==1,180000),"One tap did not queue a stronger translation");
         JSONObject queued=out.forChat("quality-chat").get(0);String text=queued.optString("text").toLowerCase(java.util.Locale.ROOT);check(!text.equals("let's call it a day.")&&!text.contains("llam"),"One-tap send used a literal or untranslated message");
         note("QUALITY SEND "+queued.optString("text"));out.remove(queued.optString("id"));
+        // Opening the chat loads the model and reads its instruction ahead of time: the first message only reads itself.
+        Translation.worker.submit(()->{QualityNative.unload();return null;}).get(60,java.util.concurrent.TimeUnit.SECONDS);
+        onMainCall(()->method("inbox").invoke(activity));onMainCall(()->method("thread",String.class).invoke(activity,"quality-chat"));
+        Translation.worker.submit(()->null).get(180,java.util.concurrent.TimeUnit.SECONDS);
+        check(Translation.worker.submit(()->QualityNative.loaded()).get(60,java.util.concurrent.TimeUnit.SECONDS),"Opening a translating chat didn't load the model ahead of time");
+        Translation.worker.submit(()->QualityTranslation.translate(ctx,"See you soon.","en","es",true,step->{},()->false)).get(180,java.util.concurrent.TimeUnit.SECONDS);
+        long[] timing=Translation.worker.submit(()->QualityNative.timing()).get(60,java.util.concurrent.TimeUnit.SECONDS);
+        check(timing[0]>=100,"The first message after opening the chat read the whole instruction again ("+timing[0]+" kept, "+timing[1]+" read)");
+        // Typing, then pausing: the draft is translated in the background, so Send goes at once.
+        onMainCall(()->{((android.widget.EditText)field("composer").get(activity)).setText("I'll bring the cake to the park tomorrow.");return null;});Thread.sleep(1600);
+        Translation.worker.submit(()->null).get(180,java.util.concurrent.TimeUnit.SECONDS);
+        long tapped=android.os.SystemClock.uptimeMillis();onMainCall(()->{((android.view.View)field("sendButton").get(activity)).performClick();return null;});
+        check(waitUntil(()->out.forChat("quality-chat").size()==1,60000),"Send after a pause didn't queue the translation");long waited=android.os.SystemClock.uptimeMillis()-tapped;
+        note("QUALITY AHEAD Send took "+waited+" ms after a pause; "+out.forChat("quality-chat").get(0).optString("text"));
+        check(waited<1500,"Send after a pause still waited "+waited+" ms for the translation (it wasn't translated ahead)");
+        out.remove(out.forChat("quality-chat").get(0).optString("id"));
         onMainCall(()->method("openSettingsPage",String.class).invoke(activity,"translation"));shoot("shot-quality-settings");
         check(exactText(activity,"Translation quality")!=null,"App settings have no translation-quality control");
         long beforeMemory=android.os.Debug.getPss();QualityTranslation.use(ctx,false);QualityTranslation.release();waitForIdleSync();
@@ -2348,7 +2364,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         new java.io.File(ctx.getFilesDir(),"quality-model-verified").delete();
         QualityTranslation.start(ctx);check(QualityTranslation.state(ctx)!=0,"Retry did not reclaim the old model's storage before enqueue");QualityTranslation.remove(ctx);
         check(!model.exists()&&!QualityTranslation.stored(ctx),"Cancelling a model retry left the large file behind");
-        result.putString("stream","QUALITY_TRANSLATION_SMOKE_PASS: pinned Q8 weights, colloquial English/Spanish, casual wording for what you send, literal preservation, native cancellation and one-tap offline outbox send\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","QUALITY_TRANSLATION_SMOKE_PASS: pinned Q8 weights, colloquial English/Spanish, casual wording for what you send, warm-up on opening a chat, drafts translated ahead, literal preservation, native cancellation and one-tap offline outbox send\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){StringBuilder where=new StringBuilder();for(StackTraceElement frame:e.getStackTrace())if(frame.getClassName().contains("OnDeviceSmoke")&&where.length()<250)where.append(" at ").append(frame.getMethodName()).append(':').append(frame.getLineNumber());
         result.putString("stream","QUALITY_TRANSLATION_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+where+"\n");finish(Activity.RESULT_CANCELED,result);}}
     @Override public void onStart(){if(!qualityMode.isEmpty()){qualitySmoke();return;}Bundle result=new Bundle();try {

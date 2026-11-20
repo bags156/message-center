@@ -35,50 +35,70 @@ QualityModel::QualityModel(const std::string& path,bool repack,int threads):repa
 }
 QualityModel::~QualityModel(){if(ctx_)llama_free(ctx_);if(model_)llama_model_free(model_);}
 void QualityModel::forgetCache(){for(auto& slot:slots_)slot=Slot();if(ctx_)llama_memory_clear(llama_get_memory(ctx_),true);}
+void QualityModel::ensureContext(){
+    if(ctx_)return;
+    auto p=llama_context_default_params();p.n_ctx=CONTEXT;p.n_batch=256;p.n_ubatch=128;
+    // The fast cores only (see fastCores), for both reading the prompt and writing the answer.
+    p.n_threads=threads();p.n_threads_batch=threads();p.no_perf=true;
+    // Gemma 3's sliding-window layers keep the whole context, so the cache can be cut back to the instruction.
+    p.swa_full=true;
+    // Two sequences sharing one cache (same memory as one): each can still use the whole context when it needs to.
+    p.n_seq_max=SLOTS;p.kv_unified=true;
+    ctx_=llama_init_from_model(model_,p);
+    if(!ctx_)throw std::runtime_error("Not enough memory for the translation model");
+    for(auto& slot:slots_)slot=Slot();
+}
+/**
+ * Which sequence this input goes in, with how much of it that sequence already holds (keep), the
+ * rest cut away ready to be read. Every prompt starts alike, so only a real match (past the language
+ * names) counts; otherwise it goes where the least recently used one was. The other direction stays
+ * unless this input (with room for an answer) needs the space.
+ */
+int QualityModel::place(const std::vector<int>& input,size_t& keep,bool scores){
+    auto common=[&](const std::vector<int>& held){size_t n=0;while(n<held.size()&&n<input.size()&&held[n]==input[n])n++;return n;};
+    int seq=0;keep=0;
+    for(int s=0;s<SLOTS;s++){size_t n=common(slots_[s].tokens);if(n>keep){keep=n;seq=s;}}
+    if(keep<32){seq=0;for(int s=1;s<SLOTS;s++)if(slots_[s].used<slots_[seq].used)seq=s;keep=common(slots_[seq].tokens);}
+    if(scores&&keep>=input.size())keep=input.size()-1; // the last token is read again, for its next-token scores
+    auto* mem=llama_get_memory(ctx_);
+    for(int s=0;s<SLOTS;s++)if(s!=seq&&slots_[s].tokens.size()+input.size()+1024>(size_t)CONTEXT){llama_memory_seq_rm(mem,s,-1,-1);slots_[s]=Slot();}
+    if(!llama_memory_seq_rm(mem,seq,(llama_pos)keep,-1)){llama_memory_seq_rm(mem,seq,-1,-1);keep=0;}
+    slots_[seq].tokens.assign(input.begin(),input.begin()+keep);slots_[seq].used=++clock_;
+    return seq;
+}
+void QualityModel::read(int seq,const llama_token* ids,int n,int start,llama_batch_ext* batch,const std::function<bool()>& cancelled){
+    check(cancelled);llama_batch_ext_clear(batch);
+    for(int i=0;i<n;i++){int idx=llama_batch_ext_add_token(batch,seq,ids[i]);llama_pos pos=start+i;llama_batch_ext_set_pos(batch,idx,&pos);}
+    llama_batch_ext_set_output_logits(batch,n-1,true);
+    if(llama_process(ctx_,LLAMA_PROCESS_TYPE_DECODE,batch))throw std::runtime_error("Translation inference failed");
+    slots_[seq].tokens.insert(slots_[seq].tokens.end(),ids,ids+n);
+}
+void QualityModel::prime(const std::string& prefix,const std::function<bool()>& cancelled){
+    check(cancelled);auto input=tokens(llama_model_get_vocab(model_),prefix,true,true);if(input.empty())return;
+    ensureContext();
+    try{size_t keep;int seq=place(input,keep,false);if(keep>=input.size())return;
+        std::unique_ptr<llama_batch_ext,decltype(&llama_batch_ext_free)> batch(llama_batch_ext_init(ctx_),llama_batch_ext_free);
+        if(!batch)throw std::runtime_error("Translation batch could not initialize");
+        for(size_t i=keep;i<input.size();i+=256)read(seq,input.data()+i,std::min<size_t>(256,input.size()-i),i,batch.get(),cancelled);
+    }catch(...){forgetCache();throw;}
+}
 std::string QualityModel::translate(const std::string& prefix,const std::string& text,const std::string& suffix,const std::function<bool()>& cancelled){
     check(cancelled);const auto* vocab=llama_model_get_vocab(model_);auto input=tokens(vocab,prefix,true,true);
     // The message's own text never becomes control tokens: "<end_of_turn>" typed in a message stays words.
     auto body=tokens(vocab,text,false,false),end=tokens(vocab,suffix,false,true);
     input.insert(input.end(),body.begin(),body.end());input.insert(input.end(),end.begin(),end.end());
     if(input.empty()||input.size()>1400)throw std::runtime_error("Message fragment is too long for the translation model");
-    if(!ctx_){
-        auto p=llama_context_default_params();p.n_ctx=CONTEXT;p.n_batch=256;p.n_ubatch=128;
-        // The fast cores only (see fastCores), for both reading the prompt and writing the answer.
-        p.n_threads=threads();p.n_threads_batch=threads();p.no_perf=true;
-        // Gemma 3's sliding-window layers keep the whole context, so the cache can be cut back to the instruction.
-        p.swa_full=true;
-        // Two sequences sharing one cache (same memory as one): each can still use the whole context when it needs to.
-        p.n_seq_max=SLOTS;p.kv_unified=true;
-        ctx_=llama_init_from_model(model_,p);
-        if(!ctx_)throw std::runtime_error("Not enough memory for the translation model");
-        for(auto& slot:slots_)slot=Slot();
-    }
+    ensureContext();
     try{
-        // Keep what the context already holds of this input (the instruction, from the last message in this
-        // language pair). Every prompt starts alike, so only a real match (past the language names) counts;
-        // otherwise this goes where the least recently used one was.
-        auto common=[&](const std::vector<int>& held){size_t n=0;while(n<held.size()&&n<input.size()&&held[n]==input[n])n++;return n;};
-        int seq=0;size_t keep=0;
-        for(int s=0;s<SLOTS;s++){size_t n=common(slots_[s].tokens);if(n>keep){keep=n;seq=s;}}
-        if(keep<32){seq=0;for(int s=1;s<SLOTS;s++)if(slots_[s].used<slots_[seq].used)seq=s;keep=common(slots_[seq].tokens);}
-        if(keep>=input.size())keep=input.size()-1; // the last token is processed again, for its next-token scores
-        auto* mem=llama_get_memory(ctx_);
-        // The other direction stays unless this message (with room for its answer) needs the space.
-        for(int s=0;s<SLOTS;s++)if(s!=seq&&slots_[s].tokens.size()+input.size()+1024>(size_t)CONTEXT){llama_memory_seq_rm(mem,s,-1,-1);slots_[s]=Slot();}
-        if(!llama_memory_seq_rm(mem,seq,(llama_pos)keep,-1)){llama_memory_seq_rm(mem,seq,-1,-1);keep=0;}
-        Slot& slot=slots_[seq];slot.tokens.assign(input.begin(),input.begin()+keep);slot.used=++clock_;
+        size_t keep;int seq=place(input,keep,true);
         reused_=(int)keep;processed_=(int)(input.size()-keep);
         std::unique_ptr<llama_batch_ext,decltype(&llama_batch_ext_free)> batch(llama_batch_ext_init(ctx_),llama_batch_ext_free);
         if(!batch)throw std::runtime_error("Translation batch could not initialize");
-        auto eval=[&](const llama_token* ids,int n,int start){check(cancelled);llama_batch_ext_clear(batch.get());
-            for(int i=0;i<n;i++){int idx=llama_batch_ext_add_token(batch.get(),seq,ids[i]);llama_pos pos=start+i;llama_batch_ext_set_pos(batch.get(),idx,&pos);}
-            llama_batch_ext_set_output_logits(batch.get(),n-1,true);
-            if(llama_process(ctx_,LLAMA_PROCESS_TYPE_DECODE,batch.get()))throw std::runtime_error("Translation inference failed");
-            slot.tokens.insert(slot.tokens.end(),ids,ids+n);};
+        auto eval=[&](const llama_token* ids,int n,int start){read(seq,ids,n,start,batch.get(),cancelled);};
         auto started=std::chrono::steady_clock::now();written_=0;
         for(size_t i=keep;i<input.size();i+=256)eval(input.data()+i,std::min<size_t>(256,input.size()-i),i);
-        auto read=std::chrono::steady_clock::now();promptMs_=(long)std::chrono::duration_cast<std::chrono::milliseconds>(read-started).count();
-        auto done=[&]{writeMs_=(long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-read).count();};
+        auto readAt=std::chrono::steady_clock::now();promptMs_=(long)std::chrono::duration_cast<std::chrono::milliseconds>(readAt-started).count();
+        auto done=[&]{writeMs_=(long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-readAt).count();};
         std::unique_ptr<llama_sampler,decltype(&llama_sampler_free)> sampler(llama_sampler_chain_init(llama_sampler_chain_default_params()),llama_sampler_free);
         llama_sampler_chain_add(sampler.get(),llama_sampler_init_penalties(llama_vocab_n_tokens(vocab),64,1.0f,0,0));llama_sampler_chain_add(sampler.get(),llama_sampler_init_greedy());
         auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(90);

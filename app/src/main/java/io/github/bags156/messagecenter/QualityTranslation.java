@@ -93,14 +93,14 @@ final class QualityTranslation {
         try{for(String piece:QualityPlan.fragments(words,from)){if(cancelled.getAsBoolean())throw new CancellationException();
                 int first=0,last=piece.length();while(first<last&&Character.isWhitespace(piece.charAt(first)))first++;while(last>first&&Character.isWhitespace(piece.charAt(last-1)))last--;
                 String body=piece.substring(first,last);if(!TranslationPlan.outgoingText(body)){result.append(piece);continue;}
-                progress.accept("Translating on this phone…");usedNative=true;String text=null;
+                progress.accept("Translating on this phone…");boolean loading=!QualityNative.loaded();long began=System.currentTimeMillis();usedNative=true;String text=null;
                 // Casual wording first; if that changed a link, code, time or emoji, once more with the plain, literal prompt.
                 // (Also when it started repeating itself or came back empty.)
                 for(boolean texting:casual?new boolean[]{true,false}:new boolean[]{false}){byte[] answer;
                     try{answer=QualityNative.translate(utf8(QualityPlan.prefix(from,to,texting)),utf8(body),utf8(QualityPlan.SUFFIX),utf8(file(c).getAbsolutePath()),cancelled);}
                     catch(IllegalStateException e){String why=String.valueOf(e.getMessage());if(!texting||cancelled.getAsBoolean()||!(why.contains("repeating")||why.contains("was empty")))throw e;continue;}
                     if(cancelled.getAsBoolean())throw new CancellationException();if(answer==null)throw new Translation.Problem("The stronger translator could not finish. Your original is unchanged.");
-                    String said=QualityPlan.tidy(new String(answer,StandardCharsets.UTF_8).trim(),to);if(QualityPlan.preserves(body,said)){text=said;break;}}
+                    timing(loading,began);String said=QualityPlan.tidy(new String(answer,StandardCharsets.UTF_8).trim(),to);if(QualityPlan.preserves(body,said)){text=said;break;}}
                 if(text==null)throw new Translation.Problem("Translation changed a link, code, time or emoji. Your original is unchanged.");
                 result.append(piece,0,first).append(text).append(piece,last,piece.length());}
             String translated=result.toString();if(!QualityPlan.preserves(words,translated))throw new Translation.Problem("Translation changed a link, code, time or emoji. Your original is unchanged.");return translated;
@@ -108,6 +108,21 @@ final class QualityTranslation {
         catch(IllegalStateException e){if(cancelled.getAsBoolean())throw new CancellationException();throw new Translation.Problem(e.getMessage()==null?"Translation could not finish. Your original is unchanged.":e.getMessage());}
         finally{idle.removeCallbacks(unload);idle.postDelayed(unload,KEEP_MS);}
     }
+    /**
+     * A chat's instruction read in ahead of time (and the model loaded), while you read and type, so
+     * the first message only reads itself. On Translation.worker; stops when cancelled.
+     */
+    static void prime(Context c,String from,String to,boolean casual,BooleanSupplier cancelled){
+        if(!enabled(c)||cancelled.getAsBoolean())return;idle.removeCallbacks(unload);
+        try{boolean loading=!QualityNative.loaded();long began=System.currentTimeMillis();usedNative=true;
+            QualityNative.prime(utf8(QualityPlan.prefix(from,to,casual)),utf8(file(c).getAbsolutePath()),cancelled);
+            if(loading&&!cancelled.getAsBoolean())Diagnostics.note("Stronger translator ready ahead of time in "+(System.currentTimeMillis()-began)+" ms");}
+        catch(LinkageError|IllegalStateException ignored){}
+        finally{idle.removeCallbacks(unload);idle.postDelayed(unload,KEEP_MS);}}
+    /** How long it took, in the journal (numbers only, never the message), so a report shows where time goes on this phone. */
+    private static void timing(boolean loading,long began){try{long[] t=QualityNative.timing();
+        Diagnostics.note("Stronger translation "+(System.currentTimeMillis()-began)+" ms"+(loading?" (model loaded first)":"")+": read "+t[1]+" tokens ("+t[0]+" kept) in "+t[3]+" ms, wrote "+t[2]+" in "+t[4]+" ms, "+t[5]+" threads");}
+        catch(LinkageError ignored){}}
     private static byte[] utf8(String s){return s.getBytes(StandardCharsets.UTF_8);}
     private QualityTranslation() {}
 }

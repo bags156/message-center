@@ -5,6 +5,7 @@
 #include <vector>
 struct llama_model;
 struct llama_context;
+struct llama_batch_ext;
 class QualityModel {
     llama_model* model_=nullptr;
     // One context kept between messages. It holds two conversations' worth (two sequences), one for
@@ -19,6 +20,9 @@ class QualityModel {
     int reused_=0,processed_=0,written_=0;long promptMs_=0,writeMs_=0;
     bool repack_;int threads_;
     void forgetCache();
+    void ensureContext();
+    int place(const std::vector<int>& input,size_t& keep,bool scores);
+    void read(int seq,const int* ids,int n,int start,struct llama_batch_ext* batch,const std::function<bool()>& cancelled);
 public:
     /**
      * repack: weights rearranged at load for this CPU's matrix instructions (faster, but held in
@@ -28,6 +32,8 @@ public:
     ~QualityModel();
     QualityModel(const QualityModel&)=delete;
     QualityModel& operator=(const QualityModel&)=delete;
+    /** Reads an instruction in ahead of time, so the next message with it only reads itself (and the model's already in memory). */
+    void prime(const std::string& prefix,const std::function<bool()>& cancelled);
     std::string translate(const std::string& prefix,const std::string& text,const std::string& suffix,const std::function<bool()>& cancelled);
     /** Drops what the context holds (the next message processes everything): for measuring, and after a failure. */
     void forget(){forgetCache();}

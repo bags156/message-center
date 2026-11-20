@@ -206,7 +206,7 @@ public class PairedActivity extends Activity {
     // ---- Shared building blocks ----
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
     private void base(String name){
-        translationEpoch.incrementAndGet();ui.removeCallbacks(autoVisibleTranslations);ui.removeCallbacks(translationRedraw);ui.removeCallbacks(qualitySettingsTick);qualityStatusView=null;cancelOutgoingTranslation();outgoingTranslateStatus=null;translationStatus=null;detailTranslationSummary=null;
+        translationEpoch.incrementAndGet();chatNow="";ui.removeCallbacks(translateAhead);ui.removeCallbacks(autoVisibleTranslations);ui.removeCallbacks(translationRedraw);ui.removeCallbacks(qualitySettingsTick);qualityStatusView=null;cancelOutgoingTranslation();outgoingTranslateStatus=null;translationStatus=null;detailTranslationSummary=null;
         if(screen.equals("note"))saveNote();noteField=null;noteTags=null;noteFiles=null;notePin=null;noteStatus=null;editing=null;
         if(!name.equals("chat"))stopInline();
         if(screen.equals("inbox")&&!name.equals("inbox")&&scroll!=null){inboxScrollY=scroll.getScrollY();inboxBack=inboxSpotNow();inboxKey=inboxKey();repliedSinceInbox=false;}
@@ -927,7 +927,7 @@ public class PairedActivity extends Activity {
         composerHint=PairedProtocol.rcs(c)?"RCS message":"Text message";composer=new EditText(this);composer.setHint(composerHint);composer.setTextColor(ink);composer.setHintTextColor(muted);composer.setTextSize(17*textScale);
         composer.setBackground(shape(surface,28));composer.setPadding(dp(22),dp(14),dp(22),dp(14));composer.setMaxLines(5);
         composer.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);composer.setText(drafts.getOrDefault(id,""));composer.setSelection(composer.length());
-        composer.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){cancelOutgoingTranslation();remember();maybeSendTyping(s);updateComposeButton();updateQuickRow();ui.removeCallbacks(musicCheck);ui.postDelayed(musicCheck,350);}public void afterTextChanged(Editable e){}});
+        composer.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){cancelOutgoingTranslation();draftChanged(s);remember();maybeSendTyping(s);updateComposeButton();updateQuickRow();ui.removeCallbacks(musicCheck);ui.postDelayed(musicCheck,350);}public void afterTextChanged(Editable e){}});
         composer.setOnFocusChangeListener((v,focused)->updateQuickRow());
         composer.setOnReceiveContentListener(new String[]{"image/*","video/*"},keyboardContent);
         compose.addView(composer,new LinearLayout.LayoutParams(0,-2,1));
@@ -942,7 +942,7 @@ public class PairedActivity extends Activity {
         LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(dp(52),dp(52));sl.setMarginStart(dp(8));compose.addView(sendButton,sl);root.addView(compose);renderAttachments();updateComposeButton();applyIncoming();Perf.end("open: screen",perf);
         // Read here, in a bubble or a chat head's window too: its notification goes (a bubble's is quieted, so the bubble stays).
         perf=Perf.start();chatSettings.setMarkedUnread(id,false);PairedService.clearNotification(this,id);Perf.end("open: notification",perf);
-        if(back!=null){restoreSpot=back;renderMessages(false);}else renderMessages(true);perf=Perf.start();if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();
+        if(back!=null){restoreSpot=back;renderMessages(false);}else renderMessages(true);perf=Perf.start();if(PairedService.ready())loadMessages(false);markReadIfAllowed();updateTyping();warmTranslation(id);
         if(c!=null)requestPhotos(java.util.Collections.singletonList(c));Perf.end("open: after",perf);Perf.end("open: total",perfAll);
     }
     /**
@@ -1992,15 +1992,37 @@ public class PairedActivity extends Activity {
         for(String code:Translation.languages(this)){labels.add((code.equals(selected)?"✓ ":"")+Translation.label(code));actions.add(()->chosen.accept(code));}
         menuSheet(title,labels,actions);}
     private String translationFiles(){StringBuilder key=new StringBuilder();for(Outgoing o:outgoing)if(!o.sending)key.append(o.file.getPath()).append(':').append(System.identityHashCode(o)).append(';');return key.toString();}
-    private void cancelOutgoingTranslation(){if(!translatingOutgoing)return;outgoingTranslationRequest.incrementAndGet();translatingOutgoing=false;
+    // ---- Translating ahead: with the stronger translator, a draft is translated in the background once you pause typing, so Send goes at once ----
+    private final java.util.concurrent.atomic.AtomicInteger aheadRequest=new java.util.concurrent.atomic.AtomicInteger();
+    /** The draft as typed (for the background translation to check it's still current), and what Send is translating right now. */
+    private volatile String draftNow="",sendingNow="",chatNow="";
+    private final Runnable translateAhead=this::translateAhead;
+    private static final long AHEAD_MS=900;
+    private void draftChanged(CharSequence s){draftNow=s.toString();aheadRequest.incrementAndGet();ui.removeCallbacks(translateAhead);
+        if(!chatId.isEmpty()&&!chatSettings.sendLanguage(chatId).isEmpty()&&TranslationPlan.outgoingText(draftNow)&&QualityTranslation.enabled(this))ui.postDelayed(translateAhead,AHEAD_MS);}
+    private void translateAhead(){if(composer==null||!screen.equals("chat")||translatingOutgoing||sendingText)return;
+        String original=composer.getText().toString(),id=chatId,target=chatSettings.sendLanguage(id),writing=chatSettings.writeLanguage(id),phone=Translation.defaultLanguage(this);
+        if(target.isEmpty()||!TranslationPlan.outgoingText(original))return;int ahead=aheadRequest.get();Context app=getApplicationContext();
+        Translation.worker.execute(()->{
+            // Stops when the draft changes or something you're waiting on comes, unless that's Send for this same draft: then it carries on, and Send uses it.
+            java.util.function.BooleanSupplier stale=()->!original.equals(sendingNow)&&(aheadRequest.get()!=ahead||!original.equals(draftNow)||!id.equals(chatNow)||Translation.worker.urgentWaiting());
+            try{if(stale.getAsBoolean())return;String detected=Translation.writtenIn(app,original);if(TranslationPlan.alreadyIn(detected,target))return;
+                Translation.translate(app,original,TranslationPlan.outgoingSource(original,"auto".equals(writing)?detected:"",phone,writing),target,true,step->{},stale);}
+            catch(Exception ignored){}});}
+    /** Opening a chat that translates what you send, with the stronger translator: the model loads and reads its instruction while you read and type. */
+    private void warmTranslation(String id){chatNow=id;if(composer!=null)draftChanged(composer.getText());String target=chatSettings.sendLanguage(id);if(target.isEmpty()||!QualityTranslation.enabled(this))return;
+        String writing=chatSettings.writeLanguage(id),from=TranslationPlan.language(writing.isEmpty()||"auto".equals(writing)?Translation.defaultLanguage(this):writing),to=TranslationPlan.language(target);
+        if(from.isEmpty()||from.equals(to))return;Context app=getApplicationContext();
+        Translation.worker.execute(()->QualityTranslation.prime(app,from,to,true,()->!id.equals(chatNow)||Translation.worker.urgentWaiting()));}
+    private void cancelOutgoingTranslation(){sendingNow="";if(!translatingOutgoing)return;outgoingTranslationRequest.incrementAndGet();translatingOutgoing=false;
         if(outgoingTranslateStatus!=null)outgoingTranslateStatus.setVisibility(View.GONE);updateComposeButton();}
-    private void finishOutgoingTranslation(int request){if(outgoingTranslationRequest.get()!=request)return;translatingOutgoing=false;
+    private void finishOutgoingTranslation(int request){if(outgoingTranslationRequest.get()!=request)return;translatingOutgoing=false;sendingNow="";
         if(outgoingTranslateStatus!=null)outgoingTranslateStatus.setVisibility(View.GONE);updateComposeButton();}
     /** Send uses this chat's saved language without changing the typed draft or asking for a second tap. */
     private void translateOutgoing(boolean scheduling){if(composer==null||translatingOutgoing||sendingText)return;
         String original=composer.getText().toString(),id=chatId,reply=replyId,files=translationFiles(),target=chatSettings.sendLanguage(id),writing=chatSettings.writeLanguage(id),phone=Translation.defaultLanguage(this);
         if(target.isEmpty()||!TranslationPlan.outgoingText(original)){if(scheduling)scheduleBody(original.trim());else sendBody(original);return;}
-        int request=outgoingTranslationRequest.incrementAndGet();translatingOutgoing=true;updateComposeButton();
+        int request=outgoingTranslationRequest.incrementAndGet();translatingOutgoing=true;sendingNow=original;updateComposeButton();
         if(outgoingTranslateStatus!=null){outgoingTranslateStatus.setText("Translating to "+Translation.label(target)+"…");outgoingTranslateStatus.setVisibility(View.VISIBLE);}
         Translation.worker.urgent(()->{try{
             // Typed in the language it would be sent in: nothing to translate, so it goes as written.
