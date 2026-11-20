@@ -17,13 +17,35 @@ import java.util.function.Consumer;
 
 /** Offline Bergamot translation. Only model files are fetched; message text never leaves the phone. */
 final class Translation {
-    static final ExecutorService worker=Executors.newSingleThreadExecutor(r->{Thread t=new Thread(r,"message-translation");t.setDaemon(true);return t;});
+    /** Every translation runs here, one at a time; what you're waiting on goes first (TranslationWorker). */
+    static final TranslationWorker worker=new TranslationWorker("message-translation");
     static volatile String lastStep="";
     static final class Result {
         final String text,from,to; final boolean same;
         Result(String text,String from,String to,boolean same){this.text=text;this.from=from;this.to=to;this.same=same;}
     }
-    static final class Problem extends Exception { Problem(String message){super(message);} }
+    static class Problem extends Exception { Problem(String message){super(message);} }
+    /** A language pack would download over mobile data, which wasn't allowed: ask (or wait for Wi-Fi). */
+    static final class NeedsData extends Problem {
+        final long bytes; final String pairs;
+        NeedsData(String pairs,long bytes,String what){super(what+" needs a "+Math.max(1,Math.round(bytes/1e6))+" MB language pack, and you're on mobile data.");this.pairs=pairs;this.bytes=bytes;}
+    }
+    private static android.content.SharedPreferences settings(Context c){return c.getSharedPreferences("translation-packs",Context.MODE_PRIVATE);}
+    /** Language packs download on mobile data without asking (Settings → Translation). Off by default: they wait for Wi-Fi, or you're asked. */
+    static boolean mobileData(Context c){return settings(c).getBoolean("mobile_data",false);}
+    static void setMobileData(Context c,boolean on){settings(c).edit().putBoolean("mobile_data",on).apply();}
+    /** Pairs you said yes to downloading on mobile data this time ("Download now"). */
+    private static final Set<String> allowedOnce=Collections.synchronizedSet(new HashSet<>());
+    static void allowOnce(String pairs){allowedOnce.addAll(Arrays.asList(pairs.split(",")));}
+    /** Stands in for the network being metered (the device checks; the emulator is on Wi-Fi). */
+    static volatile Boolean meteredForTests;
+    private static boolean metered(Context c){if(meteredForTests!=null)return meteredForTests;try{android.net.ConnectivityManager cm=c.getSystemService(android.net.ConnectivityManager.class);return cm!=null&&cm.isActiveNetworkMetered();}catch(Exception e){return false;}}
+    /** The compact engine keeps the models it used loaded (fast for the next message) until it's been idle a while, or the app leaves the screen. */
+    private static volatile boolean compactLoaded;
+    private static final android.os.Handler idle=new android.os.Handler(android.os.Looper.getMainLooper());
+    private static final Runnable unloadCompact=()->worker.execute(()->{try{TranslationNative.unload();}catch(LinkageError ignored){}finally{compactLoaded=false;}});
+    /** Lets go of loaded compact models (and the stronger one). */
+    static void release(){QualityTranslation.release();if(!compactLoaded)return;idle.removeCallbacks(unloadCompact);idle.post(unloadCompact);}
     private static JSONObject models;
     // Bounded, memory-only cache: no translated private text is exported to backups or logs.
     private static final Map<String,Result> cache=new LinkedHashMap<String,Result>(128,.75f,true){protected boolean removeEldestEntry(Map.Entry<String,Result> e){return size()>128;}};
@@ -59,14 +81,24 @@ final class Translation {
         if(stronger){String said=QualityTranslation.translate(c,words,from,to,progress,cancelled);check(cancelled);Result result=new Result(said,from,to,false);cache.put(key,result);lastStep="stronger offline translated "+from+" to "+to;return result;}
         String[] route=TranslationPlan.route(from,to);if(route.length==0)throw new Problem("Choose a translation language.");
         for(String pair:route)if(models(c).optJSONObject(pair)==null)throw new Problem(label(from)+" to "+label(to)+" is not available offline yet.");
+        // On mobile data, a pack that isn't here yet waits for Wi-Fi unless you said it can use data.
+        if(metered(c)&&!mobileData(c)){long need=0;List<String> missing=new ArrayList<>();
+            for(String pair:route){if(allowedOnce.contains(pair))continue;long bytes=missingBytes(c,pair);if(bytes>0){need+=bytes;missing.add(pair);}}
+            if(need>0)throw new NeedsData(String.join(",",missing),need,"Translating "+label(from)+" to "+label(to));}
         for(String pair:route)prepare(c,pair,progress,cancelled);
-        check(cancelled);progress.accept("Translating on your phone…");String said=words;
+        for(String pair:route)allowedOnce.remove(pair);
+        check(cancelled);progress.accept("Translating on your phone…");String said=words;idle.removeCallbacks(unloadCompact);compactLoaded=true;
         for(String pair:route){check(cancelled);String[] codes=pair.split("-");JSONObject files=models(c).getJSONObject(pair);
             try{byte[] answer=TranslationNative.translate(utf8(said),utf8(codes[0]),utf8(codes[1]),utf8(file(c,files.getJSONObject("model")).getPath()),utf8(file(c,files.getJSONObject("vocab")).getPath()),utf8(file(c,files.getJSONObject("lex")).getPath()));
                 said=string(answer);if(said.trim().isEmpty())throw new Problem("Couldn't translate that on this phone. Your original is unchanged.");}
             catch(LinkageError e){throw new Problem("The offline translation engine couldn't start. Your original is unchanged.");}}
-        check(cancelled);Result result=new Result(said,from,to,false);cache.put(key,result);lastStep="offline translated "+from+" to "+to;return result;
+        check(cancelled);Result result=new Result(said,from,to,false);cache.put(key,result);lastStep="offline translated "+from+" to "+to;
+        idle.removeCallbacks(unloadCompact);idle.postDelayed(unloadCompact,30_000);return result;
     }
+    /** How much of this pair's pack still has to download (0 when it's all here). */
+    private static long missingBytes(Context c,String pair){long need=0;try{JSONObject files=models(c).getJSONObject(pair);
+            for(String kind:new String[]{"model","vocab","lex"}){JSONObject spec=files.getJSONObject(kind);File f=file(c,spec);if(!f.isFile()||f.length()!=spec.getLong("size")||!new File(f.getPath()+".ok").isFile())need+=spec.getLong("size");}}
+        catch(Exception ignored){}return need;}
     private static void check(BooleanSupplier cancelled)throws CancellationException {if(cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())throw new CancellationException();}
     private static File file(Context c,JSONObject spec)throws Exception {return new File(new File(c.getFilesDir(),"translation-models"),spec.getString("sha256")+"-"+spec.getString("name"));}
     private static final Set<String> verified=new HashSet<>();
