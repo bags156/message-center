@@ -35,6 +35,13 @@ static std::string prefix(const std::string& variant, const Case& c) {
         if (c.to == "es") extra += " Use Latin American Spanish: tú (not usted) for one person and ustedes (never vosotros) for more than one. When it isn't clear whether someone is a man or a woman, choose one form; never write both (like o/a).";
         extra += " Keep every emoji exactly as it is: don't add, remove or change any.\n";
     }
+    // "natural2": shorter, with Spanish's usual masculine default and a hint that slang may be Latin American.
+    if (variant == "natural2") {
+        extra = "This is a casual text message between friends or family. Translate it the way a native speaker would text it, keeping its tone, and translate slang and idioms by what they mean.";
+        if (c.from == "es") extra += " It may use Mexican or other Latin American slang.";
+        if (c.to == "es") extra += " Use Latin American Spanish, with tú, and ustedes for more than one person. When it isn't clear whether someone is a man or a woman, use the masculine form.";
+        extra += " Keep every emoji exactly as it is.\n";
+    }
     return head + extra + "Produce only the " + t + " translation, without any additional explanations or commentary. Please translate the following " + s + " text into " + t + ":\n\n\n";
 }
 
@@ -80,7 +87,7 @@ int main(int argc, char** argv) {
         }
     }
     // Naturalness: every message under each prompt variant (context only where there's a previous message).
-    for (const char* variant : {"current", "casual", "natural"}) {
+    for (const char* variant : {"current", "natural", "natural2"}) {
         for (const Case& c : cases) {
             if (std::string(variant) == "context" && c.previous.empty()) continue;
             std::string said, error;
