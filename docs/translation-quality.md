@@ -11,11 +11,38 @@ The comparison uses 18 synthetic English/Spanish messages, the actual pinned mod
 | Perdón, se me fue el avión. ¿Qué estabas diciendo? | Sorry, I'm out of the plane. What were you saying? | Excuse me, I seem to have lost my train of thought. What were you saying? |
 | Tell Sam I'll be there at 7:30 🙂 … | Dropped the emoji. | Preserved the emoji, time and exact URL. |
 
+## Texting tone and speed (1.5.77)
+
+What you send through the stronger translator now goes with a note that it's a casual text between friends or family, in the tone it was written in. For Spanish, the note asks for Latin American Spanish with tú (and ustedes, never vosotros), the masculine form when gender isn't clear, and the same emoji. Afterwards the app tidies Spanish output: one gender form instead of both (`agotado/a` becomes `agotado`), and a `¡` or `¿` that was never closed gets its `!` or `?`. If the casual answer changes a link, code, time or emoji, or starts repeating itself, the app tries once more with the plain prompt before giving up.
+
+What you read keeps the plain prompt. Casual wording made English from Spanish read more naturally ("Did you get here yet?", "Who's picking up the kids?"), but it was less faithful to slang. For example, `se me fue el avión` became "I missed my flight" instead of "I lost my train of thought".
+
+The engine also keeps its working memory between messages, with one slot for each direction (their Spanish in, your English out), in the same memory as before. Each direction's prompt is the same every time, so the next message only reads the message itself. The first message after loading still reads the whole prompt. The model stays loaded for 3 minutes after a translation, or 1 minute after you leave the app.
+
+Comparison on 65 synthetic texts (`tools/quality-eval/cases.tsv`), using the pinned model on a GitHub Actions runner (CPU only; phone times differ):
+
+| What you send | Before | Now |
+| --- | --- | --- |
+| No worries, take your time! | No se preocupe, tómese su tiempo. | Tranquilo, ¡tómate tu tiempo! |
+| It's pouring here, drive safe | Está lloviendo a cántaros aquí, conduzca con precaución. | Está lloviendo a cántaros aquí, conduce con cuidado. |
+| Can you grab some milk on your way home? | ¿Podrías comprar un poco de leche cuando vayas a casa? | ¿Puedes comprar leche cuando vayas a casa? |
+| Hang in there, it'll get better | Mantén la esperanza, las cosas mejorarán. | Aguanta, ¡todo va a mejorar! |
+| My bad, I totally forgot to text you back | Perdón, olvidé completamente enviarte un mensaje. | Perdón, ¡me olvidé totalmente de mandarte un mensaje! |
+| Can't, I'm stuck at work | No puedo, estoy atado al trabajo. | No puedo, estoy atascado en el trabajo. |
+| I'll take a rain check. | Lo posponemos. | Te lo dejo para otro momento. |
+
+Speed, alternating directions the way a conversation does: before this change, every message took 5–9 s on the runner, because the engine read the whole prompt each time. Now, after the first message, each took 1.3–2.4 s (median 1.9 s), and the translations were identical either way. The harness is `tools/quality-eval` and its workflow `translation-eval.yml`.
+
+Messages you type in the language a chat sends in now go as written. The app uses language ID to decide. An ordinary message takes language ID's usual confident answer. A short message such as `ya voy` needs a very confident answer. A word or two, such as `ok` or `sí`, is translated as before. A translation that comes back the same as what you typed, apart from punctuation, case or emoji, is also sent as typed.
+
 ## Known limits
 
-The stronger model still makes mistakes. For `Te marco cuando salga.`, the compact model produced `I frame you when I get out.` and the stronger model produced `I'll call you as soon as I have the information.` The phrase needs context to establish what `salga` refers to, and the stronger output adds an interpretation. Neither result should be treated as a verified translation. Some inputs also produce alternative phrasings instead of a single version. The app does not remove alternatives heuristically because that could discard part of a real message.
+Casual wording reads more naturally, but it is not more accurate overall; it makes different mistakes. On the comparison set:
+- "Thanks for having us" became `invitarlo` (inviting him), not `invitarnos` (inviting us).
+- "Are you guys coming Saturday?" became a question about going, both before and now.
+- For "I", Spanish sometimes uses the feminine form (`estoy harta`).
 
-Declaring **I write in** avoids a separate source-language detection failure for outgoing drafts. **Send in** still belongs to the individual chat, and Send automatically translates once (or, with Check before sending on, shows the translation first). What you wrote stays on the phone: Show what you wrote under a sent translation. Stronger mode validates URLs, emails, long digit codes, times and emoji; failed integrity or output checks retain the source draft. These checks cannot establish semantic correctness. Original incoming messages stay available through Show original.
+When reading, `padre` (cool) still comes out as "Dad", and `qué oso` (how embarrassing) as "that's hilarious".
 
 ## Android validation
 

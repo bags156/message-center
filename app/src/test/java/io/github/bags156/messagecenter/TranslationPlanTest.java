@@ -29,6 +29,24 @@ public class TranslationPlanTest {
         assertEquals("en",TranslationPlan.outgoingSource("A longer message without a confident detection","","en"));
         assertEquals("es",TranslationPlan.outgoingSource("¿Dónde estás? Te espero en la puerta del cine.","es","en"));
     }
+    @Test public void draftsAlreadyInTheSendingLanguageGoAsWritten() {
+        assertTrue(TranslationPlan.alreadyIn("es","es"));
+        assertTrue(TranslationPlan.alreadyIn("es","es-MX"));
+        assertFalse(TranslationPlan.alreadyIn("en","es"));
+        assertFalse(TranslationPlan.alreadyIn("","es"));
+        assertFalse(TranslationPlan.alreadyIn("es",""));
+        // Ordinary messages take language ID's usual answer; short ones need it very sure; a word or two, never.
+        assertEquals(.6f,TranslationPlan.sureEnough("¿Nos vemos mañana en la casa?"),0f);
+        assertEquals(.9f,TranslationPlan.sureEnough("Ya voy 👍"),0f);
+        assertTrue(TranslationPlan.sureEnough("Sí")>1);
+        assertTrue(TranslationPlan.sureEnough("ok https://example.com/somewhere-long")>1);
+        // A translation that only touched punctuation, case or emoji is what was typed.
+        assertTrue(TranslationPlan.unchanged("Ya voy","¡Ya voy!"));
+        assertTrue(TranslationPlan.unchanged("gracias 🙏","Gracias."));
+        assertFalse(TranslationPlan.unchanged("Si","Sí"));
+        assertFalse(TranslationPlan.unchanged("I'm on my way","Ya voy"));
+        assertFalse(TranslationPlan.unchanged("👍","👍"));
+    }
     @Test public void outdatedTranslationCannotSendAfterAnyContextChanges() {
         assertTrue(TranslationPlan.current("a","hello","reply1","photo1","a","hello","reply1","photo1"));
         assertFalse(TranslationPlan.current("b","hello","reply1","photo1","a","hello","reply1","photo1"));

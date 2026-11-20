@@ -11,9 +11,39 @@ import java.util.regex.Pattern;
 /** Prompt, splitting and literal-preservation decisions, without Android dependencies. */
 final class QualityPlan {
     static final String SUFFIX="<end_of_turn>\n<start_of_turn>model\n";
-    static String prefix(String from,String to){String source=Locale.forLanguageTag(from).getDisplayLanguage(Locale.ENGLISH),target=Locale.forLanguageTag(to).getDisplayLanguage(Locale.ENGLISH);
+    /**
+     * TranslateGemma's own prompt, plus (when casual, for what you send) a note that this is a text
+     * between friends or family, so it comes out the way people text: tú, not usted; "¿Puedes…?", not
+     * "¿Podría…?". What you read stays plain: casual wording was less faithful to slang ("se me fue el
+     * avión" became a missed flight). It depends only on the languages and the casual note, so the
+     * engine can reuse it from one message to the next.
+     */
+    static String prefix(String from,String to,boolean casual){String source=Locale.forLanguageTag(from).getDisplayLanguage(Locale.ENGLISH),target=Locale.forLanguageTag(to).getDisplayLanguage(Locale.ENGLISH);
+        String hint="";
+        if(casual){hint="This is a casual text message between friends or family. Translate it the way a native speaker would text it, keeping its tone, and translate slang and idioms by what they mean.";
+            if("es".equals(to))hint+=" Use Latin American Spanish, with tú, and ustedes for more than one person. When it isn't clear whether someone is a man or a woman, use the masculine form.";
+            hint+=" Keep every emoji exactly as it is.\n";}
         return "<start_of_turn>user\nYou are a professional "+source+" ("+from+") to "+target+" ("+to+") translator. Your goal is to accurately convey the meaning and nuances of the original "+source+" text while adhering to "+target+" grammar, vocabulary, and cultural sensitivities.\n"
-            +"Produce only the "+target+" translation, without any additional explanations or commentary. Please translate the following "+source+" text into "+target+":\n\n\n";}
+            +hint+"Produce only the "+target+" translation, without any additional explanations or commentary. Please translate the following "+source+" text into "+target+":\n\n\n";}
+    /**
+     * Small, safe fixes for casual Spanish: one gender form rather than both (agotado/a, agotad@ →
+     * agotado), and an opening ¡ or ¿ that was never closed gets its ! or ?.
+     */
+    static String tidy(String translated,String to){
+        if(!"es".equals(to)||translated==null)return translated;
+        String t=translated.replaceAll("(?<=\\p{L})o/a(?!\\p{L})","o").replaceAll("(?<=\\p{L})os/as(?!\\p{L})","os").replaceAll("(?<=\\p{L})o\\(a\\)","o")
+            .replaceAll("(?<=\\p{L}{2})@(?![\\p{L}\\p{N}._%+-])","o");
+        return closed(closed(t,'¡','!'),'¿','?');}
+    /** Close each opening mark: a full stop becomes the closing mark, or it goes after the last word. Anything less clear is left alone. */
+    private static String closed(String t,char open,char close){StringBuilder out=new StringBuilder(t);
+        for(int i=out.length()-1;i>=0;i--){if(out.charAt(i)!=open)continue;int j=i+1;
+            while(j<out.length()&&".!?\n¡¿".indexOf(out.charAt(j))<0)j++;
+            if(j<out.length()&&out.charAt(j)==close)continue;
+            if(j<out.length()&&out.charAt(j)=='.'){out.setCharAt(j,close);continue;}
+            if(j<out.length()&&out.charAt(j)!='\n')continue;
+            int end=j;while(end>i+1&&!Character.isLetterOrDigit(Character.codePointBefore(out,end))&&"\"»)".indexOf(out.charAt(end-1))<0)end--;
+            if(end>i+1)out.insert(end,close);}
+        return out.toString();}
     /** Preserve line breaks and split long paragraphs at sentence or word boundaries. */
     static List<String> fragments(String text){return fragments(text,800);}
     static List<String> fragments(String text,String source){return fragments(text,source.equals("zh")||source.equals("ja")||source.equals("ko")?300:800);}

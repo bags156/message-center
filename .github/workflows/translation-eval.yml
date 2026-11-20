@@ -1,0 +1,72 @@
+name: Translation evaluation
+# Developer check of the stronger translator: runs the app's own inference core on a runner, over
+# synthetic casual messages (tools/quality-eval/cases.tsv), and uploads every output and timing.
+# Never part of a release; it signs nothing and sends no messages.
+on:
+  workflow_dispatch:
+  # Runs from a feature branch when the evaluation or the inference core changes (manual runs need this file on main).
+  push:
+    branches-ignore: [main]
+    paths:
+      - tools/quality-eval/**
+      - quality-native/quality_core.*
+      - .github/workflows/translation-eval.yml
+permissions:
+  contents: read
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Model pinned in the app
+        id: pin
+        run: |
+          src=app/src/main/java/io/github/bags156/messagecenter/QualityTranslation.java
+          echo "sha=$(grep -o 'SHA="[a-f0-9]*"' $src | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - name: Restore model
+        id: model
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: ~/quality-model
+          key: quality-model-${{ steps.pin.outputs.sha }}
+      - name: Download and check model
+        if: steps.model.outputs.cache-hit != 'true'
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, pathlib, re, urllib.request
+          src = pathlib.Path("app/src/main/java/io/github/bags156/messagecenter/QualityTranslation.java").read_text()
+          size = int(re.search(r"SIZE=(\d+)L", src)[1]); sha = re.search(r'SHA="([a-f0-9]{64})"', src)[1]; url = re.search(r'URL="([^"\n]+)"', src)[1]
+          dest = pathlib.Path(os.path.expanduser("~/quality-model/model.gguf")); dest.parent.mkdir(parents=True, exist_ok=True)
+          digest = hashlib.sha256(); total = 0
+          with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "MessageCenter-quality-eval"}), timeout=60) as r, open(dest, "wb") as out:
+              while chunk := r.read(8 << 20):
+                  out.write(chunk); digest.update(chunk); total += len(chunk)
+                  if total > size: raise SystemExit("model exceeded its pinned size")
+          if total != size or digest.hexdigest() != sha: raise SystemExit("model size or SHA-256 mismatch")
+          print("model verified")
+          PY
+      - name: Save model
+        if: steps.model.outputs.cache-hit != 'true'
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: ~/quality-model
+          key: quality-model-${{ steps.pin.outputs.sha }}
+      - name: Build the evaluation (the app's inference core, for this runner)
+        run: |
+          bash tools/fetch_quality_engine.sh
+          cmake -S tools/quality-eval -B build/quality-eval -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/quality-eval --target quality_eval --parallel 4
+      - name: Evaluate
+        run: build/quality-eval/quality_eval ~/quality-model/model.gguf tools/quality-eval/cases.tsv translation-eval.jsonl
+      - name: Results (synthetic messages only)
+        if: always()
+        run: cat translation-eval.jsonl || true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: translation-eval
+          path: translation-eval.jsonl
+          retention-days: 30

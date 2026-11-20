@@ -1,0 +1,66 @@
+# Synthetic casual messages for the stronger-translator evaluation (id, from, to, previous message, text).
+en01	en	es		omw, be there in 10
+en02	en	es		Lol that's hilarious 😂
+en03	en	es		Can you grab some milk on your way home?
+en04	en	es		I'll take a rain check, I'm wiped out
+en05	en	es		No worries, take your time!
+en06	en	es		Are you still down for tacos tonight?
+en07	en	es		My bad, I totally forgot to text you back
+en08	en	es		Hannah says hi 👋
+en09	en	es		That movie was so good, you gotta see it
+en10	en	es		Running late, traffic is crazy
+en11	en	es		Let me know when you get there
+en12	en	es		Happy birthday!! Hope it's a good one 🎉
+en13	en	es		Can we push it to 7:30?
+en14	en	es		I'm so done with this week
+en15	en	es		Sounds good 👍
+en16	en	es		Did you see what she posted? I'm dying 💀
+en17	en	es		Thanks for having us last night, we had a blast
+en18	en	es		Call me when you get a sec
+en19	en	es		It's pouring here, drive safe
+en20	en	es		Who's picking up the kids today?
+en21	en	es		Here's the address: https://maps.app.goo.gl/abc123
+en22	en	es		Same here lol
+en23	en	es		Hang in there, it'll get better
+en24	en	es	Are you coming to the game?	Can't, I'm stuck at work
+en25	en	es	How was the interview?	Nailed it 🙌
+es01	es	en		¿Ya llegaste?
+es02	es	en		No manches, qué oso 😂
+es03	es	en		Te marco cuando salga del trabajo
+es04	es	en		Ahorita voy
+es05	es	en		¿Qué onda? ¿Cómo te fue?
+es06	es	en		Se me olvidó por completo, perdón
+es07	es	en		Está bien padre ese lugar
+es08	es	en		Llego en 10, estoy en el tráfico
+es09	es	en		¿Me pasas la dirección?
+es10	es	en		Qué flojera ir hoy
+es11	es	en		Échale ganas, tú puedes 💪
+es12	es	en		Ya ni modo
+es13	es	en		¿Quién va a recoger a los niños?
+es14	es	en		Gracias por todo, la pasamos súper bien anoche
+es15	es	en		Estoy hasta la madre de esta semana
+es16	es	en		Al rato te cuento
+es17	es	en		Feliz cumple!! 🎉 Que te la pases increíble
+es18	es	en		¿Nos vemos a las 7:30?
+es19	es	en		Está lloviendo un buen, maneja con cuidado
+es20	es	en		¿Neta? No te creo
+es21	es	en		Mándame foto porfa
+es22	es	en		Va, nos vemos al rato
+es23	es	en	Are you free after work?	Sí, te marco cuando salga
+es24	es	en	¿Cómo te fue en el examen?	Bien, gracias a Dios
+en26	en	es		I'm exhausted, going to bed early
+en27	en	es		So excited for the trip!! ✈️
+en28	en	es		Are you guys coming Saturday?
+en29	en	es		Call me back when you can
+en30	en	es		Love you, see you soon ❤️
+en31	en	es		lmk if you need anything
+en32	en	es		Ugh I'm running so behind today 😅
+es25	es	en		Estoy bien cansado, ya me voy a dormir
+es26	es	en		¿Ustedes van a venir el sábado?
+es27	es	en		Te quiero mucho, cuídate ❤️
+es28	es	en		Avísame si necesitas algo
+es29	es	en		Qué padre que vinieron
+es30	es	en		Me late mucho la idea
+es31	es	en		Perdón, se me fue el avión. ¿Qué estabas diciendo?
+en33	en	es		I'll take a rain check.
+en34	en	es		I'm down for pizza.

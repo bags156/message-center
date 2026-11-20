@@ -1971,7 +1971,7 @@ public class PairedActivity extends Activity {
             for(String code:Translation.languages(this)){labels.add((writing.equals(code)?"✓ ":"")+Translation.label(code));actions.add(()->{setWritingLanguage(id,code);d[0].dismiss();translationSettings(id);});}menuSheet("Language I write in",labels,actions);});
         preferenceRow(outgoing,R.drawable.ic_send,0xff8b5cf6,"Send in",send.isEmpty()?"As written":Translation.label(send),()->sendingLanguagePicker("Default sending language",send,code->{setSendingLanguage(id,code);d[0].dismiss();translationSettings(id);}));
         if(!send.isEmpty())menuSwitch(outgoing,R.drawable.ic_eye,0xff10b981,"Check before sending",chatSettings.checkTranslation(id),on->{chatSettings.setCheckTranslation(id,on);d[0].dismiss();translationSettings(id);});
-        TextView outgoingHelp=text(send.isEmpty()?"Send exactly what I type. Choose a language above to translate my messages.":(writing.equals("auto")?"Detect the language I type": "Write in "+Translation.label(writing.isEmpty()?phone:writing))+"; Send "+(chatSettings.checkTranslation(id)?"shows the "+Translation.label(send)+" translation to check before it goes.":"automatically translates to "+Translation.label(send)+".")+" Sent messages keep what you wrote: tap Show what you wrote under one.",13,muted,false);outgoingHelp.setPadding(dp(8),dp(7),dp(8),0);box.addView(outgoingHelp);gap(box,18);
+        TextView outgoingHelp=text(send.isEmpty()?"Send exactly what I type. Choose a language above to translate my messages.":(writing.equals("auto")?"Detect the language I type": "Write in "+Translation.label(writing.isEmpty()?phone:writing))+"; Send "+(chatSettings.checkTranslation(id)?"shows the "+Translation.label(send)+" translation to check before it goes.":"automatically translates to "+Translation.label(send)+".")+" Anything you type in "+Translation.label(send)+" already goes as written. Sent messages keep what you wrote: tap Show what you wrote under one.",13,muted,false);outgoingHelp.setPadding(dp(8),dp(7),dp(8),0);box.addView(outgoingHelp);gap(box,18);
         box.addView(text("Tap Send as usual. To change the sending language, return to this chat’s Details. Incoming translation is in app Settings → Translation.",12,muted,false));d[0]=translationSheet(box);return d[0];}
     private TextView qualityStatusView;
     private final Runnable qualitySettingsTick=new Runnable(){public void run(){if(!resumed||!screen.equals("settings")||qualityStatusView==null)return;qualityStatusView.setText(QualityTranslation.status(PairedActivity.this));if(QualityTranslation.pending(PairedActivity.this))ui.postDelayed(this,1500);}};
@@ -2003,15 +2003,20 @@ public class PairedActivity extends Activity {
         int request=outgoingTranslationRequest.incrementAndGet();translatingOutgoing=true;updateComposeButton();
         if(outgoingTranslateStatus!=null){outgoingTranslateStatus.setText("Translating to "+Translation.label(target)+"…");outgoingTranslateStatus.setVisibility(View.VISIBLE);}
         Translation.worker.urgent(()->{try{
-            String detected="auto".equals(writing)?Translation.detect(getApplicationContext(),original):"";
-            String source=TranslationPlan.outgoingSource(original,detected,phone,writing);
-            Translation.Result answer=Translation.translate(getApplicationContext(),original,source,target,
+            // Typed in the language it would be sent in: nothing to translate, so it goes as written.
+            String detected=Translation.writtenIn(getApplicationContext(),original);
+            if(TranslationPlan.alreadyIn(detected,target)){ui.post(()->{if(outgoingTranslationRequest.get()!=request||isDestroyed())return;finishOutgoingTranslation(request);
+                if(!screen.equals("chat")||composer==null||!TranslationPlan.current(chatId,composer.getText().toString(),replyId,translationFiles(),id,original,reply,files)||!target.equals(chatSettings.sendLanguage(id))){
+                    toast("Your message changed. Tap Send again when ready.");return;}
+                sendWritten(original,scheduling);});return;}
+            String source=TranslationPlan.outgoingSource(original,"auto".equals(writing)?detected:"",phone,writing);
+            Translation.Result answer=Translation.translate(getApplicationContext(),original,source,target,true,
                 step->ui.post(()->{if(outgoingTranslationRequest.get()==request&&translatingOutgoing&&outgoingTranslateStatus!=null)outgoingTranslateStatus.setText(step);}),
                 ()->outgoingTranslationRequest.get()!=request);
             ui.post(()->{if(outgoingTranslationRequest.get()!=request||isDestroyed())return;finishOutgoingTranslation(request);
                 if(!screen.equals("chat")||composer==null||!TranslationPlan.current(chatId,composer.getText().toString(),replyId,translationFiles(),id,original,reply,files)||!target.equals(chatSettings.sendLanguage(id))||!writing.equals(chatSettings.writeLanguage(id))){
                     toast("Your message changed. Tap Send again when ready.");return;}
-                if(chatSettings.checkTranslation(id)){reviewTranslation(id,original,reply,files,answer,scheduling);return;}
+                if(chatSettings.checkTranslation(id)&&!answer.same&&!TranslationPlan.unchanged(original,answer.text)){reviewTranslation(id,original,reply,files,answer,scheduling);return;}
                 sendTranslated(id,original,answer,scheduling);
             });
         }catch(java.util.concurrent.CancellationException ignored){ui.post(()->finishOutgoingTranslation(request));}
@@ -2022,8 +2027,10 @@ public class PairedActivity extends Activity {
     }
     /** Sends the translation, keeping what you wrote (on this phone) so the chat can show it. */
     private void sendTranslated(String id,String original,Translation.Result answer,boolean scheduling){
+        if(answer.same||TranslationPlan.unchanged(original,answer.text)){sendWritten(original,scheduling);return;}
         SentOriginals.remember(this,id,answer.text,original,answer.from,answer.to);
         if(scheduling)scheduleBody(answer.text.trim());else sendBody(answer.text);}
+    private void sendWritten(String original,boolean scheduling){if(scheduling)scheduleBody(original.trim());else sendBody(original);}
     /**
      * "Check before sending": the translation, with what you wrote under it. Send sends it; Edit keeps
      * your draft to change; Send as written sends what you typed, untranslated.
@@ -2038,7 +2045,7 @@ public class PairedActivity extends Activity {
         TextView edit=button("Edit",false,()->d[0].dismiss());
         TextView send=button("Send",true,()->{d[0].dismiss();if(!current.getAsBoolean()){toast("Your message changed. Tap Send again when ready.");return;}sendTranslated(id,original,answer,scheduling);});
         LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-2,-2);bp.leftMargin=dp(10);buttons.addView(edit);buttons.addView(send,bp);box.addView(buttons,new LinearLayout.LayoutParams(-1,-2));
-        sheetAction(box,"Send as written, without translating",()->{d[0].dismiss();if(!current.getAsBoolean()){toast("Your message changed. Tap Send again when ready.");return;}if(scheduling)scheduleBody(original.trim());else sendBody(original);});
+        sheetAction(box,"Send as written, without translating",()->{d[0].dismiss();if(!current.getAsBoolean()){toast("Your message changed. Tap Send again when ready.");return;}sendWritten(original,scheduling);});
         d[0]=translationSheet(box);}
     /** A language pack would use mobile data: download it now (or always), or wait for Wi-Fi. */
     private void askMobileData(Translation.NeedsData e,String meanwhile,Runnable retry){

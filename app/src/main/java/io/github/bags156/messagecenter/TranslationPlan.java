@@ -24,10 +24,38 @@ final class TranslationPlan {
     static boolean outgoingText(String text) {
         return text!=null&&text.replaceAll("(?i)https?://\\S+|www\\.\\S+", "").codePoints().anyMatch(Character::isLetter);
     }
+    /** Letters outside links: how much a language guess has to go on. */
+    static long letters(String text) {
+        return text==null?0:text.replaceAll("(?i)https?://\\S+|www\\.\\S+", "").codePoints().filter(Character::isLetter).count();
+    }
     /** Short outgoing fragments use the phone language, since language ID needs more context. */
     static String outgoingSource(String text,String detected,String phoneLanguage) {
         String from=language(detected);
-        return from.isEmpty()||text.replaceAll("(?i)https?://\\S+|www\\.\\S+", "").codePoints().filter(Character::isLetter).count()<12?language(phoneLanguage):from;
+        return from.isEmpty()||letters(text)<12?language(phoneLanguage):from;
+    }
+    /**
+     * How sure language ID has to be before a draft counts as written in a language: ordinary
+     * messages take its usual confident answer; a short one ("ya voy") needs a very confident
+     * answer; a word or two ("ok", "sí") is too little to go on (above 1: never).
+     */
+    static float sureEnough(String text) {
+        long n=letters(text);
+        return n>=12?.6f:n>=4?.9f:2f;
+    }
+    /** Already written in the language it's sent in, so it goes as written, untranslated. */
+    static boolean alreadyIn(String detected,String target) {
+        String to=language(target);
+        return !to.isEmpty()&&to.equals(language(detected));
+    }
+    /** A "translation" that only changed case, spacing, punctuation or emoji is what you typed: send that. */
+    static boolean unchanged(String original,String translated) {
+        String a=plain(original);
+        return !a.isEmpty()&&a.equals(plain(translated));
+    }
+    private static String plain(String text) {
+        StringBuilder out=new StringBuilder();
+        if(text!=null)text.codePoints().filter(Character::isLetterOrDigit).map(Character::toLowerCase).forEach(out::appendCodePoint);
+        return out.toString();
     }
     /** A declared writing language avoids misidentifying names, slang and mixed-language drafts. */
     static String outgoingSource(String text,String detected,String phoneLanguage,String configured) {
