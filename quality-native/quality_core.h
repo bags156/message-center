@@ -25,8 +25,9 @@ class QualityModel {
     void read(int seq,const int* ids,int n,int start,struct llama_batch_ext* batch,const std::function<bool()>& cancelled);
 public:
     /**
-     * repack: weights rearranged at load for this CPU's matrix instructions (faster, but held in
-     * memory rather than read from the file as needed). threads: 0 picks from the phone's fast cores.
+     * repack: weights rearranged at load for this CPU's dot-product instructions (the app does: on ARM
+     * test machines, about 1.4x faster writing and 2x faster reading, held in memory rather than read
+     * from the file as needed). threads: 0 picks from the phone's fast cores.
      */
     explicit QualityModel(const std::string& path,bool repack=false,int threads=0);
     ~QualityModel();

@@ -38,7 +38,19 @@ final class QualityTranslation {
     private static File marker(Context c){return new File(c.getFilesDir(),"quality-model-verified");}
     static boolean ready(Context c){File f=file(c);if(f==null||f.length()!=SIZE)return false;
         try{return (SHA+":"+f.lastModified()).equals(new String(java.nio.file.Files.readAllBytes(marker(c).toPath()),StandardCharsets.UTF_8));}catch(Exception ignored){return false;}}
-    static boolean enabled(Context c){return prefs(c).getBoolean("enabled",false)&&ready(c);}
+    static boolean enabled(Context c){return prefs(c).getBoolean("enabled",false)&&supported()&&ready(c);}
+    private static Boolean supported;
+    /**
+     * The engine is built for ARM's dot-product and half-precision instructions (phones since about
+     * 2018); without them it can't run. Other processors (the x86 test phone) have their own build.
+     */
+    static synchronized boolean supported(){if(supported!=null)return supported;boolean arm=String.valueOf(System.getProperty("os.arch")).contains("aarch64");
+        if(!arm)return supported=true;
+        try{String info=new String(java.nio.file.Files.readAllBytes(new File("/proc/cpuinfo").toPath()),StandardCharsets.UTF_8);
+            for(String line:info.split("\n"))if(line.startsWith("Features")){java.util.Set<String> has=new java.util.HashSet<>(java.util.Arrays.asList(line.substring(line.indexOf(':')+1).trim().split("\\s+")));
+                return supported=has.contains("asimddp")&&has.contains("asimdhp");}}
+        catch(Exception ignored){}
+        return supported=false;}
     static void use(Context c,boolean stronger){prefs(c).edit().putBoolean("enabled",stronger).putBoolean("requested",stronger).apply();if(!stronger)releaseNow();}
     /** Leaving the app: let go of the model after a minute away. */
     static void release(){if(!usedNative)return;idle.removeCallbacks(unload);idle.postDelayed(unload,AWAY_MS);}
@@ -50,7 +62,7 @@ final class QualityTranslation {
         try(Cursor q=manager(c).query(new DownloadManager.Query().setFilterById(id))){return q!=null&&q.moveToFirst()?q.getInt(q.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)):0;}catch(Exception ignored){return 0;}}
     static boolean stored(Context c){File f=file(c);return id(c)!=0||f!=null&&f.exists();}
     static boolean pending(Context c){int s=state(c);return verifying.get()||s==DownloadManager.STATUS_PENDING||s==DownloadManager.STATUS_RUNNING||s==DownloadManager.STATUS_PAUSED;}
-    static String status(Context c){if(ready(c))return enabled(c)?"Stronger translator · on this phone":"Compact translator · stronger model available";
+    static String status(Context c){if(!supported())return "This phone's processor can't run the stronger translator. The compact translator still works.";if(ready(c))return enabled(c)?"Stronger translator · on this phone":"Compact translator · stronger model available";
         if(verifying.get())return "Checking the downloaded model…";String failed=prefs(c).getString("error","");if(!failed.isEmpty())return failed;
         long id=id(c);if(id!=0)try(Cursor q=manager(c).query(new DownloadManager.Query().setFilterById(id))){if(q!=null&&q.moveToFirst()){
             int s=q.getInt(q.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
@@ -60,7 +72,7 @@ final class QualityTranslation {
             if(s==DownloadManager.STATUS_FAILED)return "Download stopped · tap to retry";
         }}catch(Exception ignored){}
         String error=prefs(c).getString("error","");return error.isEmpty()?"Compact translator · stronger model is a 4.1 GB download":error;}
-    static void start(Context c)throws Exception{Context app=c.getApplicationContext();if(ready(app)){use(app,true);return;}
+    static void start(Context c)throws Exception{Context app=c.getApplicationContext();if(!supported())throw new IOException("This phone's processor can't run the stronger translator.");if(ready(app)){use(app,true);return;}
         if(pending(app)){prefs(app).edit().putBoolean("requested",true).apply();return;}
         File f=file(app);if(f==null)throw new IOException("Phone storage is unavailable.");File dir=f.getParentFile();if(!dir.isDirectory()&&!dir.mkdirs())throw new IOException("Could not create the model folder.");
         long previous=id(app);if(previous!=0)manager(app).remove(previous);generation.incrementAndGet();
