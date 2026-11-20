@@ -11,17 +11,16 @@ import java.util.regex.Pattern;
 /** Prompt, splitting and literal-preservation decisions, without Android dependencies. */
 final class QualityPlan {
     static final String SUFFIX="<end_of_turn>\n<start_of_turn>model\n";
-    /** The prompt for texting: natural, everyday wording in the tone it was written in. */
-    static String prefix(String from,String to){return prefix(from,to,true);}
     /**
-     * TranslateGemma's own prompt, plus (when casual) a note that this is a text between friends or
-     * family, so it comes out the way people text (tú, not usted; "I'm on my way", not "I'm going now").
-     * It depends only on the two languages, so the engine can reuse it from one message to the next.
+     * TranslateGemma's own prompt, plus (when casual, for what you send) a note that this is a text
+     * between friends or family, so it comes out the way people text: tú, not usted; "¿Puedes…?", not
+     * "¿Podría…?". What you read stays plain: casual wording was less faithful to slang ("se me fue el
+     * avión" became a missed flight). It depends only on the languages and the casual note, so the
+     * engine can reuse it from one message to the next.
      */
     static String prefix(String from,String to,boolean casual){String source=Locale.forLanguageTag(from).getDisplayLanguage(Locale.ENGLISH),target=Locale.forLanguageTag(to).getDisplayLanguage(Locale.ENGLISH);
         String hint="";
         if(casual){hint="This is a casual text message between friends or family. Translate it the way a native speaker would text it, keeping its tone, and translate slang and idioms by what they mean.";
-            if("es".equals(from))hint+=" It may use Mexican or other Latin American slang.";
             if("es".equals(to))hint+=" Use Latin American Spanish, with tú, and ustedes for more than one person. When it isn't clear whether someone is a man or a woman, use the masculine form.";
             hint+=" Keep every emoji exactly as it is.\n";}
         return "<start_of_turn>user\nYou are a professional "+source+" ("+from+") to "+target+" ("+to+") translator. Your goal is to accurately convey the meaning and nuances of the original "+source+" text while adhering to "+target+" grammar, vocabulary, and cultural sensitivities.\n"

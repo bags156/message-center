@@ -19,17 +19,16 @@ static std::string language(const std::string& code) {
     return code;
 }
 
-// Must match QualityPlan.prefix(from, to, casual) in the app exactly: "app" is the casual prompt the
-// app uses, "plain" its literal fallback (TranslateGemma's own prompt). The app also tidies Spanish
-// output afterwards (QualityPlan.tidy: one gender form, closed ¡ ¿), which this harness doesn't.
+// Must match QualityPlan.prefix(from, to, casual) in the app exactly: "casual" is the prompt the app
+// uses for what you send, "plain" (TranslateGemma's own prompt) for what you read and as the fallback.
+// The app also tidies Spanish output afterwards (QualityPlan.tidy: one gender form, closed ¡ ¿).
 static std::string prefix(const std::string& variant, const Case& c) {
     const std::string& from = c.from; const std::string& to = c.to;
     std::string s = language(from), t = language(to);
     std::string head = "<start_of_turn>user\nYou are a professional " + s + " (" + from + ") to " + t + " (" + to + ") translator. Your goal is to accurately convey the meaning and nuances of the original " + s + " text while adhering to " + t + " grammar, vocabulary, and cultural sensitivities.\n";
     std::string extra;
-    if (variant == "app") {
+    if (variant == "casual") {
         extra = "This is a casual text message between friends or family. Translate it the way a native speaker would text it, keeping its tone, and translate slang and idioms by what they mean.";
-        if (from == "es") extra += " It may use Mexican or other Latin American slang.";
         if (to == "es") extra += " Use Latin American Spanish, with tú, and ustedes for more than one person. When it isn't clear whether someone is a man or a woman, use the masculine form.";
         extra += " Keep every emoji exactly as it is.\n";
     }
@@ -63,7 +62,7 @@ int main(int argc, char** argv) {
     auto loadStart = std::chrono::steady_clock::now();
     QualityModel model(argv[1]);
     // Warm up, so the timings below don't include reading the model in.
-    model.translate(prefix("app", cases[0]), cases[0].text, SUFFIX, never);
+    model.translate(prefix("casual", cases[0]), cases[0].text, SUFFIX, never);
     out << "{\"kind\":\"load\",\"ms\":" << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - loadStart).count() << "}\n";
     // Speed: the same messages starting fresh each time (as before), then keeping the instruction (as
     // now), alternating directions the way a conversation does (their Spanish in, your English out).
@@ -75,14 +74,14 @@ int main(int argc, char** argv) {
             const Case& c = *alternating[i];
             if (std::string(mode) == "fresh") model.forget();
             auto t0 = std::chrono::steady_clock::now();
-            std::string said = model.translate(prefix("app", c), c.text, SUFFIX, never);
+            std::string said = model.translate(prefix(c.to == "es" ? "casual" : "plain", c), c.text, SUFFIX, never);
             long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
             out << "{\"kind\":\"speed\",\"mode\":\"" << mode << "\",\"id\":" << json(c.id) << ",\"ms\":" << ms << ",\"reused\":" << model.reused() << ",\"processed\":" << model.processed() << ",\"output\":" << json(said) << "}\n";
             out.flush();
         }
     }
     // Naturalness: every message under each prompt variant (context only where there's a previous message).
-    for (const char* variant : {"plain", "app"}) {
+    for (const char* variant : {"plain", "casual"}) {
         for (const Case& c : cases) {
             if (std::string(variant) == "context" && c.previous.empty()) continue;
             std::string said, error;

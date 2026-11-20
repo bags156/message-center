@@ -2304,6 +2304,15 @@ public final class OnDeviceSmoke extends Instrumentation {
             if(i==8)check((text.contains("not")||text.contains("n't"))&&(text.contains("arriv")||text.contains("deliver")),"Package negation was lost"+" ("+answer.text+")");
             note("QUALITY "+words+" → "+answer.text);
         }
+        // What you send is worded the way people text: idioms by meaning, and tú rather than usted.
+        String[] sending={"I'm down for pizza.","I'll take a rain check.","No worries, take your time!"};
+        for(int i=0;i<sending.length;i++){String words=sending[i];
+            String said=Translation.worker.submit(()->QualityTranslation.translate(ctx,words,"en","es",true,step->{},()->false)).get(180,java.util.concurrent.TimeUnit.SECONDS);String text=said.toLowerCase(java.util.Locale.ROOT);
+            check(QualityPlan.preserves(words,said)&&!words.equalsIgnoreCase(said),"Casual translation changed a literal or echoed the source ("+said+")");
+            if(i==0)check(text.contains("pizza")&&!text.contains("abajo"),"Casual pizza invitation was translated literally ("+said+")");
+            if(i==1)check(!text.contains("lluvia")&&!text.contains("cheque"),"Casual rain check was translated literally ("+said+")");
+            if(i==2)check(!text.contains("usted")&&!text.contains("tómese")&&!text.contains("no se preocupe"),"What you send used usted ("+said+")");
+            note("QUALITY CASUAL "+said);}
         java.util.concurrent.atomic.AtomicInteger stops=new java.util.concurrent.atomic.AtomicInteger();boolean cancelled=false;
         try{Translation.worker.submit(()->QualityTranslation.translate(ctx,"Please translate this longer message before I change my mind.","en","es",step->{},()->stops.incrementAndGet()>5)).get(180,java.util.concurrent.TimeUnit.SECONDS);}
         catch(java.util.concurrent.ExecutionException e){cancelled=e.getCause() instanceof java.util.concurrent.CancellationException;}
@@ -2323,7 +2332,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         new java.io.File(ctx.getFilesDir(),"quality-model-verified").delete();
         QualityTranslation.start(ctx);check(QualityTranslation.state(ctx)!=0,"Retry did not reclaim the old model's storage before enqueue");QualityTranslation.remove(ctx);
         check(!model.exists()&&!QualityTranslation.stored(ctx),"Cancelling a model retry left the large file behind");
-        result.putString("stream","QUALITY_TRANSLATION_SMOKE_PASS: pinned Q8 weights, colloquial English/Spanish, literal preservation, native cancellation and one-tap offline outbox send\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","QUALITY_TRANSLATION_SMOKE_PASS: pinned Q8 weights, colloquial English/Spanish, casual wording for what you send, literal preservation, native cancellation and one-tap offline outbox send\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){StringBuilder where=new StringBuilder();for(StackTraceElement frame:e.getStackTrace())if(frame.getClassName().contains("OnDeviceSmoke")&&where.length()<250)where.append(" at ").append(frame.getMethodName()).append(':').append(frame.getLineNumber());
         result.putString("stream","QUALITY_TRANSLATION_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+where+"\n");finish(Activity.RESULT_CANCELED,result);}}
     @Override public void onStart(){if(!qualityMode.isEmpty()){qualitySmoke();return;}Bundle result=new Bundle();try {

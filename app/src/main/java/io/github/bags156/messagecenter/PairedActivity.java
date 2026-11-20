@@ -2010,7 +2010,7 @@ public class PairedActivity extends Activity {
                     toast("Your message changed. Tap Send again when ready.");return;}
                 sendWritten(original,scheduling);});return;}
             String source=TranslationPlan.outgoingSource(original,"auto".equals(writing)?detected:"",phone,writing);
-            Translation.Result answer=Translation.translate(getApplicationContext(),original,source,target,
+            Translation.Result answer=Translation.translate(getApplicationContext(),original,source,target,true,
                 step->ui.post(()->{if(outgoingTranslationRequest.get()==request&&translatingOutgoing&&outgoingTranslateStatus!=null)outgoingTranslateStatus.setText(step);}),
                 ()->outgoingTranslationRequest.get()!=request);
             ui.post(()->{if(outgoingTranslationRequest.get()!=request||isDestroyed())return;finishOutgoingTranslation(request);

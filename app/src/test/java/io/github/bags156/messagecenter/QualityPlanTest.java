@@ -24,12 +24,12 @@ public class QualityPlanTest {
         assertEquals("tired/a",QualityPlan.tidy("tired/a","en"));
     }
     @Test public void textingPromptDependsOnlyOnTheLanguages() {
-        String casual=QualityPlan.prefix("en","es");
+        String casual=QualityPlan.prefix("en","es",true);
         assertTrue(casual.contains("casual text message")&&casual.contains("tú")&&casual.contains("Keep every emoji"));
         assertEquals(casual,QualityPlan.prefix("en","es",true));
         assertFalse(QualityPlan.prefix("en","es",false).contains("casual"));
-        assertFalse(QualityPlan.prefix("es","en").contains("tú"));
-        assertTrue(QualityPlan.prefix("es","en").contains("Latin American slang"));
+        assertFalse(QualityPlan.prefix("es","en",true).contains("tú"));
+        assertTrue(QualityPlan.prefix("es","en",true).contains("casual text message"));
         assertTrue(casual.startsWith("<start_of_turn>user\n")&&casual.endsWith(":\n\n\n"));
     }
     @Test public void alteredLinksCodesTimesAndMissingEmojiAreRejected() {

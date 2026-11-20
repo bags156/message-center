@@ -84,8 +84,10 @@ final class QualityTranslation {
         if(!SHA.equals(digest.toString()))throw new IOException("The model failed its integrity check.");if(cancelled.getAsBoolean())throw new CancellationException();
         for(String name:new String[]{"translategemma-terms.txt","translategemma-notice.txt"})try(InputStream in=c.getAssets().open(name);OutputStream out=new FileOutputStream(new File(f.getParentFile(),name))){in.transferTo(out);}
         try(FileOutputStream out=new FileOutputStream(marker(c))){out.write((SHA+":"+f.lastModified()).getBytes(StandardCharsets.UTF_8));out.getFD().sync();}}
-    /** One direct language pair, without an intermediate English translation. */
-    static String translate(Context c,String words,String from,String to,Consumer<String> progress,BooleanSupplier cancelled)throws Exception{
+    /** One direct language pair, without an intermediate English translation, in plain (faithful) wording. */
+    static String translate(Context c,String words,String from,String to,Consumer<String> progress,BooleanSupplier cancelled)throws Exception{return translate(c,words,from,to,false,progress,cancelled);}
+    /** Casual: for what you send, worded the way people text (and if that fails a check, plain). */
+    static String translate(Context c,String words,String from,String to,boolean casual,Consumer<String> progress,BooleanSupplier cancelled)throws Exception{
         if(!ready(c))throw new Translation.Problem("Download the stronger translator in Settings → Translation first.");
         idle.removeCallbacks(unload);StringBuilder result=new StringBuilder();
         try{for(String piece:QualityPlan.fragments(words,from)){if(cancelled.getAsBoolean())throw new CancellationException();
@@ -94,9 +96,9 @@ final class QualityTranslation {
                 progress.accept("Translating on this phone…");usedNative=true;String text=null;
                 // Casual wording first; if that changed a link, code, time or emoji, once more with the plain, literal prompt.
                 // (Also when it started repeating itself or came back empty.)
-                for(boolean casual:new boolean[]{true,false}){byte[] answer;
-                    try{answer=QualityNative.translate(utf8(QualityPlan.prefix(from,to,casual)),utf8(body),utf8(QualityPlan.SUFFIX),utf8(file(c).getAbsolutePath()),cancelled);}
-                    catch(IllegalStateException e){String why=String.valueOf(e.getMessage());if(!casual||cancelled.getAsBoolean()||!(why.contains("repeating")||why.contains("was empty")))throw e;continue;}
+                for(boolean texting:casual?new boolean[]{true,false}:new boolean[]{false}){byte[] answer;
+                    try{answer=QualityNative.translate(utf8(QualityPlan.prefix(from,to,texting)),utf8(body),utf8(QualityPlan.SUFFIX),utf8(file(c).getAbsolutePath()),cancelled);}
+                    catch(IllegalStateException e){String why=String.valueOf(e.getMessage());if(!texting||cancelled.getAsBoolean()||!(why.contains("repeating")||why.contains("was empty")))throw e;continue;}
                     if(cancelled.getAsBoolean())throw new CancellationException();if(answer==null)throw new Translation.Problem("The stronger translator could not finish. Your original is unchanged.");
                     String said=QualityPlan.tidy(new String(answer,StandardCharsets.UTF_8).trim(),to);if(QualityPlan.preserves(body,said)){text=said;break;}}
                 if(text==null)throw new Translation.Problem("Translation changed a link, code, time or emoji. Your original is unchanged.");

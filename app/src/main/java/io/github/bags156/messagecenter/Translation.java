@@ -77,15 +77,17 @@ final class Translation {
         try{String code=TranslationPlan.language(string(TranslationNative.detect(utf8(words))));return "und".equals(code)?"":code;}
         catch(LinkageError|RuntimeException ignored){return "";}
     }
-    /** Called on worker. The caller supplies cancellation tied to the exact chat/draft. */
-    static Result translate(Context c,String words,String source,String target,Consumer<String> progress,BooleanSupplier cancelled)throws Exception{
+    /** Called on worker. The caller supplies cancellation tied to the exact chat/draft. For reading: faithful wording. */
+    static Result translate(Context c,String words,String source,String target,Consumer<String> progress,BooleanSupplier cancelled)throws Exception{return translate(c,words,source,target,false,progress,cancelled);}
+    /** Sending: the stronger translator words it the way people text. */
+    static Result translate(Context c,String words,String source,String target,boolean sending,Consumer<String> progress,BooleanSupplier cancelled)throws Exception{
         check(cancelled);if(words.trim().isEmpty()||words.length()>12000)throw new Problem("Choose up to 12,000 characters to translate.");
         String from=TranslationPlan.language(source),to=TranslationPlan.language(target);
         if(from.isEmpty())from=detect(c,words);
         if(from.isEmpty())throw new Problem("Language unclear. Choose the message's language and try again.");
         if(from.equals(to))return new Result(words,from,to,true);
-        boolean stronger=QualityTranslation.enabled(c);String key=(stronger?"stronger":"compact")+"\u0000"+from+"\u0000"+to+"\u0000"+words;Result saved=cache.get(key);if(saved!=null)return saved;
-        if(stronger){String said=QualityTranslation.translate(c,words,from,to,progress,cancelled);check(cancelled);Result result=new Result(said,from,to,false);cache.put(key,result);lastStep="stronger offline translated "+from+" to "+to;return result;}
+        boolean stronger=QualityTranslation.enabled(c);String key=(stronger?sending?"stronger-sending":"stronger":"compact")+"\u0000"+from+"\u0000"+to+"\u0000"+words;Result saved=cache.get(key);if(saved!=null)return saved;
+        if(stronger){String said=QualityTranslation.translate(c,words,from,to,sending,progress,cancelled);check(cancelled);Result result=new Result(said,from,to,false);cache.put(key,result);lastStep="stronger offline translated "+from+" to "+to;return result;}
         String[] route=TranslationPlan.route(from,to);if(route.length==0)throw new Problem("Choose a translation language.");
         for(String pair:route)if(models(c).optJSONObject(pair)==null)throw new Problem(label(from)+" to "+label(to)+" is not available offline yet.");
         // On mobile data, a pack that isn't here yet waits for Wi-Fi unless you said it can use data.
