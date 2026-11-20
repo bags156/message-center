@@ -938,7 +938,7 @@ public class PairedActivity extends Activity {
             int most=Math.max(box.getLineHeight()*5+box.getPaddingTop()+box.getPaddingBottom(),Math.round(tall*0.4f));
             if(box.getMaxHeight()!=most)box.post(()->box.setMaxHeight(most));});
         sendButton=new ImageView(this);sendButton.setImageResource(R.drawable.ic_send);sendButton.setImageTintList(ColorStateList.valueOf(theme.onAccent(dark)));sendButton.setBackground(oval(theme.accent(dark)));
-        sendButton.setPadding(dp(14),dp(14),dp(14),dp(14));sendButton.setContentDescription("Send");sendButton.setOnClickListener(v->sendOrRecord());sendButton.setOnLongClickListener(v->{if(micShowing())startRecording();else if(dictation==null)scheduleMessage();return true;});
+        sendButton.setPadding(dp(14),dp(14),dp(14),dp(14));sendButton.setContentDescription("Send");sendButton.setOnClickListener(v->sendOrRecord());sendButton.setOnLongClickListener(v->{if(micShowing())startRecording();else if(dictation==null)sendHeld();return true;});
         LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(dp(52),dp(52));sl.setMarginStart(dp(8));compose.addView(sendButton,sl);root.addView(compose);renderAttachments();updateComposeButton();applyIncoming();Perf.end("open: screen",perf);
         // Read here, in a bubble or a chat head's window too: its notification goes (a bubble's is quieted, so the bubble stays).
         perf=Perf.start();chatSettings.setMarkedUnread(id,false);PairedService.clearNotification(this,id);Perf.end("open: notification",perf);
@@ -3297,6 +3297,22 @@ public class PairedActivity extends Activity {
     // Scheduled send
     /** Long-press send: pick when to send. Text only; it goes out through the outbox at that time. */
     private void scheduleMessage(){translateOutgoing(true);}
+    /**
+     * Holding Send. In a chat that translates what you send: a small menu by the button, with Send
+     * without translating (what you typed, as written) and Schedule. Elsewhere, Schedule, as always.
+     */
+    private void sendHeld(){String target=chatId.isEmpty()?"":chatSettings.sendLanguage(chatId);
+        if(target.isEmpty()||composer==null||!TranslationPlan.outgoingText(composer.getText().toString())){scheduleMessage();return;}
+        if(sendButton!=null)sendButton.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+        LinearLayout box=vertical();box.setPadding(dp(6),dp(6),dp(6),dp(6));box.setBackground(shape(card,16));box.setElevation(dp(8));
+        android.widget.PopupWindow pop=new android.widget.PopupWindow(box,-2,-2,true);
+        sheetItem(box,R.drawable.ic_send,"Send without translating",()->{pop.dismiss();sendAsWritten();}).setPadding(dp(14),dp(12),dp(18),dp(12));
+        sheetItem(box,R.drawable.ic_clock,"Schedule in "+Translation.label(target),()->{pop.dismiss();scheduleMessage();}).setPadding(dp(14),dp(12),dp(18),dp(12));
+        for(int i=0;i<box.getChildCount();i++)box.getChildAt(i).setLayoutParams(new LinearLayout.LayoutParams(-2,-2));
+        box.measure(View.MeasureSpec.UNSPECIFIED,View.MeasureSpec.UNSPECIFIED);pop.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));pop.setOutsideTouchable(true);pop.setElevation(dp(8));
+        pop.showAsDropDown(sendButton,sendButton.getWidth()-box.getMeasuredWidth(),-(sendButton.getHeight()+box.getMeasuredHeight()+dp(6)));}
+    /** What you typed, sent as written: no translation, and no check (there's nothing to check). */
+    private void sendAsWritten(){if(composer==null||translatingOutgoing||sendingText)return;cancelOutgoingTranslation();sendBody(composer.getText().toString());}
     private void scheduleBody(String text){if(text.isEmpty()){toast("Type a message first, then hold send to schedule it.");return;}
         java.util.Calendar now=java.util.Calendar.getInstance();List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
         java.util.Calendar evening=(java.util.Calendar)now.clone();evening.set(java.util.Calendar.HOUR_OF_DAY,18);evening.set(java.util.Calendar.MINUTE,0);evening.set(java.util.Calendar.SECOND,0);
