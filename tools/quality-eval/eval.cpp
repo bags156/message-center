@@ -65,10 +65,14 @@ int main(int argc, char** argv) {
     // Warm up, so the timings below don't include reading the model in.
     model.translate(prefix("app", cases[0]), cases[0].text, SUFFIX, never);
     out << "{\"kind\":\"load\",\"ms\":" << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - loadStart).count() << "}\n";
-    // Speed: the same messages starting fresh each time (as before), then keeping the instruction (as now).
+    // Speed: the same messages starting fresh each time (as before), then keeping the instruction (as
+    // now), alternating directions the way a conversation does (their Spanish in, your English out).
+    std::vector<const Case*> toSpanish, toEnglish, alternating;
+    for (const Case& c : cases) (c.to == "es" ? toSpanish : toEnglish).push_back(&c);
+    for (size_t i = 0; i < 5 && i < toSpanish.size() && i < toEnglish.size(); i++) { alternating.push_back(toEnglish[i]); alternating.push_back(toSpanish[i]); }
     for (const char* mode : {"fresh", "kept"}) {
-        for (size_t i = 0; i < 10 && i < cases.size(); i++) {
-            const Case& c = cases[i < 5 ? i : cases.size() - 1 - i];
+        for (size_t i = 0; i < alternating.size(); i++) {
+            const Case& c = *alternating[i];
             if (std::string(mode) == "fresh") model.forget();
             auto t0 = std::chrono::steady_clock::now();
             std::string said = model.translate(prefix("app", c), c.text, SUFFIX, never);

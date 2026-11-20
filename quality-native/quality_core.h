@@ -7,10 +7,15 @@ struct llama_model;
 struct llama_context;
 class QualityModel {
     llama_model* model_=nullptr;
-    // One context kept between messages, with the tokens it holds: the instruction (the same for
-    // every message in a language pair) is processed once, and each message after only adds its own.
+    // One context kept between messages. It holds two conversations' worth (two sequences), one for
+    // each direction you translate in, with the tokens each holds: the instruction (the same for every
+    // message in a language pair) is processed once, and each message after only adds its own. Two,
+    // because a chat goes both ways: reading their Spanish, then sending your English.
     llama_context* ctx_=nullptr;
-    std::vector<int> cached_;
+    struct Slot { std::vector<int> tokens; unsigned long used=0; };
+    static constexpr int SLOTS=2;
+    Slot slots_[SLOTS];
+    unsigned long clock_=0;
     int reused_=0,processed_=0;
     void forgetCache();
 public:
