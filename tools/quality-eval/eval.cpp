@@ -26,8 +26,15 @@ static std::string prefix(const std::string& variant, const Case& c) {
     std::string s = language(from), t = language(to);
     std::string head = "<start_of_turn>user\nYou are a professional " + s + " (" + from + ") to " + t + " (" + to + ") translator. Your goal is to accurately convey the meaning and nuances of the original " + s + " text while adhering to " + t + " grammar, vocabulary, and cultural sensitivities.\n";
     std::string extra;
-    if (variant != "current") extra = "The text is a casual text message between friends or family. Keep its tone, slang and emoji, and write it the way a native speaker would text it.\n";
+    if (variant == "casual" || variant == "context") extra = "The text is a casual text message between friends or family. Keep its tone, slang and emoji, and write it the way a native speaker would text it.\n";
     if (variant == "context" && !c.previous.empty()) extra += "For context only (do not translate it), the message before it in the conversation was: \"" + c.previous + "\"\n";
+    // "natural": the casual hint, made specific where the first one went wrong (emoji changed or added,
+    // both gender forms written, Spain's vosotros, slang taken literally). Must match QualityPlan.
+    if (variant == "natural") {
+        extra = "The text is a casual text message between friends or family. Translate it the way a native speaker would text it, keeping its tone. Translate slang and idioms by what they mean, not word for word.";
+        if (c.to == "es") extra += " Use Latin American Spanish: tú (not usted) for one person and ustedes (never vosotros) for more than one. When it isn't clear whether someone is a man or a woman, choose one form; never write both (like o/a).";
+        extra += " Keep every emoji exactly as it is: don't add, remove or change any.\n";
+    }
     return head + extra + "Produce only the " + t + " translation, without any additional explanations or commentary. Please translate the following " + s + " text into " + t + ":\n\n\n";
 }
 
@@ -73,7 +80,7 @@ int main(int argc, char** argv) {
         }
     }
     // Naturalness: every message under each prompt variant (context only where there's a previous message).
-    for (const char* variant : {"current", "casual", "mexican", "context"}) {
+    for (const char* variant : {"current", "casual", "natural"}) {
         for (const Case& c : cases) {
             if (std::string(variant) == "context" && c.previous.empty()) continue;
             std::string said, error;
