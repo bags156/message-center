@@ -1155,6 +1155,13 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(waitUntil(()->out.forChat("sr-chat").size()==1,10000),"Send on the check didn't send the translation");
             check(out.forChat("sr-chat").get(0).optString("text").toLowerCase(java.util.Locale.ROOT).contains("hola"),"The checked message wasn't the translation");
             out.remove(out.forChat("sr-chat").get(0).optString("id"));settings.setCheckTranslation("sr-chat",false);
+            // Typed in Spanish already: it goes as written, with no translating and nothing to check, and isn't marked as translated.
+            settings.setCheckTranslation("sr-chat",true);String inSpanish="¿Nos vemos mañana en la casa de tu mamá? Yo llevo el pastel.";
+            onMainCall(()->{((android.widget.EditText)field("composer").get(a)).setText(inSpanish);((android.view.View)field("sendButton").get(a)).performClick();return null;});
+            check(waitUntil(()->out.forChat("sr-chat").size()==1,20000),"A message typed in Spanish didn't send (or waited for a check)");
+            check(inSpanish.equals(out.forChat("sr-chat").get(0).optString("text")),"A message typed in Spanish was translated anyway");
+            check(SentOriginals.find(ctx,"sr-chat",inSpanish)==null,"A message typed in Spanish was marked as translated");
+            out.remove(out.forChat("sr-chat").get(0).optString("id"));settings.setCheckTranslation("sr-chat",false);
             // Holding Send: Send without translating sends what was typed, as written.
             onMainCall(()->{((android.widget.EditText)field("composer").get(a)).setText(original);((android.view.View)field("sendButton").get(a)).performLongClick();return null;});
             check(waitUntil(()->onScreen("Send without translating")!=null,3000)&&onScreen("Schedule in Spanish")!=null,"Holding Send didn't offer Send without translating and Schedule");
@@ -1194,7 +1201,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         }finally{prefs.edit().putBoolean("undo_send",undo).apply();for(JSONObject queued:out.forChat("sr-chat"))out.remove(queued.optString("id"));
             onMainCall(()->{method("cancelOutgoingTranslation").invoke(a);((android.widget.EditText)field("composer").get(a)).setText("");method("cancelReply").invoke(a);settings.setReadLanguage("");settings.setSendLanguage("sr-chat","");settings.setWriteLanguage("sr-chat","");settings.setCheckTranslation("sr-chat",false);return null;});}
         checkTranslationSettingsPictures(a);
-        note("PROBE translation: native Spanish→English reading; English→Spanish one-tap Send, what-you-wrote kept and shown, models reloaded after unload, check before sending, mobile-data ask with the draft kept, greeting, duplicate guard, stale draft/language cancellation, As written and failure draft preservation passed; no messages transmitted");
+        note("PROBE translation: native Spanish→English reading; English→Spanish one-tap Send, Spanish typed sent as written, what-you-wrote kept and shown, models reloaded after unload, check before sending, mobile-data ask with the draft kept, greeting, duplicate guard, stale draft/language cancellation, As written and failure draft preservation passed; no messages transmitted");
     }
     private void checkTranslationSettingsPictures(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();ChatSettings settings=new ChatSettings(ctx);android.app.Dialog[] dialog={null};
         settings.setReadLanguage("en");settings.setSendLanguage("sr-chat","es");

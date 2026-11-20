@@ -63,10 +63,17 @@ final class Translation {
     static String label(String code){return code==null||code.isEmpty()?"Off":Locale.forLanguageTag(code).getDisplayLanguage(Locale.getDefault());}
     static String defaultLanguage(Context c){String code=TranslationPlan.language(Locale.getDefault().toLanguageTag());return languages(c).contains(code)?code:"en";}
     /** Confidence checked, local language ID. Unknown/very short text is left for a source-language choice. */
-    static String detect(Context c,String words){
+    static String detect(Context c,String words){return detect(c,words,.6f,true);}
+    /**
+     * What a draft you're sending is written in, or "" when that isn't clear. A short draft needs a
+     * very confident answer from the phone's own language ID (the fallback guesses on so little).
+     */
+    static String writtenIn(Context c,String words){float sure=TranslationPlan.sureEnough(words);return sure>1?"":detect(c,words,sure,sure<=.6f);}
+    private static String detect(Context c,String words,float sure,boolean fallback){
         try{TextLanguage found=c.getSystemService(TextClassificationManager.class).getTextClassifier().detectLanguage(new TextLanguage.Request.Builder(words).build());
-            if(found.getLocaleHypothesisCount()>0){ULocale best=found.getLocale(0);if(found.getConfidenceScore(best)>=.6f)return TranslationPlan.language(best.toLanguageTag());}}
+            if(found.getLocaleHypothesisCount()>0){ULocale best=found.getLocale(0);if(found.getConfidenceScore(best)>=sure)return TranslationPlan.language(best.toLanguageTag());}}
         catch(Exception ignored){}
+        if(!fallback)return "";
         try{String code=TranslationPlan.language(string(TranslationNative.detect(utf8(words))));return "und".equals(code)?"":code;}
         catch(LinkageError|RuntimeException ignored){return "";}
     }
