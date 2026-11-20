@@ -1172,7 +1172,7 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(out.forChat("sr-chat").size()==1&&original.equals(out.forChat("sr-chat").get(0).optString("text")),"As written did not send the original text");out.remove(out.forChat("sr-chat").get(0).optString("id"));
             // On mobile data, a language pack that isn't here yet asks first (French isn't on the test phone), and the draft stays.
             Translation.meteredForTests=true;
-            try{onMainCall(()->{method("setSendingLanguage",String.class,String.class).invoke(a,"sr-chat","fr");((android.widget.EditText)field("composer").get(a)).setText(original);method("send").invoke(a);return null;});
+            try{onMainCall(()->{method("setWritingLanguage",String.class,String.class).invoke(a,"sr-chat","");method("setSendingLanguage",String.class,String.class).invoke(a,"sr-chat","fr");((android.widget.EditText)field("composer").get(a)).setText(original);method("send").invoke(a);return null;});
                 check(waitUntil(()->onScreen("Use mobile data?")!=null,15000),"On mobile data, a missing language pack didn't ask before downloading");
                 shoot("shot-translation-mobile-data");check(out.forChat("sr-chat").isEmpty(),"Asking about mobile data sent the message anyway");
                 pressText("Wait for Wi-Fi");waitForIdleSync();
