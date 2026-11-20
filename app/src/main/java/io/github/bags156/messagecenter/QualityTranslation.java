@@ -38,7 +38,19 @@ final class QualityTranslation {
     private static File marker(Context c){return new File(c.getFilesDir(),"quality-model-verified");}
     static boolean ready(Context c){File f=file(c);if(f==null||f.length()!=SIZE)return false;
         try{return (SHA+":"+f.lastModified()).equals(new String(java.nio.file.Files.readAllBytes(marker(c).toPath()),StandardCharsets.UTF_8));}catch(Exception ignored){return false;}}
-    static boolean enabled(Context c){return prefs(c).getBoolean("enabled",false)&&ready(c);}
+    static boolean enabled(Context c){return prefs(c).getBoolean("enabled",false)&&supported()&&ready(c);}
+    private static Boolean supported;
+    /**
+     * The engine is built for ARM's dot-product and half-precision instructions (phones since about
+     * 2018); without them it can't run. Other processors (the x86 test phone) have their own build.
+     */
+    static synchronized boolean supported(){if(supported!=null)return supported;boolean arm=String.valueOf(System.getProperty("os.arch")).contains("aarch64");
+        if(!arm)return supported=true;
+        try{String info=new String(java.nio.file.Files.readAllBytes(new File("/proc/cpuinfo").toPath()),StandardCharsets.UTF_8);
+            for(String line:info.split("\n"))if(line.startsWith("Features")){java.util.Set<String> has=new java.util.HashSet<>(java.util.Arrays.asList(line.substring(line.indexOf(':')+1).trim().split("\\s+")));
+                return supported=has.contains("asimddp")&&has.contains("asimdhp");}}
+        catch(Exception ignored){}
+        return supported=false;}
     static void use(Context c,boolean stronger){prefs(c).edit().putBoolean("enabled",stronger).putBoolean("requested",stronger).apply();if(!stronger)releaseNow();}
     /** Leaving the app: let go of the model after a minute away. */
     static void release(){if(!usedNative)return;idle.removeCallbacks(unload);idle.postDelayed(unload,AWAY_MS);}
@@ -50,7 +62,7 @@ final class QualityTranslation {
         try(Cursor q=manager(c).query(new DownloadManager.Query().setFilterById(id))){return q!=null&&q.moveToFirst()?q.getInt(q.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)):0;}catch(Exception ignored){return 0;}}
     static boolean stored(Context c){File f=file(c);return id(c)!=0||f!=null&&f.exists();}
     static boolean pending(Context c){int s=state(c);return verifying.get()||s==DownloadManager.STATUS_PENDING||s==DownloadManager.STATUS_RUNNING||s==DownloadManager.STATUS_PAUSED;}
-    static String status(Context c){if(ready(c))return enabled(c)?"Stronger translator · on this phone":"Compact translator · stronger model available";
+    static String status(Context c){if(!supported())return "This phone's processor can't run the stronger translator. The compact translator still works.";if(ready(c))return enabled(c)?"Stronger translator · on this phone":"Compact translator · stronger model available";
         if(verifying.get())return "Checking the downloaded model…";String failed=prefs(c).getString("error","");if(!failed.isEmpty())return failed;
         long id=id(c);if(id!=0)try(Cursor q=manager(c).query(new DownloadManager.Query().setFilterById(id))){if(q!=null&&q.moveToFirst()){
             int s=q.getInt(q.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
@@ -60,7 +72,7 @@ final class QualityTranslation {
             if(s==DownloadManager.STATUS_FAILED)return "Download stopped · tap to retry";
         }}catch(Exception ignored){}
         String error=prefs(c).getString("error","");return error.isEmpty()?"Compact translator · stronger model is a 4.1 GB download":error;}
-    static void start(Context c)throws Exception{Context app=c.getApplicationContext();if(ready(app)){use(app,true);return;}
+    static void start(Context c)throws Exception{Context app=c.getApplicationContext();if(!supported())throw new IOException("This phone's processor can't run the stronger translator.");if(ready(app)){use(app,true);return;}
         if(pending(app)){prefs(app).edit().putBoolean("requested",true).apply();return;}
         File f=file(app);if(f==null)throw new IOException("Phone storage is unavailable.");File dir=f.getParentFile();if(!dir.isDirectory()&&!dir.mkdirs())throw new IOException("Could not create the model folder.");
         long previous=id(app);if(previous!=0)manager(app).remove(previous);generation.incrementAndGet();
@@ -93,14 +105,14 @@ final class QualityTranslation {
         try{for(String piece:QualityPlan.fragments(words,from)){if(cancelled.getAsBoolean())throw new CancellationException();
                 int first=0,last=piece.length();while(first<last&&Character.isWhitespace(piece.charAt(first)))first++;while(last>first&&Character.isWhitespace(piece.charAt(last-1)))last--;
                 String body=piece.substring(first,last);if(!TranslationPlan.outgoingText(body)){result.append(piece);continue;}
-                progress.accept("Translating on this phone…");usedNative=true;String text=null;
+                progress.accept("Translating on this phone…");boolean loading=!QualityNative.loaded();long began=System.currentTimeMillis();usedNative=true;String text=null;
                 // Casual wording first; if that changed a link, code, time or emoji, once more with the plain, literal prompt.
                 // (Also when it started repeating itself or came back empty.)
                 for(boolean texting:casual?new boolean[]{true,false}:new boolean[]{false}){byte[] answer;
                     try{answer=QualityNative.translate(utf8(QualityPlan.prefix(from,to,texting)),utf8(body),utf8(QualityPlan.SUFFIX),utf8(file(c).getAbsolutePath()),cancelled);}
                     catch(IllegalStateException e){String why=String.valueOf(e.getMessage());if(!texting||cancelled.getAsBoolean()||!(why.contains("repeating")||why.contains("was empty")))throw e;continue;}
                     if(cancelled.getAsBoolean())throw new CancellationException();if(answer==null)throw new Translation.Problem("The stronger translator could not finish. Your original is unchanged.");
-                    String said=QualityPlan.tidy(new String(answer,StandardCharsets.UTF_8).trim(),to);if(QualityPlan.preserves(body,said)){text=said;break;}}
+                    timing(loading,began);String said=QualityPlan.tidy(new String(answer,StandardCharsets.UTF_8).trim(),to);if(QualityPlan.preserves(body,said)){text=said;break;}}
                 if(text==null)throw new Translation.Problem("Translation changed a link, code, time or emoji. Your original is unchanged.");
                 result.append(piece,0,first).append(text).append(piece,last,piece.length());}
             String translated=result.toString();if(!QualityPlan.preserves(words,translated))throw new Translation.Problem("Translation changed a link, code, time or emoji. Your original is unchanged.");return translated;
@@ -108,6 +120,21 @@ final class QualityTranslation {
         catch(IllegalStateException e){if(cancelled.getAsBoolean())throw new CancellationException();throw new Translation.Problem(e.getMessage()==null?"Translation could not finish. Your original is unchanged.":e.getMessage());}
         finally{idle.removeCallbacks(unload);idle.postDelayed(unload,KEEP_MS);}
     }
+    /**
+     * A chat's instruction read in ahead of time (and the model loaded), while you read and type, so
+     * the first message only reads itself. On Translation.worker; stops when cancelled.
+     */
+    static void prime(Context c,String from,String to,boolean casual,BooleanSupplier cancelled){
+        if(!enabled(c)||cancelled.getAsBoolean())return;idle.removeCallbacks(unload);
+        try{boolean loading=!QualityNative.loaded();long began=System.currentTimeMillis();usedNative=true;
+            QualityNative.prime(utf8(QualityPlan.prefix(from,to,casual)),utf8(file(c).getAbsolutePath()),cancelled);
+            if(loading&&!cancelled.getAsBoolean())Diagnostics.note("Stronger translator ready ahead of time in "+(System.currentTimeMillis()-began)+" ms");}
+        catch(LinkageError|IllegalStateException ignored){}
+        finally{idle.removeCallbacks(unload);idle.postDelayed(unload,KEEP_MS);}}
+    /** How long it took, in the journal (numbers only, never the message), so a report shows where time goes on this phone. */
+    private static void timing(boolean loading,long began){try{long[] t=QualityNative.timing();
+        Diagnostics.note("Stronger translation "+(System.currentTimeMillis()-began)+" ms"+(loading?" (model loaded first)":"")+": read "+t[1]+" tokens ("+t[0]+" kept) in "+t[3]+" ms, wrote "+t[2]+" in "+t[4]+" ms, "+t[5]+" threads");}
+        catch(LinkageError ignored){}}
     private static byte[] utf8(String s){return s.getBytes(StandardCharsets.UTF_8);}
     private QualityTranslation() {}
 }

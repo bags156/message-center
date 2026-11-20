@@ -35,6 +35,23 @@ Speed, alternating directions the way a conversation does: before this change, e
 
 Messages you type in the language a chat sends in now go as written. The app uses language ID to decide. An ordinary message takes language ID's usual confident answer. A short message such as `ya voy` needs a very confident answer. A word or two, such as `ok` or `sí`, is translated as before. A translation that comes back the same as what you typed, apart from punctuation, case or emoji, is also sent as typed.
 
+## Speed on phones (1.5.79)
+
+Until 1.5.78, the engine was built for plain `armv8-a`, so it couldn't use the dot-product instructions that phones since about 2018 have. It now builds for `armv8.2-a+dotprod+fp16`, and rearranges the weights at load for those instructions. The rearranged weights stay in memory instead of being read from the file as needed. If there isn't room, it loads them as stored. On phones without these instructions, the stronger translator isn't offered.
+
+Measured with `tools/quality-eval` on GitHub's ARM runners (Neoverse, 4 cores), alternating directions:
+
+| Build | Writing | Reading the prompt | Message after the first | First message |
+| --- | --- | --- | --- | --- |
+| `armv8-a` (1.5.78) | 7.3 tokens/s | 12 tokens/s | 2.5 s | 11.5 s |
+| `armv8.2-a+dotprod+fp16` | 10.9 tokens/s | 28 tokens/s | 1.4 s | 5.3 s |
+| the same, weights rearranged (1.5.79) | 15.4 tokens/s | 56 tokens/s | 0.95 s | 2.8 s |
+| `armv8.6-a` (i8mm), weights rearranged | 15.4 tokens/s | 70 tokens/s | 0.9 s | 2.4 s |
+
+The translations were identical in every build. i8mm only sped up reading, which the kept instruction mostly avoids, so the app doesn't require it. The engine now uses only the phone's fast cores (at least 70% of the fastest core's top speed), up to 6.
+
+Two changes make the wait shorter on top of this. Opening a chat that translates what you send loads the model and reads its instruction in the background. With the stronger translator, a draft is also translated in the background once you pause typing, so Send can use it straight away. Each translation's timing (numbers only, never text) goes in the diagnostics journal.
+
 ## Known limits
 
 Casual wording reads more naturally, but it is not more accurate overall; it makes different mistakes. On the comparison set:
