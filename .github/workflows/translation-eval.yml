@@ -4,6 +4,13 @@ name: Translation evaluation
 # Never part of a release; it signs nothing and sends no messages.
 on:
   workflow_dispatch:
+  # Runs from a feature branch when the evaluation or the inference core changes (manual runs need this file on main).
+  push:
+    branches-ignore: [main]
+    paths:
+      - tools/quality-eval/**
+      - quality-native/quality_core.*
+      - .github/workflows/translation-eval.yml
 permissions:
   contents: read
 jobs:
