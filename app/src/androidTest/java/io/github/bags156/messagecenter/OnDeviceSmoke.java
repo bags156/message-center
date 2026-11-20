@@ -450,7 +450,12 @@ public final class OnDeviceSmoke extends Instrumentation {
             for(int i=0;i<3;i++){PairedService.refreshChatNotifications(ctx);Thread.sleep(700);}
             check(postTime(nm,"chat:lock-loop")==locked,"The chat's notification was redrawn again each time the locked screen went off (it lights the screen every few seconds)");
             NotificationPrivacy.lockedForChecks=false;PairedService.refreshChatNotifications(ctx);Thread.sleep(1200);
-            check(postTime(nm,"chat:lock-loop")>locked,"Unlocking didn't redraw the chat's notification in full");}
+            check(postTime(nm,"chat:lock-loop")>locked,"Unlocking didn't redraw the chat's notification in full");
+            // A plain notification: Reply and Mark as read, with no suggested replies (one tap on one sent it).
+            android.app.Notification full=null;for(android.service.notification.StatusBarNotification sbn:nm.getActiveNotifications())if("chat:lock-loop".equals(sbn.getTag()))full=sbn.getNotification();
+            check(full!=null&&!full.getAllowSystemGeneratedContextualActions(),"Message notifications let Android add its own suggested replies and actions");
+            if(full!=null&&full.actions!=null)for(android.app.Notification.Action act:full.actions){check(!act.getAllowGeneratedReplies(),"The notification's "+act.title+" lets Android suggest replies");
+                if(act.getRemoteInputs()!=null)for(android.app.RemoteInput in:act.getRemoteInputs())check(in.getChoices()==null||in.getChoices().length==0,"The notification's Reply offers suggested replies to tap");}}
         finally{NotificationPrivacy.lockedForChecks=null;NotificationPrivacy.setLockMode(ctx,NotificationPrivacy.SAME);NotificationPrivacy.set(ctx,before);nm.cancel("chat:lock-loop",1);
             try(PairedStore store=new PairedStore(ctx)){store.deleteChat("lock-loop");}}}
     private static long postTime(android.app.NotificationManager nm,String tag){for(android.service.notification.StatusBarNotification sbn:nm.getActiveNotifications())if(tag.equals(sbn.getTag()))return sbn.getPostTime();return -1;}
