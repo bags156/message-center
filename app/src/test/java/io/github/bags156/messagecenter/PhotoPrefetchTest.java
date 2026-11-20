@@ -1,5 +1,6 @@
 package io.github.bags156.messagecenter;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -38,5 +39,15 @@ public class PhotoPrefetchTest {
         assertFalse("a week old", PhotoPrefetch.wanted(message(false, 7L * 24 * 3_600_000, p), p, NOW, true, false));
         assertFalse("full photos off", PhotoPrefetch.wanted(message(false, 60_000, p), p, NOW, false, false));
         assertFalse("Data Saver", PhotoPrefetch.wanted(message(false, 60_000, p), p, NOW, true, true));
+    }
+
+    /** An arriving photo is tried again after 30 s, 2 min and 10 min, then left for a tap; asking the phone again waits at least as long as it gets to answer. */
+    @Test public void retriesThreeTimesThenStops() {
+        assertEquals(30_000, PhotoPrefetch.retryAfter(0, 0));
+        assertEquals(120_000, PhotoPrefetch.retryAfter(1, 0));
+        assertEquals(600_000, PhotoPrefetch.retryAfter(2, 0));
+        assertEquals(-1, PhotoPrefetch.retryAfter(3, 0));
+        assertEquals(185_000, PhotoPrefetch.retryAfter(0, 185_000));
+        assertEquals(600_000, PhotoPrefetch.retryAfter(2, 185_000));
     }
 }

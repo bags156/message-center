@@ -18,6 +18,18 @@ final class PhotoPrefetch {
      * A photo (still or animated) someone sent you recently, not too big, while "Download full-quality
      * photos" is on and Android's Data Saver isn't holding back a metered connection.
      */
+    /** Waits before trying an arriving photo again: 30 seconds, then 2 minutes, then 10. */
+    static final long[] RETRY_MS = {30_000, 120_000, 600_000};
+
+    /**
+     * How long to wait before trying a photo again after this many earlier tries, or -1 to stop.
+     * Asking the phone again waits at least atLeastMs (the time it gets to answer the last ask).
+     */
+    static long retryAfter(int tries, long atLeastMs) {
+        if (tries < 0 || tries >= RETRY_MS.length) return -1;
+        return Math.max(RETRY_MS[tries], atLeastMs);
+    }
+
     static boolean wanted(JSONObject message, JSONObject media, long now, boolean fullPhotos, boolean dataSaver) {
         if (!fullPhotos || dataSaver || message == null || media == null) return false;
         if (PairedProtocol.outgoing(message)) return false;

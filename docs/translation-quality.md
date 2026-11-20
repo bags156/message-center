@@ -15,7 +15,7 @@ The comparison uses 18 synthetic English/Spanish messages, the actual pinned mod
 
 The stronger model still makes mistakes. For `Te marco cuando salga.`, the compact model produced `I frame you when I get out.` and the stronger model produced `I'll call you as soon as I have the information.` The phrase needs context to establish what `salga` refers to, and the stronger output adds an interpretation. Neither result should be treated as a verified translation. Some inputs also produce alternative phrasings instead of a single version. The app does not remove alternatives heuristically because that could discard part of a real message.
 
-Declaring **I write in** avoids a separate source-language detection failure for outgoing drafts. **Send in** still belongs to the individual chat, and Send automatically translates once. Stronger mode validates URLs, emails, long digit codes, times and emoji; failed integrity or output checks retain the source draft. These checks cannot establish semantic correctness. Original incoming messages stay available through Show original.
+Declaring **I write in** avoids a separate source-language detection failure for outgoing drafts. **Send in** still belongs to the individual chat, and Send automatically translates once (or, with Check before sending on, shows the translation first). What you wrote stays on the phone: Show what you wrote under a sent translation. Stronger mode validates URLs, emails, long digit codes, times and emoji; failed integrity or output checks retain the source draft. These checks cannot establish semantic correctness. Original incoming messages stay available through Show original.
 
 ## Android validation
 

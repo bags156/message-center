@@ -1129,11 +1129,32 @@ public final class OnDeviceSmoke extends Instrumentation {
             JSONObject sent=out.forChat("sr-chat").get(0);String spanish=sent.optString("text");
             check(!original.equals(spanish)&&spanish.toLowerCase(java.util.Locale.ROOT).contains("hola"),"The outgoing message wasn't translated to Spanish");
             check("sr-es".equals(sent.optString("reply")),"Automatic translation lost the reply link");
-            Thread.sleep(250);check(out.forChat("sr-chat").size()==1,"Repeated Send queued duplicate translated messages");out.remove(sent.optString("id"));
+            Thread.sleep(250);check(out.forChat("sr-chat").size()==1,"Repeated Send queued duplicate translated messages");
+            // What you wrote is kept: the sent bubble says it went in Spanish, and shows the original on a tap.
+            SentOriginals.Original kept=SentOriginals.find(ctx,"sr-chat",spanish);
+            check(kept!=null&&original.equals(kept.text)&&"es".equals(kept.to),"What you wrote wasn't kept for the translated message");
+            onMainCall(()->method("renderMessages",boolean.class).invoke(a,true));waitForIdleSync();
+            long shown=android.os.SystemClock.uptimeMillis()+5000;while(android.os.SystemClock.uptimeMillis()<shown&&described(a,"Sent in Spanish")==null)Thread.sleep(200);
+            android.view.View wroteToggle=described(a,"Sent in Spanish");check(wroteToggle!=null,"The sent translation doesn't say it went in Spanish");
+            shoot("shot-translation-sent");runOnMainSync(wroteToggle::performClick);
+            shown=android.os.SystemClock.uptimeMillis()+3000;while(android.os.SystemClock.uptimeMillis()<shown&&described(a,"Showing what you wrote")==null)Thread.sleep(200);
+            check(described(a,"Showing what you wrote")!=null,"Show what you wrote didn't show the original");
+            out.remove(sent.optString("id"));
+            // The compact models stay loaded between messages; unloaded, the next one loads them again.
+            Translation.worker.submit(()->{TranslationNative.unload();return null;}).get(30,java.util.concurrent.TimeUnit.SECONDS);
             onMainCall(()->{check(((android.widget.EditText)field("composer").get(a)).length()==0,"Successful translated send left the draft behind");
                 ((android.widget.EditText)field("composer").get(a)).setText("Hi");((android.view.View)field("sendButton").get(a)).performClick();return null;});
             check(waitUntil(()->out.forChat("sr-chat").size()==1,45000),"Short outgoing text didn't translate on Send");
             sent=out.forChat("sr-chat").get(0);check(sent.optString("text").toLowerCase(java.util.Locale.ROOT).contains("hola"),"Short English greeting didn't use the phone's source language");out.remove(sent.optString("id"));
+            // Check before sending: the translation shows first, and Send on it sends the translation.
+            settings.setCheckTranslation("sr-chat",true);
+            onMainCall(()->{((android.widget.EditText)field("composer").get(a)).setText(original);((android.view.View)field("sendButton").get(a)).performClick();return null;});
+            check(waitUntil(()->onScreen("Check the translation")!=null,45000),"Check before sending didn't show the translation");
+            check(out.forChat("sr-chat").isEmpty(),"Check before sending sent it before it was checked");
+            shoot("shot-translation-check");pressText("Send");
+            check(waitUntil(()->out.forChat("sr-chat").size()==1,10000),"Send on the check didn't send the translation");
+            check(out.forChat("sr-chat").get(0).optString("text").toLowerCase(java.util.Locale.ROOT).contains("hola"),"The checked message wasn't the translation");
+            out.remove(out.forChat("sr-chat").get(0).optString("id"));settings.setCheckTranslation("sr-chat",false);
             for(int change:new int[]{0,1,2}){
                 java.util.concurrent.CountDownLatch gate=new java.util.concurrent.CountDownLatch(1);
                 Translation.worker.submit(()->{gate.await(30,java.util.concurrent.TimeUnit.SECONDS);return null;});
@@ -1149,6 +1170,14 @@ public final class OnDeviceSmoke extends Instrumentation {
             onMainCall(()->{method("setSendingLanguage",String.class,String.class).invoke(a,"sr-chat","");
                 ((android.widget.EditText)field("composer").get(a)).setText(original);((android.view.View)field("sendButton").get(a)).performClick();return null;});
             check(out.forChat("sr-chat").size()==1&&original.equals(out.forChat("sr-chat").get(0).optString("text")),"As written did not send the original text");out.remove(out.forChat("sr-chat").get(0).optString("id"));
+            // On mobile data, a language pack that isn't here yet asks first (French isn't on the test phone), and the draft stays.
+            Translation.meteredForTests=true;
+            try{onMainCall(()->{method("setSendingLanguage",String.class,String.class).invoke(a,"sr-chat","fr");((android.widget.EditText)field("composer").get(a)).setText(original);method("send").invoke(a);return null;});
+                check(waitUntil(()->onScreen("Use mobile data?")!=null,15000),"On mobile data, a missing language pack didn't ask before downloading");
+                shoot("shot-translation-mobile-data");check(out.forChat("sr-chat").isEmpty(),"Asking about mobile data sent the message anyway");
+                pressText("Wait for Wi-Fi");waitForIdleSync();
+                onMainCall(()->{check(original.contentEquals(((android.widget.EditText)field("composer").get(a)).getText()),"Waiting for Wi-Fi lost the draft");return null;});}
+            finally{Translation.meteredForTests=null;}
             onMainCall(()->{method("setSendingLanguage",String.class,String.class).invoke(a,"sr-chat","zz");
                 ((android.widget.EditText)field("composer").get(a)).setText(original);method("send").invoke(a);return null;});
             check(waitUntil(()->onScreen("OK")!=null,15000),"A failed translation didn't explain that the message wasn't sent");
@@ -1156,15 +1185,18 @@ public final class OnDeviceSmoke extends Instrumentation {
             onMainCall(()->{check(original.contentEquals(((android.widget.EditText)field("composer").get(a)).getText()),"Translation failure lost the draft");return null;});pressText("OK");
             onMainCall(()->{method("setSendingLanguage",String.class,String.class).invoke(a,"sr-chat","es");return null;});shoot("shot-translation-composer");
         }finally{prefs.edit().putBoolean("undo_send",undo).apply();for(JSONObject queued:out.forChat("sr-chat"))out.remove(queued.optString("id"));
-            onMainCall(()->{method("cancelOutgoingTranslation").invoke(a);((android.widget.EditText)field("composer").get(a)).setText("");method("cancelReply").invoke(a);settings.setReadLanguage("");settings.setSendLanguage("sr-chat","");settings.setWriteLanguage("sr-chat","");return null;});}
+            onMainCall(()->{method("cancelOutgoingTranslation").invoke(a);((android.widget.EditText)field("composer").get(a)).setText("");method("cancelReply").invoke(a);settings.setReadLanguage("");settings.setSendLanguage("sr-chat","");settings.setWriteLanguage("sr-chat","");settings.setCheckTranslation("sr-chat",false);return null;});}
         checkTranslationSettingsPictures(a);
-        note("PROBE translation: native Spanish→English reading; English→Spanish one-tap Send, greeting, duplicate guard, stale draft/language cancellation, As written and failure draft preservation passed; no messages transmitted");
+        note("PROBE translation: native Spanish→English reading; English→Spanish one-tap Send, what-you-wrote kept and shown, models reloaded after unload, check before sending, mobile-data ask with the draft kept, greeting, duplicate guard, stale draft/language cancellation, As written and failure draft preservation passed; no messages transmitted");
     }
     private void checkTranslationSettingsPictures(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();ChatSettings settings=new ChatSettings(ctx);android.app.Dialog[] dialog={null};
         settings.setReadLanguage("en");settings.setSendLanguage("sr-chat","es");
         try{
             onMainCall(()->{dialog[0]=(android.app.Dialog)method("translationSettings",String.class).invoke(a,"sr-chat");
-                check(viewsOf(dialog[0].getWindow().getDecorView(),android.widget.Switch.class).isEmpty(),"Per-chat sending settings still have an incoming translation switch");boolean source=false;for(android.widget.TextView line:viewsOf(dialog[0].getWindow().getDecorView(),android.widget.TextView.class))if("I write in".contentEquals(line.getText()))source=true;check(source,"The chat has no writing-language setting");return null;});shoot("shot-translation-settings");runOnMainSync(()->dialog[0].dismiss());
+                // Its one switch is Check before sending (for what you send), never one for incoming translation.
+                boolean checkOnly=true;for(android.widget.Switch sw:viewsOf(dialog[0].getWindow().getDecorView(),android.widget.Switch.class)){android.view.View row=(android.view.View)sw.getParent();String said=String.valueOf(row.getContentDescription())+" "+String.valueOf(sw.getContentDescription());
+                    java.util.List<android.widget.TextView> labels=row instanceof android.view.ViewGroup?viewsOf(row,android.widget.TextView.class):new java.util.ArrayList<>();for(android.widget.TextView l:labels)said+=" "+l.getText();if(!said.contains("Check before sending"))checkOnly=false;}
+                check(checkOnly,"Per-chat sending settings have a switch other than Check before sending");boolean source=false;for(android.widget.TextView line:viewsOf(dialog[0].getWindow().getDecorView(),android.widget.TextView.class))if("I write in".contentEquals(line.getText()))source=true;check(source,"The chat has no writing-language setting");return null;});shoot("shot-translation-settings");runOnMainSync(()->dialog[0].dismiss());
             onMainCall(()->method("openSettingsPage",String.class).invoke(a,"translation"));waitForIdleSync();
             check(exactText(a,"Messages I receive")!=null&&exactText(a,"Read messages in")!=null,"App-wide incoming translation settings are missing");
             android.view.View toggle=described(a,"Translate incoming messages");check(toggle instanceof android.widget.Switch,"App-wide translation switch is missing");

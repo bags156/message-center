@@ -1,8 +1,9 @@
 #include <jni.h>
 #include <string>
+#include <vector>
 #include "translate_kit/translate_kit.h"
 
-// Java serializes ALL calls on Translation.worker. A loaded model is scoped to one request.
+// Java serializes ALL calls on Translation.worker. Loaded models are kept between requests (below).
 // Pass UTF-8 byte arrays rather than JNI modified UTF-8: emoji and supplementary scripts
 // must survive round trips exactly. No message text is logged or passed to a network API.
 static tk_context* context = nullptr;
@@ -23,6 +24,20 @@ Java_io_github_bags156_messagecenter_TranslationNative_detect(JNIEnv* e, jclass,
     if (tk_detect_language(context, text.c_str(), &r) != TK_OK || r.confidence < 0.6f) return nullptr;
     return result(e, r.language);
 }
+// Loaded models are kept (at most two: a route through English uses two) so the next message
+// doesn't reload them; Java unloads them when translation has been idle a while.
+struct Loaded { std::string key; tk_model* model; };
+static std::vector<Loaded> loaded;
+static tk_model* model_for(const tk_model_spec& spec, const std::string& key) {
+    for (size_t i = 0; i < loaded.size(); i++) if (loaded[i].key == key) {
+        Loaded hit = loaded[i]; loaded.erase(loaded.begin() + i); loaded.push_back(hit); return hit.model;
+    }
+    tk_model* fresh = nullptr;
+    if (tk_load_model(context, &spec, &fresh) != TK_OK || !fresh) return nullptr;
+    loaded.push_back({key, fresh});
+    while (loaded.size() > 2) { tk_model_close(loaded.front().model); loaded.erase(loaded.begin()); }
+    return fresh;
+}
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_io_github_bags156_messagecenter_TranslationNative_translate(JNIEnv* e, jclass, jbyteArray input,
         jbyteArray source, jbyteArray target, jbyteArray modelPath, jbyteArray vocabPath, jbyteArray shortlistPath) {
@@ -35,9 +50,15 @@ Java_io_github_bags156_messagecenter_TranslationNative_translate(JNIEnv* e, jcla
     if (!ends(model,".bin") || !ends(vocab,".spm") || !ends(shortlist,".bin")) return nullptr;
     const char* vocabs[] = {vocab.c_str()};
     tk_model_spec spec{from.c_str(),to.c_str(),model.c_str(),vocabs,1,shortlist.c_str(),nullptr,1};
-    tk_model* loaded=nullptr; tk_translation_result translated{};
-    if (tk_load_model(context,&spec,&loaded) != TK_OK) return nullptr;
-    auto status=tk_translate(loaded,text.c_str(),0,&translated);
+    tk_model* ready=model_for(spec, from + "\n" + to + "\n" + model + "\n" + vocab + "\n" + shortlist);
+    if (!ready) return nullptr;
+    tk_translation_result translated{};
+    auto status=tk_translate(ready,text.c_str(),0,&translated);
     jbyteArray output=status==TK_OK && translated.text ? result(e,translated.text) : nullptr;
-    tk_translation_result_free(&translated);tk_model_close(loaded);return output;
+    tk_translation_result_free(&translated);return output;
+}
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_bags156_messagecenter_TranslationNative_unload(JNIEnv*, jclass) {
+    for (auto& l : loaded) tk_model_close(l.model);
+    loaded.clear();
 }

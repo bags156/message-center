@@ -202,7 +202,7 @@ public final class PairedService extends Service {
     private void scheduleRetries(){long a=outbox.nextRetryAt(),b=attachmentOutbox.nextRetryAt(),at=a==0?b:b==0?a:Math.min(a,b);main.removeCallbacks(retryDue);
         if(at>0)main.postDelayed(retryDue,Math.max(500,at-System.currentTimeMillis()+200));}
     /** The connection looks better (or is back): sends waiting to go again go now, and texts the phone couldn't send may go again. */
-    private void retryWaiting(String why){if(!ready)return;boolean texts=outbox.retryNow(),files=attachmentOutbox.retryNow();
+    private void retryWaiting(String why){if(!ready)return;main.postDelayed(()->catchUpPhotos(why),3000);boolean texts=outbox.retryNow(),files=attachmentOutbox.retryNow();
         if(texts)changed("OUTBOX");if(files)changed("MEDIA_OUTBOX");if(texts||files)Diagnostics.note("Sending what was waiting ("+why+")");
         flushOutbox();flushMediaOutbox();scheduleRetries();runAutoResend(why);}
     /** Texts sent from here that the phone couldn't send, whose time to go again has come (see AutoResend): each goes once. */
@@ -247,6 +247,8 @@ public final class PairedService extends Service {
                 case "READY" -> {
                     ready=true;emoji="";stopAutoReconnect();update("Connected to Google Messages");scheduleCodeSweep();
                     saveSession(token);main.post(this::flushOutbox);main.post(this::flushReadReceipts);main.post(this::flushMediaOutbox);main.postDelayed(this::confirmAllUnsure,5000);
+                    // Photos that came while disconnected: once the catch-up has had time to bring their messages.
+                    main.postDelayed(()->catchUpPhotos("connected"),20_000);
                     // Catch up on anything that came in while disconnected, right away.
                     main.post(()->requestSync(false));
                     network.execute(()->{if(generation.get()==token)try{chats(client,"",1);refreshConversationIcons();}catch(Exception e){update("Connected • tap Refresh to load conversations");}});
@@ -486,10 +488,39 @@ public final class PairedService extends Service {
      */
     private void prefetchPhotos(JSONObject message){
         boolean full=getSharedPreferences("paired",MODE_PRIVATE).getBoolean("full_photos",true);long now=System.currentTimeMillis();boolean saver=dataSaverOn();
+        String messageId=message.optString("messageID");
         for(JSONObject media:PairedProtocol.media(message)){
             if(!PhotoPrefetch.wanted(message,media,now,full,saver)||MediaCache.file(this,media,false).isFile())continue;
-            if(MediaCache.hasFull(media)){Diagnostics.note("Fetching an arriving photo");MediaCache.fetch(this,media,false,(file,error)->{});}
-            else if(ready)requestFullMedia(media,false,(v,e)->{});}}
+            String key=media.optString("_message",messageId)+":"+media.optString("_part");
+            if(MediaCache.hasFull(media)){Diagnostics.note("Fetching an arriving photo");
+                // A download that fails (the signal dropped, the phone dozed) is tried again, rather than left for a tap.
+                MediaCache.fetch(this,media,false,(file,error)->{if(file!=null)photoTries.remove(key);else photoAgain(messageId,key,0,"didn't download");});}
+            else if(ready&&!missingOnPhone(this,media)){requestFullMedia(media,false,(v,e)->{});
+                // The phone was asked for it: if its copy hasn't come by the time it may be asked again, ask again.
+                photoAgain(messageId,key,ASK_AGAIN_MS+5_000,"hasn't come from the phone");}}}
+    /** Tries for arriving photos that haven't downloaded yet, by attachment. */
+    private final java.util.Map<String,Integer> photoTries=new java.util.concurrent.ConcurrentHashMap<>();
+    /** Another try at a message's photos, after a wait (30 s, 2 min, 10 min; then it's left for a tap). */
+    private void photoAgain(String messageId,String key,long atLeastMs,String why){
+        int tries=photoTries.getOrDefault(key,0);long wait=PhotoPrefetch.retryAfter(tries,atLeastMs);
+        if(wait<0){photoTries.remove(key);Diagnostics.note("Arriving photo "+why+"; left for a tap after "+tries+" tries");return;}
+        photoTries.put(key,tries+1);Diagnostics.note("Arriving photo "+why+"; trying again in "+wait/1000+"s");
+        main.postDelayed(()->{if(store==null)return;JSONObject m=store.message(messageId);if(m!=null)prefetchPhotos(m);},wait);}
+    private long photosCaughtUpAt;
+    /**
+     * Photos from the last few days that haven't downloaded (they came while the connection was
+     * down, or every try failed): fetched now, when the connection or the network comes back.
+     */
+    private void catchUpPhotos(String why){if(!ready||store==null)return;long now=System.currentTimeMillis();if(now-photosCaughtUpAt<60_000)return;photosCaughtUpAt=now;
+        boolean full=getSharedPreferences("paired",MODE_PRIVATE).getBoolean("full_photos",true),saver=dataSaverOn();if(!full||saver)return;
+        java.util.List<JSONObject> recent;try{recent=store.recent(400,now-PhotoPrefetch.RECENT_MS);}catch(Exception e){return;}
+        int count=0;
+        for(JSONObject m:recent){boolean missing=false;
+            for(JSONObject media:PairedProtocol.media(m))if(PhotoPrefetch.wanted(m,media,now,true,false)&&!MediaCache.file(this,media,false).isFile()&&!missingOnPhone(this,media))missing=true;
+            if(!missing)continue;if(count++>=30)break;
+            for(JSONObject media:PairedProtocol.media(m))photoTries.remove(media.optString("_message",m.optString("messageID"))+":"+media.optString("_part"));
+            prefetchPhotos(m);}
+        if(count>0)Diagnostics.note("Catching up on "+count+" photo message(s) that hadn't downloaded ("+why+")");}
     /** A song (or podcast) link just arrived from someone you know: find it in your app now, so it's ready when you open the chat. */
     private void musicArrived(JSONObject message){
         if(PairedProtocol.outgoing(message))return;

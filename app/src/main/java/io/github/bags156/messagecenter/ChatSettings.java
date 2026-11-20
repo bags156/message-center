@@ -77,6 +77,9 @@ final class ChatSettings {
         setReadLanguage(chosen);
     }
     void setSendLanguage(String id,String code) { prefs.edit().putString("translate_send:"+id,TranslationPlan.language(code)).apply(); }
+    /** Show the translation before it goes (with Send, Edit, or Send as written), rather than sending it straight away. */
+    boolean checkTranslation(String id) { return prefs.getBoolean("translate_check:" + id, false); }
+    void setCheckTranslation(String id, boolean on) { if (on) prefs.edit().putBoolean("translate_check:" + id, true).apply(); else prefs.edit().remove("translate_check:" + id).apply(); }
     void setTheirMusic(String id, String value) {
         if (value == null || value.isEmpty()) prefs.edit().remove("music_their:" + id).apply(); else prefs.edit().putString("music_their:" + id, value).apply();
     }
