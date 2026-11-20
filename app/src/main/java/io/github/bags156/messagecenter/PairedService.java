@@ -795,11 +795,12 @@ public final class PairedService extends Service {
             Person.Builder who=new Person.Builder().setName(sender).setKey(pid.isEmpty()?sender:pid);if(photo!=null)who.setIcon(Icon.createWithBitmap(photo));
             style.addMessage(new Notification.MessagingStyle.Message(text,PairedProtocol.time(r),who.build()));lastPhoto=photo;lastText=group?sender+": "+text:text;
         }
-        Notification.Builder builder=new Notification.Builder(this,MESSAGES).setSmallIcon(R.drawable.ic_notification).setStyle(style).setContentTitle(title).setContentText(lastText)
+        // Android (and the phone maker) add their own suggested replies and actions unless told not to.
+        Notification.Builder builder=new Notification.Builder(this,MESSAGES).setAllowSystemGeneratedContextualActions(false).setSmallIcon(R.drawable.ic_notification).setStyle(style).setContentTitle(title).setContentText(lastText)
             .setCategory(Notification.CATEGORY_MESSAGE).setVisibility(Notification.VISIBILITY_PRIVATE).setContentIntent(openIntent(id)).setAutoCancel(true)
             .setWhen(recent.isEmpty()?System.currentTimeMillis():PairedProtocol.time(recent.get(recent.size()-1))).setShowWhen(true).setNumber(m==null?0:recent.size());
         if(!group&&lastPhoto!=null)builder.setLargeIcon(lastPhoto);
-        builder.addAction(replyAction(id,smartChoices(id,chat,showText))).addAction(readAction(id));
+        builder.addAction(replyAction(id)).addAction(readAction(id));
         // A login or verification code in the newest message gets its own Copy button.
         String code=newestCode(recent,chat);
         if(!code.isEmpty()){builder.addAction(copyAction(id,code,showText));if(code.equals(copiedCode))builder.setSubText(showText?"Code "+code+" copied":"Code copied");}
@@ -855,34 +856,17 @@ public final class PairedService extends Service {
     }
     /** Marks an action as working in the background, the extra AndroidX writes and Android Auto reads. */
     private static android.os.Bundle noUi() {android.os.Bundle b=new android.os.Bundle();b.putBoolean("android.support.action.showsUserInterface",false);return b;}
-    /** Reply straight from the notification (also what Android Auto reads and answers). */
-    private boolean smartRepliesOn(){return getSharedPreferences("paired",MODE_PRIVATE).getBoolean("smart_replies",true);}
-    // Suggested replies per chat: [the message they answer, reply, reply…]. Worked out once per message.
-    private final Map<String,String[]> smartFor=new HashMap<>();
-    private final ExecutorService smartWork=Executors.newSingleThreadExecutor();
     /**
-     * Android's suggested replies to the newest message here, as taps on the notification's Reply
-     * (and in Android Auto). Only when the notification shows what was said, and the newest is
-     * theirs. Waits at most 0.6 s, so the notification is never late (and never posted twice).
+     * Reply straight from the notification (also what Android Auto reads and answers). No suggested
+     * replies, the app's or Android's: one tap on a suggestion sent it, too easily by accident.
      */
-    private CharSequence[] smartChoices(String id,JSONObject chat,boolean showText){
-        if(!showText||!smartRepliesOn())return null;
-        List<JSONObject> recent=store.messages(id,10);if(recent.isEmpty())return null;JSONObject last=recent.get(recent.size()-1);
-        if(PairedProtocol.outgoing(last,chat)||PairedProtocol.text(last).trim().isEmpty())return null;String key=last.optString("messageID");
-        synchronized(smartFor){String[] hit=smartFor.get(id);if(hit!=null&&hit[0].equals(key))return hit.length>1?java.util.Arrays.copyOfRange(hit,1,hit.length):null;}
-        if(Looper.myLooper()==Looper.getMainLooper())return null;
-        java.util.concurrent.Future<List<String>> work=smartWork.submit(()->{List<String> found=SmartReplies.suggest(this,recent,chat);
-            String[] row=new String[found.size()+1];row[0]=key;for(int i=0;i<found.size();i++)row[i+1]=found.get(i);synchronized(smartFor){smartFor.put(id,row);}return found;});
-        try{List<String> found=work.get(600,java.util.concurrent.TimeUnit.MILLISECONDS);return found.isEmpty()?null:found.toArray(new CharSequence[0]);}
-        catch(Exception e){return null;}
-    }
-    private Notification.Action replyAction(String id,CharSequence[] choices) {
+    private Notification.Action replyAction(String id) {
         Intent intent=new Intent(this,NotificationActions.class).setAction(NotificationActions.REPLY).setData(chatUri(id)).putExtra("chat",id);
         // The reply text is added to this intent by Android, so it must be mutable; it is explicit to this app.
         PendingIntent pending=PendingIntent.getBroadcast(this,3,intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_MUTABLE);
         return new Notification.Action.Builder(Icon.createWithResource(this,R.drawable.ic_send),"Reply",pending)
-            .addRemoteInput(choices==null?new RemoteInput.Builder(KEY_REPLY).setLabel("Reply").build():new RemoteInput.Builder(KEY_REPLY).setLabel("Reply").setChoices(choices).build())
-            .setSemanticAction(Notification.Action.SEMANTIC_ACTION_REPLY).addExtras(noUi()).setAllowGeneratedReplies(smartRepliesOn()).build();
+            .addRemoteInput(new RemoteInput.Builder(KEY_REPLY).setLabel("Reply").build())
+            .setSemanticAction(Notification.Action.SEMANTIC_ACTION_REPLY).addExtras(noUi()).setAllowGeneratedReplies(false).build();
     }
     private Notification.Action copyAction(String id,String code,boolean showCode) {
         Intent intent=new Intent(this,NotificationActions.class).setAction(NotificationActions.COPY).setData(chatUri(id)).putExtra("chat",id).putExtra("code",code);
@@ -897,10 +881,10 @@ public final class PairedService extends Service {
      * conversation notification (Android shows the chat's name and photo on those), so it has no bubble.
      */
     private void postNameless(String id,JSONObject chat,List<JSONObject> recent,String line,boolean quiet) {
-        Notification.Builder b=new Notification.Builder(this,MESSAGES).setSmallIcon(R.drawable.ic_notification).setContentTitle(line)
+        Notification.Builder b=new Notification.Builder(this,MESSAGES).setAllowSystemGeneratedContextualActions(false).setSmallIcon(R.drawable.ic_notification).setContentTitle(line)
             .setCategory(Notification.CATEGORY_MESSAGE).setVisibility(Notification.VISIBILITY_PUBLIC).setContentIntent(openIntent(id)).setAutoCancel(true)
             .setWhen(recent.isEmpty()?System.currentTimeMillis():PairedProtocol.time(recent.get(recent.size()-1))).setShowWhen(true);
-        b.addAction(replyAction(id,null)).addAction(readAction(id));
+        b.addAction(replyAction(id)).addAction(readAction(id));
         String code=newestCode(recent,chat);if(!code.isEmpty()){b.addAction(copyAction(id,code,false));if(code.equals(copiedCode))b.setSubText("Code copied");}
         if(quiet)b.setGroup("quiet-"+id).setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY).setOnlyAlertOnce(true);
         getSystemService(NotificationManager.class).notify("chat:"+id,1,b.build());
