@@ -2294,14 +2294,14 @@ public final class OnDeviceSmoke extends Instrumentation {
         for(int i=0;i<inputs.length;i++){String words=inputs[i],from=i==2||i==3||i==6||i==8?"es":"en",to=from.equals("en")?"es":"en";
             Translation.Result answer=Translation.worker.submit(()->Translation.translate(ctx,words,from,to,step->{},()->false)).get(180,java.util.concurrent.TimeUnit.SECONDS);
             String text=answer.text.toLowerCase(java.util.Locale.ROOT);check(Translation.lastStep.startsWith("stronger offline"),"Quality test used the compact translator");check(!words.equals(answer.text)&&QualityPlan.preserves(words,answer.text),"Quality translation changed a literal or echoed the source");
-            if(i==0)check(text.contains("pizza")&&!text.contains("abajo")&&text.length()>12,"Pizza invitation was translated literally");
-            if(i==1)check(!text.contains("lluvia")&&!text.contains("cheque")&&(text.contains("pospon")||text.contains("otr")||text.contains("después")||text.contains("más adelante")||text.contains("más tarde")),"Rain-check idiom was translated literally");
-            if(i==2)check(!text.contains("stain")&&(text.contains("way")||text.contains("kidding")||text.contains("serious")||text.contains("mess")||text.contains("come on")),"No manches was translated literally");
-            if(i==3)check(!text.contains("flight")&&!text.contains("plane")&&(text.contains("thought")||text.contains("track")||text.contains("distract")||text.contains("mind")||text.contains("missed that")),"Conversational idiom became an airplane message");
-            if(i==5)check(text.length()>25&&(text.contains("instruccion")||text.contains("instrucció")),"The translator obeyed the message instead of translating it");
-            if(i==6)check(text.contains("cancel")&&(text.contains("not")||text.contains("n't"))&&(text.contains("chang")||text.contains("reschedul")),"Appointment negation or change was lost");
-            if(i==7)check(text.contains("no")&&text.contains("confirm")&&(text.contains("pago")||text.contains("dinero")),"Payment negation was lost");
-            if(i==8)check((text.contains("not")||text.contains("n't"))&&(text.contains("arriv")||text.contains("deliver")),"Package negation was lost");
+            if(i==0)check(text.contains("pizza")&&!text.contains("abajo")&&text.length()>12,"Pizza invitation was translated literally"+" ("+answer.text+")");
+            if(i==1)check(!text.contains("lluvia")&&!text.contains("cheque")&&(text.contains("pospon")||text.contains("otr")||text.contains("después")||text.contains("más adelante")||text.contains("más tarde")),"Rain-check idiom was translated literally"+" ("+answer.text+")");
+            if(i==2)check(!text.contains("stain")&&(text.contains("way")||text.contains("kidding")||text.contains("serious")||text.contains("mess")||text.contains("come on")),"No manches was translated literally"+" ("+answer.text+")");
+            if(i==3)check(!text.contains("flight")&&!text.contains("plane")&&(text.contains("thought")||text.contains("track")||text.contains("distract")||text.contains("mind")||text.contains("missed that")),"Conversational idiom became an airplane message"+" ("+answer.text+")");
+            if(i==5)check(text.length()>25&&(text.contains("instruccion")||text.contains("instrucció")),"The translator obeyed the message instead of translating it"+" ("+answer.text+")");
+            if(i==6)check(text.contains("cancel")&&(text.contains("not")||text.contains("n't"))&&(text.contains("chang")||text.contains("reschedul")),"Appointment negation or change was lost"+" ("+answer.text+")");
+            if(i==7)check(text.contains("no")&&text.contains("confirm")&&(text.contains("pago")||text.contains("dinero")),"Payment negation was lost"+" ("+answer.text+")");
+            if(i==8)check((text.contains("not")||text.contains("n't"))&&(text.contains("arriv")||text.contains("deliver")),"Package negation was lost"+" ("+answer.text+")");
             note("QUALITY "+words+" → "+answer.text);
         }
         java.util.concurrent.atomic.AtomicInteger stops=new java.util.concurrent.atomic.AtomicInteger();boolean cancelled=false;
