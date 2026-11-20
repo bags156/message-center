@@ -61,6 +61,9 @@ jobs:
           cmake --build build/quality-eval --target quality_eval --parallel 4
       - name: Evaluate
         run: build/quality-eval/quality_eval ~/quality-model/model.gguf tools/quality-eval/cases.tsv translation-eval.jsonl
+      - name: Results (synthetic messages only)
+        if: always()
+        run: cat translation-eval.jsonl || true
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

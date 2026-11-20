@@ -28,14 +28,22 @@ final class QualityTranslation {
     private static final AtomicInteger generation=new AtomicInteger();
     private static final Handler idle=new Handler(Looper.getMainLooper());
     private static final Runnable unload=()->Translation.worker.execute(()->{try{QualityNative.unload();}catch(LinkageError ignored){}finally{usedNative=false;}});
+    private static final Runnable unloadNow=()->Translation.worker.execute(()->{try{QualityNative.unload();}catch(LinkageError ignored){}finally{usedNative=false;}});
+    /** Kept loaded this long after a translation, so the next message (a reply, the next one in) doesn't wait for it to load. */
+    private static final long KEEP_MS=180_000;
+    /** Kept this long after you leave the app, in case you're straight back. */
+    private static final long AWAY_MS=60_000;
     private static SharedPreferences prefs(Context c){return c.getSharedPreferences("translation-quality",Context.MODE_PRIVATE);}
     static File file(Context c){File root=c.getExternalFilesDir(null);return root==null?null:new File(new File(root,"quality-models"),NAME);}
     private static File marker(Context c){return new File(c.getFilesDir(),"quality-model-verified");}
     static boolean ready(Context c){File f=file(c);if(f==null||f.length()!=SIZE)return false;
         try{return (SHA+":"+f.lastModified()).equals(new String(java.nio.file.Files.readAllBytes(marker(c).toPath()),StandardCharsets.UTF_8));}catch(Exception ignored){return false;}}
     static boolean enabled(Context c){return prefs(c).getBoolean("enabled",false)&&ready(c);}
-    static void use(Context c,boolean stronger){prefs(c).edit().putBoolean("enabled",stronger).putBoolean("requested",stronger).apply();if(!stronger)release();}
-    static void release(){if(!usedNative)return;idle.removeCallbacks(unload);idle.post(unload);}
+    static void use(Context c,boolean stronger){prefs(c).edit().putBoolean("enabled",stronger).putBoolean("requested",stronger).apply();if(!stronger)releaseNow();}
+    /** Leaving the app: let go of the model after a minute away. */
+    static void release(){if(!usedNative)return;idle.removeCallbacks(unload);idle.postDelayed(unload,AWAY_MS);}
+    /** Switching to compact, or removing the model: let go of it now. */
+    static void releaseNow(){if(!usedNative)return;idle.removeCallbacks(unload);idle.post(unloadNow);}
     private static long id(Context c){return prefs(c).getLong("download",0);}
     private static DownloadManager manager(Context c){return c.getSystemService(DownloadManager.class);}
     static int state(Context c){long id=id(c);if(id==0)return 0;
@@ -62,7 +70,7 @@ final class QualityTranslation {
         DownloadManager.Request request=new DownloadManager.Request(Uri.parse(URL)).setTitle("Stronger message translation").setDescription("4.1 GB · stays on this phone")
             .setAllowedNetworkTypes(DownloadManager.Request.NETWORK_WIFI).setAllowedOverMetered(false).setAllowedOverRoaming(false).setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED).setDestinationUri(Uri.fromFile(f));
         long next=manager(app).enqueue(request);prefs(app).edit().putLong("download",next).putBoolean("requested",true).putString("error","").apply();}
-    static void remove(Context c){generation.incrementAndGet();long id=id(c);if(id!=0)manager(c).remove(id);File f=file(c);if(f!=null){f.delete();new File(f.getParentFile(),"translategemma-terms.txt").delete();new File(f.getParentFile(),"translategemma-notice.txt").delete();}marker(c).delete();prefs(c).edit().clear().apply();release();}
+    static void remove(Context c){generation.incrementAndGet();long id=id(c);if(id!=0)manager(c).remove(id);File f=file(c);if(f!=null){f.delete();new File(f.getParentFile(),"translategemma-terms.txt").delete();new File(f.getParentFile(),"translategemma-notice.txt").delete();}marker(c).delete();prefs(c).edit().clear().apply();releaseNow();}
     /** No translated or original message text is written here: only the model's verified identity. */
     static void check(Context c){if(!prefs(c).getString("error","").isEmpty()||ready(c)||state(c)!=DownloadManager.STATUS_SUCCESSFUL||!verifying.compareAndSet(false,true))return;
         Context app=c.getApplicationContext();int gen=generation.get();checks.execute(()->{
@@ -90,7 +98,7 @@ final class QualityTranslation {
             String translated=result.toString();if(!QualityPlan.preserves(words,translated))throw new Translation.Problem("Translation changed a link, code, time or emoji. Your original is unchanged.");return translated;
         }catch(LinkageError e){throw new Translation.Problem("The stronger translation engine could not start. Your original is unchanged.");}
         catch(IllegalStateException e){if(cancelled.getAsBoolean())throw new CancellationException();throw new Translation.Problem(e.getMessage()==null?"Translation could not finish. Your original is unchanged.":e.getMessage());}
-        finally{idle.removeCallbacks(unload);idle.postDelayed(unload,20_000);}
+        finally{idle.removeCallbacks(unload);idle.postDelayed(unload,KEEP_MS);}
     }
     private static byte[] utf8(String s){return s.getBytes(StandardCharsets.UTF_8);}
     private QualityTranslation() {}
