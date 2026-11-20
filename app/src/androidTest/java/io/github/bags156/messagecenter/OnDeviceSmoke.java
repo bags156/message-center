@@ -2175,21 +2175,25 @@ public final class OnDeviceSmoke extends Instrumentation {
         java.util.List<String> said=new java.util.ArrayList<>();for(JSONObject o:outbox.forChat("arrive"))said.add(o.optString("text"));
         check(said.contains("Leaving home now.")&&said.contains("Off now")&&said.contains("Not home yet, running late.")&&!said.contains("Running late"),"The leaving and check-in texts weren't queued right: "+said);
         for(JSONObject o:outbox.forChat("arrive"))outbox.remove(o.optString("id"));Arrivals.removePlace(c,"Home");check(Arrivals.places(c).isEmpty(),"The saved place wasn't forgotten");}
-    /** New conversation: finds people in the phone's contacts and in your chats, not just Google's partial list. */
+    /**
+     * New conversation: finds people in the phone's contacts and in your chats, not just Google's
+     * partial list. Typing fast (even while contacts are still coming in) loses nothing, and each
+     * letter is handled quickly with 500 contacts.
+     */
     private void checkNewConversationSearch(PairedActivity a)throws Exception{
         try(PairedStore store=new PairedStore(getTargetContext())){store.chat(new JSONObject("{conversationID:'riley',name:'Riley Chatfield',type:'RCS',lastMessageTimestamp:1794000000000000,participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'r1',number:'+15550104444'},fullName:'Riley Chatfield'}]}"));}
         java.util.List<PhoneContacts.Entry> phone=new java.util.ArrayList<>();
         phone.add(new PhoneContacts.Entry("Hannah Kay","+14795550123","(479) 555-0123","Mobile"));
         for(int i=0;i<500;i++)phone.add(new PhoneContacts.Entry("Person "+i,"+1479556"+String.format(java.util.Locale.ROOT,"%04d",i),"479-556-"+i,"Mobile"));
         phone.add(new PhoneContacts.Entry("Zoë Último","+14795550999","(479) 555-0999","Work"));
-        java.lang.reflect.Field phoneF=PairedActivity.class.getDeclaredField("phoneContacts"),googleF=PairedActivity.class.getDeclaredField("contacts"),queryF=PairedActivity.class.getDeclaredField("contactQuery");
-        phoneF.setAccessible(true);googleF.setAccessible(true);queryF.setAccessible(true);
-        java.lang.reflect.Method render=PairedActivity.class.getDeclaredMethod("renderContacts");render.setAccessible(true);
+        java.lang.reflect.Field phoneF=field("phoneContacts"),googleF=field("contacts"),queryF=field("contactQuery");
+        java.util.concurrent.Callable<Boolean> ready=()->field("peopleReady").getInt(a)==field("peopleBuild").getInt(a)&&field("people").get(a)!=null;
         // Not signed in here, so the screen is opened directly with stand-in contacts (Google's list empty, as if it hadn't come).
         runOnMainSync(()->{try{phoneF.set(a,phone);googleF.set(a,new JSONObject("{top:[],all:[]}"));queryF.set(a,"");}catch(Exception e){throw new RuntimeException(e);}});
-        onMain(a,"newChat");
-        java.util.function.BiFunction<String,String,Boolean> shows=(typed,text)->{boolean[] hit=new boolean[1];
-            runOnMainSync(()->{try{queryF.set(a,typed);render.invoke(a);java.util.ArrayList<android.view.View> f=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(f,text,android.view.View.FIND_VIEWS_WITH_TEXT);hit[0]=!f.isEmpty();}catch(Exception e){throw new RuntimeException(e);}});return hit[0];};
+        onMain(a,"newChat");onMain(a,"peopleChanged");check(waitUntil(ready,10000),"Contacts to search were never ready");
+        android.widget.EditText search=(android.widget.EditText)field("contactSearch").get(a);
+        java.util.function.Predicate<String> onList=text->{boolean[] hit=new boolean[1];runOnMainSync(()->{java.util.ArrayList<android.view.View> f=new java.util.ArrayList<>();a.getWindow().getDecorView().findViewsWithText(f,text,android.view.View.FIND_VIEWS_WITH_TEXT);hit[0]=!f.isEmpty();});return hit[0];};
+        java.util.function.BiFunction<String,String,Boolean> shows=(typed,text)->{runOnMainSync(()->search.setText(typed));waitForIdleSync();return onList.test(text);};
         check(shows.apply("kay","Hannah Kay"),"New conversation doesn't find a phone contact by last name");
         check(shows.apply("kay","Mobile · (479) 555-0123"),"A phone contact's number type and number aren't shown");
         check(shows.apply("zoe","Zoë Último"),"Search should ignore accents (\"zoe\" → Zoë)");
@@ -2197,17 +2201,29 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(shows.apply("Person 499","Person 499"),"The 500th contact can't be found (only part of the list is searched)");
         check(shows.apply("xqzv","No one called"),"No message when nobody matches");
         boolean asks=shows.apply("","Search all your contacts");check(asks==!PhoneContacts.allowed(a),"The \"Search all your contacts\" row "+(asks?"shows with":"is missing without")+" the contacts permission");
+        check(onList.test("Person 499"),"With nothing typed, the whole list isn't drawn (a few at a time)");
+        // Typing fast: every letter lands, each is handled quickly, and the list ends up matching what was typed.
+        long[] worst={0};String typed="person 49";
+        for(char ch:typed.toCharArray())runOnMainSync(()->{long t0=System.nanoTime();search.append(String.valueOf(ch));try{method("renderContacts").invoke(a);}catch(Exception e){throw new RuntimeException(e);}worst[0]=Math.max(worst[0],System.nanoTime()-t0);});
+        waitForIdleSync();long ms=worst[0]/1_000_000;note("PROBE contact search: slowest letter "+ms+" ms with "+phone.size()+" contacts");
+        check(typed.contentEquals(search.getText()),"Typing fast lost letters ("+search.getText()+")");
+        check(onList.test("Person 49")&&!onList.test("Person 12"),"After typing fast, the list doesn't match what was typed");
+        check(ms<100,"A letter took "+ms+" ms to handle with "+phone.size()+" contacts (the keyboard can drop letters)");
+        // Typing while contacts are still coming in: nothing typed is lost, and the match shows once they're ready.
+        runOnMainSync(()->search.setText(""));waitForIdleSync();
+        runOnMainSync(()->{try{method("peopleChanged").invoke(a);}catch(Exception e){throw new RuntimeException(e);}search.append("z");});runOnMainSync(()->search.append("o"));
+        check(waitUntil(ready,10000),"Contacts to search were never ready again");waitForIdleSync();
+        check("zo".contentEquals(search.getText())&&onList.test("Zoë Último"),"Typing while contacts loaded lost letters or the match ("+search.getText()+")");
         // Google often lists people by number only: their name comes from the chat with them, and anyone still nameless goes last.
         try(PairedStore store=new PairedStore(getTargetContext())){store.chat(new JSONObject("{conversationID:'nameless',name:'Jordan Example',type:'RCS',lastMessageTimestamp:1794000000000000,participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'j1',number:'+15550107777'},formattedNumber:'(555) 010-7777'}]}"));}
-        java.lang.reflect.Field knownF=PairedActivity.class.getDeclaredField("knownNames"),chatPeopleF=PairedActivity.class.getDeclaredField("chatPeople");knownF.setAccessible(true);chatPeopleF.setAccessible(true);
-        runOnMainSync(()->{try{googleF.set(a,new JSONObject("{top:[],all:[{name:'',number:{number:'+15550107777',formattedNumber:'(555) 010-7777'}},{name:'',number:{number:'+15550108888',formattedNumber:'(555) 010-8888'}}]}"));knownF.set(a,null);chatPeopleF.set(a,null);}catch(Exception e){throw new RuntimeException(e);}});
+        runOnMainSync(()->{try{googleF.set(a,new JSONObject("{top:[],all:[{name:'',number:{number:'+15550107777',formattedNumber:'(555) 010-7777'}},{name:'',number:{number:'+15550108888',formattedNumber:'(555) 010-8888'}}]}"));method("peopleChanged").invoke(a);}catch(Exception e){throw new RuntimeException(e);}});
+        check(waitUntil(ready,10000),"Contacts to search weren't ready after Google's list came");
         check(shows.apply("jordan","Jordan Example"),"A contact Google lists by number alone isn't shown by name");
         java.util.List<String> names=new java.util.ArrayList<>();
-        runOnMainSync(()->{try{java.lang.reflect.Method every=PairedActivity.class.getDeclaredMethod("everyone");every.setAccessible(true);
-            for(Object person:(java.util.List<?>)every.invoke(a)){java.lang.reflect.Field n=person.getClass().getDeclaredField("name");n.setAccessible(true);names.add((String)n.get(person));}}catch(Exception e){throw new RuntimeException(e);}});
+        runOnMainSync(()->{try{for(Object person:(java.util.List<?>)field("people").get(a)){java.lang.reflect.Field n=person.getClass().getDeclaredField("name");n.setAccessible(true);names.add((String)n.get(person));}}catch(Exception e){throw new RuntimeException(e);}});
         int lastNamed=-1,firstNumber=names.size();for(int i=0;i<names.size();i++){if(ContactSearch.numberLike(names.get(i)))firstNumber=Math.min(firstNumber,i);else lastNamed=i;}
         check(names.contains("Jordan Example")&&firstNumber<names.size()&&lastNamed<firstNumber,"Number-only contacts aren't after everyone with a name ("+lastNamed+" vs "+firstNumber+" of "+names.size()+")");
-        runOnMainSync(()->{try{phoneF.set(a,null);googleF.set(a,null);queryF.set(a,"");knownF.set(a,null);chatPeopleF.set(a,null);}catch(Exception e){throw new RuntimeException(e);}});
+        runOnMainSync(()->{try{search.setText("");phoneF.set(a,null);googleF.set(a,null);queryF.set(a,"");field("people").set(a,null);field("frequentPeople").set(a,null);}catch(Exception e){throw new RuntimeException(e);}});
         try(PairedStore store=new PairedStore(getTargetContext())){store.deleteChat("riley");store.deleteChat("nameless");}
         onMain(a,"inbox");}
     /** The inbox: a chat further down getting a message moves to the top without sliding the rows you're looking at. */
