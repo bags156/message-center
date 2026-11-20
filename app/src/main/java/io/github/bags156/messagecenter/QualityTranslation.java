@@ -91,9 +91,15 @@ final class QualityTranslation {
         try{for(String piece:QualityPlan.fragments(words,from)){if(cancelled.getAsBoolean())throw new CancellationException();
                 int first=0,last=piece.length();while(first<last&&Character.isWhitespace(piece.charAt(first)))first++;while(last>first&&Character.isWhitespace(piece.charAt(last-1)))last--;
                 String body=piece.substring(first,last);if(!TranslationPlan.outgoingText(body)){result.append(piece);continue;}
-                progress.accept("Translating on this phone…");usedNative=true;byte[] answer=QualityNative.translate(utf8(QualityPlan.prefix(from,to)),utf8(body),utf8(QualityPlan.SUFFIX),utf8(file(c).getAbsolutePath()),cancelled);
-                if(cancelled.getAsBoolean())throw new CancellationException();if(answer==null)throw new Translation.Problem("The stronger translator could not finish. Your original is unchanged.");
-                String text=new String(answer,StandardCharsets.UTF_8).trim();if(!QualityPlan.preserves(body,text))throw new Translation.Problem("Translation changed a link, code, time or emoji. Your original is unchanged.");
+                progress.accept("Translating on this phone…");usedNative=true;String text=null;
+                // Casual wording first; if that changed a link, code, time or emoji, once more with the plain, literal prompt.
+                // (Also when it started repeating itself or came back empty.)
+                for(boolean casual:new boolean[]{true,false}){byte[] answer;
+                    try{answer=QualityNative.translate(utf8(QualityPlan.prefix(from,to,casual)),utf8(body),utf8(QualityPlan.SUFFIX),utf8(file(c).getAbsolutePath()),cancelled);}
+                    catch(IllegalStateException e){String why=String.valueOf(e.getMessage());if(!casual||cancelled.getAsBoolean()||!(why.contains("repeating")||why.contains("was empty")))throw e;continue;}
+                    if(cancelled.getAsBoolean())throw new CancellationException();if(answer==null)throw new Translation.Problem("The stronger translator could not finish. Your original is unchanged.");
+                    String said=QualityPlan.tidy(new String(answer,StandardCharsets.UTF_8).trim(),to);if(QualityPlan.preserves(body,said)){text=said;break;}}
+                if(text==null)throw new Translation.Problem("Translation changed a link, code, time or emoji. Your original is unchanged.");
                 result.append(piece,0,first).append(text).append(piece,last,piece.length());}
             String translated=result.toString();if(!QualityPlan.preserves(words,translated))throw new Translation.Problem("Translation changed a link, code, time or emoji. Your original is unchanged.");return translated;
         }catch(LinkageError e){throw new Translation.Problem("The stronger translation engine could not start. Your original is unchanged.");}
