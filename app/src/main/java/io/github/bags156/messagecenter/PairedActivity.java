@@ -184,7 +184,7 @@ public class PairedActivity extends Activity {
     /** Tells ChatBubbles which chat you're in (its Details and Shared count), so that chat's bubble steps aside. */
     private void reportChatOnScreen(){if(bubble())return;boolean inChat=screen.equals("chat")||screen.equals("details")||screen.equals("media")||screen.equals("notes")||screen.equals("note");
         ChatBubbles.showing(this,started&&inChat?chatId:"");}
-    @Override protected void onResume(){super.onResume();resumed=true;QualityTranslation.check(this);ui.post(qualitySettingsTick);Birthdays.loaded=()->{if(!resumed)return;if(screen.equals("inbox"))renderInbox();else if(screen.equals("chat"))renderBirthday();};MusicApps.updated=()->{if(resumed&&screen.equals("chat"))renderMessages(false);};timeFormat=null;dateFormat=null;PairedService.screenVisible(true);refreshDraft();refreshTranslationSummary(chatId);if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
+    @Override protected void onResume(){super.onResume();resumed=true;OutgoingTranslation.resume(this,()->{if(!isDestroyed()&&screen.equals("chat"))renderMessages(false);});QualityTranslation.check(this);ui.post(qualitySettingsTick);Birthdays.loaded=()->{if(!resumed)return;if(screen.equals("inbox"))renderInbox();else if(screen.equals("chat"))renderBirthday();};MusicApps.updated=()->{if(resumed&&screen.equals("chat"))renderMessages(false);};timeFormat=null;dateFormat=null;PairedService.screenVisible(true);refreshDraft();refreshTranslationSummary(chatId);if(!registered){registerReceiver(receiver,new IntentFilter(PairedService.CHANGED),Context.RECEIVER_NOT_EXPORTED);registered=true;}
         PhotoText.indexDownloaded(this,false);watchCalls(true);if(screen.equals("chat")&&!chatId.isEmpty())loadCalls(chatId);
         if(PairedService.ready()&&screen.equals("pair")){CookieManager.getInstance().removeAllCookies(null);inbox();askNotifications();}
         else if(!bubble()&&!PairedService.emoji().isEmpty()&&login==null)pairing();
@@ -2005,7 +2005,7 @@ public class PairedActivity extends Activity {
         if(target.isEmpty()||!TranslationPlan.outgoingText(original))return;int ahead=aheadRequest.get();Context app=getApplicationContext();
         Translation.worker.execute(()->{
             // Stops when the draft changes or something you're waiting on comes, unless that's Send for this same draft: then it carries on, and Send uses it.
-            java.util.function.BooleanSupplier stale=()->!original.equals(sendingNow)&&(aheadRequest.get()!=ahead||!original.equals(draftNow)||!id.equals(chatNow)||Translation.worker.urgentWaiting());
+            java.util.function.BooleanSupplier stale=()->!original.equals(sendingNow)&&!OutgoingTranslation.sending(original)&&(aheadRequest.get()!=ahead||!original.equals(draftNow)||!id.equals(chatNow)||Translation.worker.urgentWaiting());
             try{if(stale.getAsBoolean())return;String detected=Translation.writtenIn(app,original);if(TranslationPlan.alreadyIn(detected,target))return;
                 Translation.translate(app,original,TranslationPlan.outgoingSource(original,"auto".equals(writing)?detected:"",phone,writing),target,true,step->{},stale);}
             catch(Exception ignored){}});}
@@ -2022,6 +2022,8 @@ public class PairedActivity extends Activity {
     private void translateOutgoing(boolean scheduling){if(composer==null||translatingOutgoing||sendingText)return;
         String original=composer.getText().toString(),id=chatId,reply=replyId,files=translationFiles(),target=chatSettings.sendLanguage(id),writing=chatSettings.writeLanguage(id),phone=Translation.defaultLanguage(this);
         if(target.isEmpty()||!TranslationPlan.outgoingText(original)){if(scheduling)scheduleBody(original.trim());else sendBody(original);return;}
+        // The stronger translator takes a moment: the message goes up at once and is sent when it's translated (unless it's to be checked, scheduled, or has attachments).
+        if(!scheduling&&!chatSettings.checkTranslation(id)&&files.isEmpty()&&QualityTranslation.enabled(this)){sendTranslating(original);return;}
         int request=outgoingTranslationRequest.incrementAndGet();translatingOutgoing=true;sendingNow=original;updateComposeButton();
         if(outgoingTranslateStatus!=null){outgoingTranslateStatus.setText("Translating to "+Translation.label(target)+"…");outgoingTranslateStatus.setVisibility(View.VISIBLE);}
         Translation.worker.urgent(()->{try{
@@ -2047,6 +2049,36 @@ public class PairedActivity extends Activity {
         catch(Exception e){ui.post(()->{if(outgoingTranslationRequest.get()!=request||isDestroyed())return;finishOutgoingTranslation(request);
             error("Your message wasn't sent. "+(e.getMessage()==null?"Translation couldn't finish.":e.getMessage())+"\n\nYour draft is still here. Tap Send to try again, or choose As written in this chat's Details.");});}});
     }
+    /**
+     * Send in a chat that translates (stronger translator): the bubble goes up at once with what you
+     * wrote ("Translating to Spanish… • Tap to undo"), and it's sent when its translation is ready,
+     * even if you leave the chat (OutgoingTranslation).
+     */
+    private void sendTranslating(String original){String id=chatId,reply=replyId,target=chatSettings.sendLanguage(id);JSONObject c=store.chat(id);
+        if(c==null){error("Refresh this conversation before sending.");return;}
+        repliedSinceInbox=true;unreadSince=-1;if(sendButton!=null)sendButton.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM);
+        String fx=effectsOn()?Effects.phrase(original):"";if(Effects.fullScreen(fx))ui.postDelayed(()->{if(screen.equals("chat")&&chatId.equals(id))playEffect(fx,null,original.trim());},280);
+        JSONObject o=outbox.addTranslating(id,original,reply,target,Translation.label(target),chatSettings.writeLanguage(id),Translation.defaultLanguage(this),undoSendOn()?undoSendMs():0);
+        drafts.remove(id);composer.setText("");cancelReply();renderMessages(true);
+        String oid=o.optString("id");OutgoingTranslation.start(this,oid,()->afterTranslating(oid));}
+    /** A translation finished: what's left of its undo window, then it goes; the chat redraws with the translation. */
+    private void afterTranslating(String oid){if(isDestroyed())return;JSONObject o=outbox.get(oid);
+        if(o!=null&&Outbox.HOLD.equals(o.optString("state")))ui.postDelayed(()->releaseHeld(oid),Math.max(0,o.optLong("due")-System.currentTimeMillis()));
+        if(screen.equals("chat"))renderMessages(false);}
+    /** Takes back a message that's still translating: it isn't sent, and what you wrote goes back in the message box. */
+    private void undoTranslating(JSONObject o){String id=o.optString("id");JSONObject now=outbox.get(id);
+        if(now==null||!(Outbox.TRANSLATING.equals(now.optString("state"))||Outbox.NOT_TRANSLATED.equals(now.optString("state")))){toast("Already sent");return;}
+        outbox.remove(id);String wrote=now.optString("wrote",now.optString("text"));
+        if(screen.equals("chat")&&chatId.equals(now.optString("chat"))&&composer!=null){String typed=composer.getText().toString();composer.setText(typed.isEmpty()?wrote:wrote+" "+typed);composer.setSelection(composer.getText().length());
+            JSONObject target=now.optString("reply").isEmpty()?null:store.message(now.optString("reply"));if(target!=null)startReply(target);}
+        renderMessages(false);}
+    /** It couldn't be translated: translate again, send what you wrote, edit it, or delete it. */
+    private void notTranslatedOptions(JSONObject o){String id=o.optString("id"),wrote=o.optString("wrote",o.optString("text"));List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
+        labels.add("Translate again");actions.add(()->{outbox.translating(id,Outbox.TRANSLATING,"");renderMessages(false);OutgoingTranslation.start(this,id,()->afterTranslating(id));});
+        labels.add("Send as written");actions.add(()->{outbox.translating(id,Outbox.TRANSLATING,"");if(outbox.translated(id,wrote))PairedService.outboxChanged();afterTranslating(id);});
+        labels.add("Edit");actions.add(()->undoTranslating(o));
+        labels.add("Delete");actions.add(()->{outbox.remove(id);renderMessages(false);});
+        String why=o.optString("error");menuSheet(why.isEmpty()?"Not translated":why,labels,actions);}
     /** Sends the translation, keeping what you wrote (on this phone) so the chat can show it. */
     private void sendTranslated(String id,String original,Translation.Result answer,boolean scheduling){
         if(answer.same||TranslationPlan.unchanged(original,answer.text)){sendWritten(original,scheduling);return;}
@@ -3800,7 +3832,7 @@ public class PairedActivity extends Activity {
     private void releaseHeld(String id){JSONObject o=outbox.get(id);if(o==null||!Outbox.HOLD.equals(o.optString("state")))return;outbox.setState(id,Outbox.WAITING,"");PairedService.flushOutboxNow(this);if(screen.equals("chat"))renderMessages(false);}
     /** Takes a just-sent message back and puts its text in the message box again. */
     private void undoSend(String id){JSONObject o=outbox.get(id);if(o==null||!Outbox.HOLD.equals(o.optString("state"))){toast("Already sent");return;}outbox.remove(id);
-        if(screen.equals("chat")&&chatId.equals(o.optString("chat"))&&composer!=null){String now=composer.getText().toString();composer.setText(now.isEmpty()?o.optString("text"):o.optString("text")+" "+now);composer.setSelection(composer.getText().length());
+        if(screen.equals("chat")&&chatId.equals(o.optString("chat"))&&composer!=null){String now=composer.getText().toString(),wrote=o.optString("wrote",o.optString("text"));composer.setText(now.isEmpty()?wrote:wrote+" "+now);composer.setSelection(composer.getText().length());
             JSONObject target=o.optString("reply").isEmpty()?null:store.message(o.optString("reply"));if(target!=null)startReply(target);renderMessages(false);}
         toast("Message not sent");}
     private final Set<String> pendingDeletes=new HashSet<>();private View undoBar;
@@ -3939,11 +3971,13 @@ public class PairedActivity extends Activity {
                 toggle.setOnClickListener(v->{if(!showingWritten.remove(qid))showingWritten.add(qid);renderMessages(false);});items.addView(toggle,new LinearLayout.LayoutParams(-1,-2));}
             String oid=o.optString("id");motion(line,"o:"+oid,LIFT,motionOutbox.add(oid)&&motionReady);
             // What it's waiting for, in plain words: the signal (it couldn't reach Google), the reconnect, or Google confirming delivery.
-            String label=Outbox.label(o,PairedService.ready(),PairedService.status(this),System.currentTimeMillis());boolean act=state.equals(Outbox.FAILED)||label.startsWith("Not confirmed");
+            String label=Outbox.label(o,PairedService.ready(),PairedService.status(this),System.currentTimeMillis());boolean act=state.equals(Outbox.FAILED)||state.equals(Outbox.NOT_TRANSLATED)||label.startsWith("Not confirmed");
             TextView s=text(label,12,act?danger:muted,state.equals(Outbox.FAILED));s.setGravity(Gravity.END);s.setPadding(0,dp(4),dp(6),0);items.addView(s,new LinearLayout.LayoutParams(-1,-2));
             View.OnClickListener open=v->outboxOptions(o);b.setOnClickListener(open);s.setOnClickListener(open);}}
     private void outboxOptions(JSONObject o){String id=o.optString("id"),state=o.optString("state");if(state.equals(Outbox.SENDING)||state.equals(Outbox.SENT))return;
         if(state.equals(Outbox.HOLD)){undoSend(id);return;}
+        if(state.equals(Outbox.TRANSLATING)){undoTranslating(o);toast("Message not sent");return;}
+        if(state.equals(Outbox.NOT_TRANSLATED)){notTranslatedOptions(o);return;}
         String msg=state.equals(Outbox.UNSURE)?"Google has this message but hasn't confirmed it was delivered. That usually happens by itself once the signal's back. Send it again only if you're sure it didn't go, or they may get it twice."
             :state.equals(Outbox.WAITING)&&o.optInt("tries")>0?"It couldn't reach Google (weak or no signal), so it hasn't gone anywhere. It sends by itself when the connection's back."
             :state.equals(Outbox.WAITING)?"It sends by itself as soon as Message Center is connected.":o.optString("error");

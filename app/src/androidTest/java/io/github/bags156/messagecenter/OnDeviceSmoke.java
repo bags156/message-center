@@ -2336,8 +2336,13 @@ public final class OnDeviceSmoke extends Instrumentation {
         try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'quality-chat',name:'Quality Check',type:'RCS',participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'qc',number:'+15550104001'},fullName:'Quality Check'}]}"));}
         ctx.getSharedPreferences("paired",0).edit().putBoolean("undo_send",false).apply();ChatSettings settings=new ChatSettings(ctx);settings.setWriteLanguage("quality-chat","en");settings.setSendLanguage("quality-chat","es");
         onMainCall(()->{method("thread",String.class).invoke(activity,"quality-chat");((android.widget.EditText)field("composer").get(activity)).setText("Let's call it a day.");((android.view.View)field("sendButton").get(activity)).performClick();return null;});
-        Outbox out=new Outbox(ctx);check(waitUntil(()->out.forChat("quality-chat").size()==1,180000),"One tap did not queue a stronger translation");
-        JSONObject queued=out.forChat("quality-chat").get(0);String text=queued.optString("text").toLowerCase(java.util.Locale.ROOT);check(!text.equals("let's call it a day.")&&!text.contains("llam"),"One-tap send used a literal or untranslated message");
+        // The bubble goes up at once, with what you wrote, and turns into the translation once it's ready.
+        Outbox out=new Outbox(ctx);check(waitUntil(()->out.forChat("quality-chat").size()==1,1500),"Send didn't put the message in the chat at once");
+        check(waitUntil(()->onScreen("Let's call it a day.")!=null,1500),"The message going up doesn't show what you wrote");
+        onMainCall(()->{check(((android.widget.EditText)field("composer").get(activity)).length()==0,"Send left the draft in the message box");return null;});
+        java.util.concurrent.Callable<Boolean> translatedOne=()->out.forChat("quality-chat").size()==1&&!Outbox.TRANSLATING.equals(out.forChat("quality-chat").get(0).optString("state"));
+        check(waitUntil(translatedOne,180000),"One tap did not translate the message");
+        JSONObject queued=out.forChat("quality-chat").get(0);check(Outbox.WAITING.equals(queued.optString("state")),"The translated message isn't ready to go ("+queued.optString("state")+": "+queued.optString("error")+")");String text=queued.optString("text").toLowerCase(java.util.Locale.ROOT);check(!text.equals("let's call it a day.")&&!text.contains("llam"),"One-tap send used a literal or untranslated message");
         note("QUALITY SEND "+queued.optString("text"));out.remove(queued.optString("id"));
         // Opening the chat loads the model and reads its instruction ahead of time: the first message only reads itself.
         Translation.worker.submit(()->{QualityNative.unload();return null;}).get(60,java.util.concurrent.TimeUnit.SECONDS);
@@ -2351,10 +2356,24 @@ public final class OnDeviceSmoke extends Instrumentation {
         onMainCall(()->{((android.widget.EditText)field("composer").get(activity)).setText("I'll bring the cake to the park tomorrow.");return null;});Thread.sleep(1600);
         Translation.worker.submit(()->null).get(180,java.util.concurrent.TimeUnit.SECONDS);
         long tapped=android.os.SystemClock.uptimeMillis();onMainCall(()->{((android.view.View)field("sendButton").get(activity)).performClick();return null;});
-        check(waitUntil(()->out.forChat("quality-chat").size()==1,60000),"Send after a pause didn't queue the translation");long waited=android.os.SystemClock.uptimeMillis()-tapped;
+        check(waitUntil(translatedOne,60000),"Send after a pause didn't translate the message");long waited=android.os.SystemClock.uptimeMillis()-tapped;
         note("QUALITY AHEAD Send took "+waited+" ms after a pause; "+out.forChat("quality-chat").get(0).optString("text"));
         check(waited<1500,"Send after a pause still waited "+waited+" ms for the translation (it wasn't translated ahead)");
         out.remove(out.forChat("quality-chat").get(0).optString("id"));
+        // Leaving the chat straight after Send: it's still translated and goes; tapping one that's translating takes it back.
+        onMainCall(()->{((android.widget.EditText)field("composer").get(activity)).setText("Can you pick up some bread on the way?");((android.view.View)field("sendButton").get(activity)).performClick();return method("inbox").invoke(activity);});
+        check(waitUntil(translatedOne,180000),"A message sent just before leaving the chat wasn't translated");
+        String away=out.forChat("quality-chat").get(0).optString("text");check(!away.startsWith("Can you pick up"),"A message sent just before leaving the chat went untranslated");
+        check(SentOriginals.find(ctx,"quality-chat",away)!=null,"What you wrote wasn't kept for a message translated after you left");out.remove(out.forChat("quality-chat").get(0).optString("id"));
+        onMainCall(()->method("thread",String.class).invoke(activity,"quality-chat"));
+        onMainCall(()->{((android.widget.EditText)field("composer").get(activity)).setText("Actually never mind, I will figure it out myself later tonight.");((android.view.View)field("sendButton").get(activity)).performClick();return null;});
+        check(waitUntil(()->onScreen("Translating to Spanish… • Tap to undo")!=null,3000),"A message being translated doesn't say so");shoot("shot-quality-translating");
+        pressText("Translating to Spanish… • Tap to undo");
+        check(waitUntil(()->out.forChat("quality-chat").isEmpty(),3000),"Tapping a message that's translating didn't take it back");
+        onMainCall(()->{check(((android.widget.EditText)field("composer").get(activity)).getText().toString().startsWith("Actually never mind"),"Taking back a translating message didn't put it back in the message box");
+            ((android.widget.EditText)field("composer").get(activity)).setText("");return null;});
+        Translation.worker.submit(()->null).get(180,java.util.concurrent.TimeUnit.SECONDS);
+        check(out.forChat("quality-chat").isEmpty(),"A message taken back while translating went anyway");
         onMainCall(()->method("openSettingsPage",String.class).invoke(activity,"translation"));shoot("shot-quality-settings");
         check(exactText(activity,"Translation quality")!=null,"App settings have no translation-quality control");
         long beforeMemory=android.os.Debug.getPss();QualityTranslation.use(ctx,false);QualityTranslation.release();waitForIdleSync();
@@ -2364,7 +2383,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         new java.io.File(ctx.getFilesDir(),"quality-model-verified").delete();
         QualityTranslation.start(ctx);check(QualityTranslation.state(ctx)!=0,"Retry did not reclaim the old model's storage before enqueue");QualityTranslation.remove(ctx);
         check(!model.exists()&&!QualityTranslation.stored(ctx),"Cancelling a model retry left the large file behind");
-        result.putString("stream","QUALITY_TRANSLATION_SMOKE_PASS: pinned Q8 weights, colloquial English/Spanish, casual wording for what you send, warm-up on opening a chat, drafts translated ahead, literal preservation, native cancellation and one-tap offline outbox send\n");finish(Activity.RESULT_OK,result);
+        result.putString("stream","QUALITY_TRANSLATION_SMOKE_PASS: pinned Q8 weights, colloquial English/Spanish, casual wording for what you send, warm-up on opening a chat, drafts translated ahead, sent at once and translated in the background (even after leaving the chat, undo while translating), literal preservation, native cancellation and one-tap offline outbox send\n");finish(Activity.RESULT_OK,result);
     }catch(Throwable e){StringBuilder where=new StringBuilder();for(StackTraceElement frame:e.getStackTrace())if(frame.getClassName().contains("OnDeviceSmoke")&&where.length()<250)where.append(" at ").append(frame.getMethodName()).append(':').append(frame.getLineNumber());
         result.putString("stream","QUALITY_TRANSLATION_SMOKE_FAIL: "+e.getClass().getSimpleName()+": "+e.getMessage()+where+"\n");finish(Activity.RESULT_CANCELED,result);}}
     @Override public void onStart(){if(!qualityMode.isEmpty()){qualitySmoke();return;}Bundle result=new Bundle();try {

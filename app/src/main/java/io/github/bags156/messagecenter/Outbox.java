@@ -18,6 +18,13 @@ final class Outbox {
     static final String WAITING = "waiting", SENDING = "sending", UNSURE = "unsure", FAILED = "failed";
     /** Held for a few seconds so it can be taken back ("Undo send"); sent once "due" passes. */
     static final String HOLD = "hold";
+    /**
+     * In a chat that translates what you send: shown at once with what you wrote, and held (along with
+     * anything sent after it in that chat) until its translation is ready (OutgoingTranslation).
+     */
+    static final String TRANSLATING = "translating";
+    /** Its translation couldn't be made: it waits for you (translate again, send as written, edit or delete). */
+    static final String NOT_TRANSLATED = "not-translated";
     /** Google accepted it; still drawn as sending until Google's copy shows up in the chat (see OutboxEcho). */
     static final String SENT = "sent";
     /** How long a sent text stands in for Google's copy if the copy never shows up. */
@@ -43,6 +50,8 @@ final class Outbox {
     static String label(JSONObject o, boolean online, String status, long now) {
         switch (o.optString("state")) {
             case HOLD: return "Sending… • Tap to undo";
+            case TRANSLATING: return "Translating to " + o.optString("toLabel", "their language") + "… • Tap to undo";
+            case NOT_TRANSLATED: return "Not translated • Tap for options";
             case SENDING: case SENT: return o.optString("replaces").isEmpty() ? "Sending…" : "Sending again…";
             case UNSURE: return online && o.optLong("stateAt") > 0 && now - o.optLong("stateAt") > CONFIRM_WAIT_MS ? "Not confirmed • Tap to send again" : "Google didn't answer • checking if it went";
             case FAILED: return "Not sent • Tap to retry";
@@ -94,6 +103,41 @@ final class Outbox {
         for (JSONObject o : list) if (id.equals(o.optString("id"))) { try { o.put("state", state).put("error", error == null ? "" : error).put("stateAt", System.currentTimeMillis());
             // Sent again by hand (or put back in line): it goes now, counting its tries afresh.
             if (WAITING.equals(state)) { o.remove("retryAt"); o.remove("tries"); } } catch (Exception ignored) {} }
+        save(list);
+    }
+
+    /**
+     * A text to translate before it goes: what you wrote shows until the translation replaces it.
+     * holdMillis is the undo window ("Undo send"), counted from now.
+     */
+    synchronized JSONObject addTranslating(String chat, String wrote, String reply, String to, String toLabel, String writing, String phone, long holdMillis) {
+        JSONObject o = add(chat, wrote, reply, holdMillis, TRANSLATING, "");
+        List<JSONObject> list = all();
+        for (JSONObject x : list) if (x.optString("id").equals(o.optString("id"))) { try {
+            for (JSONObject y : new JSONObject[]{x, o}) y.put("wrote", wrote).put("to", to).put("toLabel", toLabel).put("writing", writing).put("phone", phone).put("hold", holdMillis);
+        } catch (Exception ignored) {} }
+        save(list);
+        return o;
+    }
+
+    /**
+     * Its translation is ready: the text becomes the translation and it goes (after what's left of its
+     * undo window). False if it was taken back meanwhile.
+     */
+    synchronized boolean translated(String id, String text) {
+        List<JSONObject> list = all(); boolean found = false; long now = System.currentTimeMillis();
+        for (JSONObject o : list) if (id.equals(o.optString("id")) && (TRANSLATING.equals(o.optString("state")))) { found = true;
+            try { boolean holding = o.optLong("hold") > 0 && o.optLong("due") > now;
+                o.put("text", text).put("state", holding ? HOLD : WAITING).put("error", "").put("stateAt", now); } catch (Exception ignored) {} }
+        if (found) save(list);
+        return found;
+    }
+
+    /** Back to translating (Translate again), or its translation couldn't be made: it waits for you. */
+    synchronized void translating(String id, String state, String error) {
+        List<JSONObject> list = all(); long now = System.currentTimeMillis();
+        for (JSONObject o : list) if (id.equals(o.optString("id"))) { try { o.put("state", state).put("error", error == null ? "" : error).put("stateAt", now);
+            if (TRANSLATING.equals(state)) o.put("text", o.optString("wrote", o.optString("text"))).put("due", now + o.optLong("hold")); } catch (Exception ignored) {} }
         save(list);
     }
 
@@ -212,10 +256,16 @@ final class Outbox {
         return again;
     }
 
-    /** The next message to send automatically, or null. Unsure and failed items wait for the person. */
+    /**
+     * The next message to send automatically, or null. Unsure and failed items wait for the person.
+     * Anything after a text that's still translating in the same chat waits for it, so they arrive in order.
+     */
     synchronized JSONObject next() {
-        long now = System.currentTimeMillis();
-        for (JSONObject o : all()) { String state = o.optString("state"); if ((WAITING.equals(state) && o.optLong("retryAt") <= now) || (HOLD.equals(state) && o.optLong("due") <= now)) return o; }
+        long now = System.currentTimeMillis(); java.util.Set<String> translating = new java.util.HashSet<>();
+        for (JSONObject o : all()) { String state = o.optString("state");
+            if (TRANSLATING.equals(state)) { translating.add(o.optString("chat")); continue; }
+            if (translating.contains(o.optString("chat"))) continue;
+            if ((WAITING.equals(state) && o.optLong("retryAt") <= now) || (HOLD.equals(state) && o.optLong("due") <= now)) return o; }
         return null;
     }
 
