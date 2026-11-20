@@ -1564,6 +1564,32 @@ public final class OnDeviceSmoke extends Instrumentation {
         finally{tp.edit().remove("audfold").remove("audfold|folded").remove("audfold|msg").commit();onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("fold-check");}}}
     private static android.widget.TextView textStarting(android.view.View v,String start){if(v instanceof android.widget.TextView&&((android.widget.TextView)v).getText().toString().startsWith(start)&&v.isShown())return (android.widget.TextView)v;
         if(v instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++){android.widget.TextView hit=textStarting(((android.view.ViewGroup)v).getChildAt(i),start);if(hit!=null)return hit;}return null;}
+    /**
+     * Holding a message: the usual reactions, then under them the ones you use most (most used
+     * first), then the actions with short names, everyday ones first and Delete last.
+     */
+    private void checkMessageMenu(PairedActivity a)throws Exception{android.content.Context ctx=getTargetContext();long now=System.currentTimeMillis();
+        android.content.SharedPreferences used=ctx.getSharedPreferences("reactions_used",0);used.edit().clear().commit();
+        for(int i=0;i<3;i++)ReactionUsage.used(ctx,"🔥");Thread.sleep(5);ReactionUsage.used(ctx,"🙏");
+        try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'menu-check',name:'Mia Menu',type:'RCS',lastMessageTimestamp:"+now*1000+",participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'mm',number:'+15557770155'},fullName:'Mia Menu',firstName:'Mia'}]}"));
+            store.message(new JSONObject("{messageID:'mm-1',conversationID:'menu-check',participantID:'mm',timestamp:"+(now-60_000L)*1000+",messageStatus:{status:'INCOMING_COMPLETE'},messageInfo:[{messageContent:{content:'Are we still on for dinner tonight?'}}]}"),0,true);}
+        try{onMainCall(()->method("thread",String.class).invoke(a,"menu-check"));waitForIdleSync();
+            JSONObject m;try(PairedStore store=new PairedStore(ctx)){m=store.message("mm-1");}
+            JSONObject held=m;onMainCall(()->method("messageSheet",JSONObject.class).invoke(a,held));
+            check(waitUntil(()->onScreen("Reply")!=null,3000),"Holding a message didn't open its menu");
+            // Every action, by its short name (the sheet may scroll, so it's looked for in the whole menu, not just what's showing).
+            android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();
+            for(String item:new String[]{"Reply","Copy text","Forward","Star","Pin to top","Translate","Select text","Remind me","Select messages","Details","Delete"}){boolean found=false;
+                for(android.view.accessibility.AccessibilityNodeInfo n:root.findAccessibilityNodeInfosByText(item))if(n.getText()!=null&&item.contentEquals(n.getText()))found=true;
+                check(found,"The message menu is missing "+item);}
+            // The second row: the ones used most, under the first row, most used first.
+            java.util.List<android.view.accessibility.AccessibilityNodeInfo> heart=root.findAccessibilityNodeInfosByText("❤️"),fire=root.findAccessibilityNodeInfosByText("🔥"),pray=root.findAccessibilityNodeInfosByText("🙏");
+            check(!fire.isEmpty()&&!pray.isEmpty(),"The menu has no row of your most-used reactions");
+            android.graphics.Rect h=new android.graphics.Rect(),f=new android.graphics.Rect(),p=new android.graphics.Rect();heart.get(0).getBoundsInScreen(h);fire.get(0).getBoundsInScreen(f);pray.get(0).getBoundsInScreen(p);
+            check(f.top>=h.bottom-2&&f.left<p.left,"Your most-used reactions aren't a second row, most used first");
+            shoot("shot-message-menu");
+            getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);Thread.sleep(400);}
+        finally{used.edit().clear().commit();onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("menu-check");}}}
     private static android.view.View described(android.view.View v,String what){if(what.contentEquals(String.valueOf(v.getContentDescription())))return v;
         if(v instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++){android.view.View hit=described(((android.view.ViewGroup)v).getChildAt(i),what);if(hit!=null)return hit;}return null;}
     /** Drags a chat head onto the × with real touches, to wherever the × shows up on screen. */
@@ -2617,6 +2643,7 @@ public final class OnDeviceSmoke extends Instrumentation {
         checkNewGroup((PairedActivity)activity);
         checkVoiceOffScreen((PairedActivity)activity);
         checkTranscriptFold((PairedActivity)activity);
+        checkMessageMenu((PairedActivity)activity);
         checkSongPlaying((PairedActivity)activity);
         checkChatReminder((PairedActivity)activity);
         checkSearchClear((PairedActivity)activity);

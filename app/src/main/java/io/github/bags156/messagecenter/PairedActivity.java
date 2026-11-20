@@ -1618,65 +1618,93 @@ public class PairedActivity extends Activity {
             if(bubble()){startActivity(new Intent(this,PairedActivity.class).setAction(OPEN_CHAT).putExtra("chat",chat.getString("conversationID")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP|Intent.FLAG_ACTIVITY_CLEAR_TOP));return;}
             thread(chat.getString("conversationID"));}catch(Exception ex){error("The new conversation could not be opened.");}});}
     /** Long-press a message: react (tap your current reaction to remove it), reply, copy, or see reactions. */
-    private void messageSheet(JSONObject m){JSONObject c=store.chat(chatId);LinearLayout content=vertical();Dialog[] d=new Dialog[1];
-        int photoNumber=0;for(JSONObject media:PairedProtocol.media(m))if(MediaCache.mime(media).startsWith("image/")){
-            int number=++photoNumber;sheetAction(content,"Read text in photo "+number,()->{d[0].dismiss();readPhotoText(media);});}
+    /**
+     * Holding a message: reactions (the usual ones, then under them the ones you use most), then
+     * what you can do with it, each with an icon: the everyday ones first (Reply, Copy, Forward,
+     * Star), then translating, its photos, links and transcript, keeping it (notes, a reminder),
+     * and Delete on its own, in red, at the bottom.
+     */
+    private void messageSheet(JSONObject m){JSONObject c=store.chat(chatId);LinearLayout content=vertical();Dialog[] d=new Dialog[1];String mid=m.optString("messageID");
         List<String[]> reactors=reactorsOf(m);String mine=myReaction(m,c);
         List<String> choices=new ArrayList<>(java.util.Arrays.asList(REACTIONS));if(!mine.isEmpty()&&!choices.contains(mine)){choices.add(0,mine);choices.remove(choices.size()-1);}
-        LinearLayout emojis=row();String current=mine;
-        for(String e:choices){TextView t=text(e,24,ink,false);t.setGravity(Gravity.CENTER);boolean selected=e.equals(current);if(selected)t.setBackground(oval(fab));
-            t.setContentDescription(selected?"Your reaction: "+e:"React with "+e);
-            // Picking the reaction you already gave changes nothing, so nothing is sent.
-            t.setOnClickListener(v->{d[0].dismiss();if(!selected)react(m,e,current.isEmpty()?"add":"switch");});emojis.addView(t,new LinearLayout.LayoutParams(0,dp(50),1));}
+        String current=mine;LinearLayout emojis=row();
+        for(String e:choices)emojis.addView(reactionChoice(m,e,current,d),new LinearLayout.LayoutParams(0,dp(50),1));
         // Any other emoji: Google's connection takes any emoji as a reaction.
         if(emojiIndex==null)new Thread(this::emojiIndex,"emoji-index").start();
         TextView more=text("+",26,muted,false);more.setGravity(Gravity.CENTER);more.setBackground(oval(surface));more.setContentDescription("React with another emoji");
         more.setOnClickListener(v->{d[0].dismiss();emojiPicker(e->{if(!ReactionParser.sameEmoji(e,current))react(m,e,current.isEmpty()?"add":"switch");});});
-        emojis.addView(more,new LinearLayout.LayoutParams(0,dp(50),1));
-        content.addView(emojis);gap(content,10);
-        if(!mine.isEmpty())sheetAction(content,"Remove your "+mine+" reaction",()->{d[0].dismiss();react(m,current,"remove");});
-        sheetAction(content,"Reply",()->{d[0].dismiss();startReply(m);});
-        String fx=effectOf(m);if(!fx.isEmpty()&&!Effects.INK.equals(fx)&&ValueAnimator.areAnimatorsEnabled())sheetAction(content,"Replay "+Effects.label(fx),()->{d[0].dismiss();replayEffect(m,fx);});
-        String code=PairedProtocol.outgoing(m,c)?"":ChatText.oneTimeCode(PairedProtocol.text(m));if(!code.isEmpty())sheetAction(content,"Copy code "+code,()->{d[0].dismiss();copyCode(code);});
-        sheetAction(content,starred.has(m.optString("messageID"))?"Unstar":"Star",()->{d[0].dismiss();starred.toggle(m);renderMessages(false);});
-        boolean pinnedHere=pins.has(chatId,m.optString("messageID"));
-        sheetAction(content,pinnedHere?"Unpin from top of chat":"Pin to top of chat",()->{d[0].dismiss();String mid=m.optString("messageID");
+        emojis.addView(more,new LinearLayout.LayoutParams(0,dp(50),1));content.addView(emojis);
+        // Under them, the ones you react with most (once you've used some), lined up with the row above.
+        List<String> notThese=new ArrayList<>(choices);if(!mine.isEmpty())notThese.add(mine);
+        List<String> yours=ReactionUsage.row(this,notThese,choices.size());
+        if(!yours.isEmpty()){LinearLayout second=row();second.setContentDescription("Your most-used reactions");
+            for(String e:yours)second.addView(reactionChoice(m,e,current,d),new LinearLayout.LayoutParams(0,dp(48),1));
+            for(int i=yours.size();i<choices.size()+1;i++)second.addView(new View(this),new LinearLayout.LayoutParams(0,dp(48),1));
+            content.addView(second);}
+        gap(content,8);
+        if(!mine.isEmpty())sheetItem(content,R.drawable.ic_close,"Remove your "+mine+" reaction",()->{d[0].dismiss();react(m,current,"remove");});
+        String typed=PairedProtocol.text(m),plain=ChatText.replyFallbackBody(typed)!=null?ChatText.replyFallbackBody(typed):typed;boolean translated=translations.containsKey(mid);
+        // Everyday.
+        sheetItem(content,R.drawable.ic_undo,"Reply",()->{d[0].dismiss();startReply(m);});
+        String code=PairedProtocol.outgoing(m,c)?"":ChatText.oneTimeCode(typed);if(!code.isEmpty())sheetItem(content,R.drawable.ic_key,"Copy code "+code,()->{d[0].dismiss();copyCode(code);});
+        if(!plain.isEmpty())sheetItem(content,R.drawable.ic_copy,translated?"Copy original":"Copy text",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Message",plain));});
+        sheetItem(content,R.drawable.ic_send,"Forward",()->{d[0].dismiss();forward(java.util.Collections.singletonList(m));});
+        sheetItem(content,R.drawable.ic_star,starred.has(mid)?"Unstar":"Star",()->{d[0].dismiss();starred.toggle(m);renderMessages(false);});
+        boolean pinnedHere=pins.has(chatId,mid);
+        sheetItem(content,R.drawable.ic_pin,pinnedHere?"Unpin":"Pin to top",()->{d[0].dismiss();
             if(pinnedHere)pins.unpin(chatId,mid);else if(pins.pin(chatId,mid,pinText(m),PairedProtocol.time(m)))toast("Up to "+ChatPins.MAX+" pins per chat: the oldest was unpinned.");
             pinShown=0;renderPinBar();});
-        String typed=PairedProtocol.text(m),plain=ChatText.replyFallbackBody(typed)!=null?ChatText.replyFallbackBody(typed):typed;
-        if(!plain.isEmpty())sheetAction(content,translations.containsKey(m.optString("messageID"))?"Copy original":"Copy text",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Message",plain));});
-        if(!plain.isEmpty())sheetAction(content,!translations.containsKey(m.optString("messageID"))?"Translate":showingOriginal.contains(m.optString("messageID"))?"Show translation":"Show original",()->{d[0].dismiss();translate(m,plain);});
-        if(!plain.isEmpty()&&translations.containsKey(m.optString("messageID")))sheetAction(content,"Translate to another language…",()->{d[0].dismiss();translationChoices(m,plain,"",translationTarget());});
-        String[] translatedCopy=translations.get(m.optString("messageID"));if(translatedCopy!=null){String copy=translatedCopy[0];sheetAction(content,"Select translated text…",()->{d[0].dismiss();selectText(copy);});sheetAction(content,"Copy translation",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Translation",copy));});}
+        // Its words: translating, selecting, links, editing.
+        if(!plain.isEmpty())sheetItem(content,R.drawable.ic_translate,!translated?"Translate":showingOriginal.contains(mid)?"Show translation":"Show original",()->{d[0].dismiss();translate(m,plain);});
+        if(!plain.isEmpty()&&translated)sheetItem(content,R.drawable.ic_translate,"Translate to another language",()->{d[0].dismiss();translationChoices(m,plain,"",translationTarget());});
+        String[] translatedCopy=translations.get(mid);if(translatedCopy!=null){String copy=translatedCopy[0];
+            sheetItem(content,R.drawable.ic_copy,"Copy translation",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Translation",copy));});
+            sheetItem(content,R.drawable.ic_text_size,"Select translated text",()->{d[0].dismiss();selectText(copy);});}
+        if(!plain.isEmpty())sheetItem(content,R.drawable.ic_text_size,translated?"Select original text":"Select text",()->{d[0].dismiss();selectText(plain);});
+        // Links in the message can be copied on their own (one, or each of the first three).
+        List<String> links=new ArrayList<>(new java.util.LinkedHashSet<>(ChatText.urls(plain)));
+        for(String link:links.subList(0,Math.min(3,links.size())))sheetItem(content,R.drawable.ic_link,links.size()==1?"Copy link":"Copy link: "+ChatText.shortLink(link),()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Link",link));});
         // Google lets RCS messages be edited for 15 minutes, but only in its own app (not linked devices like this one).
         if(!plain.isEmpty()&&c!=null&&PairedProtocol.outgoing(m,c)&&PairedProtocol.rcs(c)&&System.currentTimeMillis()-PairedProtocol.time(m)<15*60_000L
             &&getPackageManager().getLaunchIntentForPackage(MessageListener.GOOGLE_MESSAGES)!=null)
-            sheetAction(content,"Edit in Google Messages",()->{d[0].dismiss();editInGoogleMessages(c,plain);});
-        // Links in the message can be copied on their own (one, or each of the first three).
-        List<String> links=new ArrayList<>(new java.util.LinkedHashSet<>(ChatText.urls(plain)));
-        for(String link:links.subList(0,Math.min(3,links.size())))sheetAction(content,links.size()==1?"Copy link":"Copy link: "+ChatText.shortLink(link),()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Link",link));});
-        if(!plain.isEmpty())sheetAction(content,translations.containsKey(m.optString("messageID"))?"Select original text…":"Select text…",()->{d[0].dismiss();selectText(plain);});
-        // Keep a message, photo or file in your notes about them: as a new note, or added to one you have.
+            sheetItem(content,R.drawable.ic_edit,"Edit in Google Messages",()->{d[0].dismiss();editInGoogleMessages(c,plain);});
+        String fx=effectOf(m);if(!fx.isEmpty()&&!Effects.INK.equals(fx)&&ValueAnimator.areAnimatorsEnabled())sheetItem(content,R.drawable.ic_sparkle,"Replay "+Effects.label(fx),()->{d[0].dismiss();replayEffect(m,fx);});
+        // Its photos, videos, files and voice messages.
+        int photos=0;for(JSONObject media:PairedProtocol.media(m))if(MediaCache.mime(media).startsWith("image/"))photos++;int photoNumber=0;
+        for(JSONObject media:PairedProtocol.media(m)){String mediaId=PairedProtocol.string(media,"mediaID"),whole=Transcriber.saved(this,mediaId);Transcriber.Partial part=whole==null?Transcriber.partial(this,mediaId):null;
+            String transcript=whole!=null?whole:part!=null&&!part.text.isEmpty()?part.text:null;
+            String kind=PairedProtocol.mediaKind(media),what=kind.equals("image")?"photo":kind.equals("video")?"video":kind.equals("audio")?"audio":"file";
+            String number=photos>1&&MediaCache.mime(media).startsWith("image/")?" "+(++photoNumber):"";
+            if(transcript!=null){sheetItem(content,R.drawable.ic_copy,"Copy transcript",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Transcript",transcript));});
+                sheetItem(content,R.drawable.ic_refresh,"Transcribe again",()->{d[0].dismiss();Transcriber.forget(this,mediaId);transcribe(media);});}
+            if(MediaCache.mime(media).startsWith("image/"))sheetItem(content,R.drawable.ic_search,"Read text in photo"+number,()->{d[0].dismiss();readPhotoText(media);});
+            if(kind.equals("image")||kind.equals("video"))sheetItem(content,R.drawable.ic_copy,"Copy "+what+number,()->{d[0].dismiss();copyToClipboard("",java.util.Collections.singletonList(media));});
+            sheetItem(content,R.drawable.ic_download,"Save "+what+number,()->{d[0].dismiss();withFile(media,"Downloading…",file->saveToPhone(file,media));});
+            sheetItem(content,R.drawable.ic_open,"Share "+what+number,()->{d[0].dismiss();withFile(media,"Downloading…",file->share(file,media));});}
+        // Keeping it: in your notes about them, or a reminder.
         String[] noteTo=c==null?null:noteTarget(m,c);
         if(noteTo!=null&&!noteTo[0].isEmpty()&&(!plain.isEmpty()||!PairedProtocol.media(m).isEmpty())){String what=noteWhat(m),these=what.endsWith("s")?"these ":"this ";
-            sheetAction(content,"New note about "+noteTo[1]+" with "+these+what,()->{d[0].dismiss();messageToNote(m,c,false);});
-            if(new Notes(this).has(noteTo[0]))sheetAction(content,"Add "+these+what+" to a note…",()->{d[0].dismiss();messageToNote(m,c,true);});}
-        for(JSONObject media:PairedProtocol.media(m)){String mid=PairedProtocol.string(media,"mediaID"),whole=Transcriber.saved(this,mid);Transcriber.Partial part=whole==null?Transcriber.partial(this,mid):null;
-            String transcript=whole!=null?whole:part!=null&&!part.text.isEmpty()?part.text:null;
-            if(transcript!=null){sheetAction(content,"Copy transcript",()->{d[0].dismiss();getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Transcript",transcript));});
-                sheetAction(content,"Transcribe again",()->{d[0].dismiss();Transcriber.forget(this,PairedProtocol.string(media,"mediaID"));transcribe(media);});}
-            String kind=PairedProtocol.mediaKind(media),what=kind.equals("image")?"photo":kind.equals("video")?"video":kind.equals("audio")?"audio":"file";
-            if(kind.equals("image")||kind.equals("video"))sheetAction(content,"Copy "+what,()->{d[0].dismiss();copyToClipboard("",java.util.Collections.singletonList(media));});
-            sheetAction(content,"Save "+what+" to phone",()->{d[0].dismiss();withFile(media,"Downloading…",file->saveToPhone(file,media));});
-            sheetAction(content,"Share "+what,()->{d[0].dismiss();withFile(media,"Downloading…",file->share(file,media));});}
-        if(!reactors.isEmpty())sheetAction(content,"See who reacted",()->{d[0].dismiss();reactionSheet(m,c);});
-        JSONObject reminder=Reminders.forMessage(this,m.optString("messageID"));
-        sheetAction(content,reminder==null?"Remind me…":"Reminder: "+separatorStamp(reminder.optLong("at"))+" (change)",()->{d[0].dismiss();remindMenu(m);});
-        sheetAction(content,"Forward…",()->{d[0].dismiss();forward(java.util.Collections.singletonList(m));});
-        sheetAction(content,"Select messages",()->{d[0].dismiss();startSelecting(m);});
-        sheetAction(content,"Message details",()->{d[0].dismiss();messageDetails(m);});
-        sheetAction(content,"Delete message…",()->{d[0].dismiss();deleteMessage(m);});
+            sheetItem(content,R.drawable.ic_notes,"Add to notes",()->{d[0].dismiss();messageToNote(m,c,false);}).setContentDescription("New note about "+noteTo[1]+" with "+these+what);
+            if(new Notes(this).has(noteTo[0]))sheetItem(content,R.drawable.ic_notes,"Add to an existing note",()->{d[0].dismiss();messageToNote(m,c,true);});}
+        JSONObject reminder=Reminders.forMessage(this,mid);
+        sheetItem(content,R.drawable.ic_bell,reminder==null?"Remind me":"Reminder "+separatorStamp(reminder.optLong("at"))+" · change",()->{d[0].dismiss();remindMenu(m);});
+        // The rest.
+        if(!reactors.isEmpty())sheetItem(content,R.drawable.ic_people,"See who reacted",()->{d[0].dismiss();reactionSheet(m,c);});
+        sheetItem(content,R.drawable.ic_check,"Select messages",()->{d[0].dismiss();startSelecting(m);});
+        sheetItem(content,R.drawable.ic_info,"Details",()->{d[0].dismiss();messageDetails(m);}).setContentDescription("Message details");
+        View rule=new View(this);rule.setBackgroundColor(surface);LinearLayout.LayoutParams rl=new LinearLayout.LayoutParams(-1,dp(1));rl.setMargins(dp(8),dp(6),dp(8),dp(6));content.addView(rule,rl);
+        sheetItem(content,R.drawable.ic_delete,"Delete",true,()->{d[0].dismiss();deleteMessage(m);}).setContentDescription("Delete message");
         d[0]=sheet(content);}
+    /** One reaction in the menu's rows: ringed if it's yours; picking yours again changes nothing (nothing is sent). */
+    private TextView reactionChoice(JSONObject m,String e,String current,Dialog[] d){TextView t=text(e,24,ink,false);t.setGravity(Gravity.CENTER);boolean selected=e.equals(current);if(selected)t.setBackground(oval(fab));
+        t.setContentDescription(selected?"Your reaction: "+e:"React with "+e);
+        t.setOnClickListener(v->{d[0].dismiss();if(!selected)react(m,e,current.isEmpty()?"add":"switch");});return t;}
+    /** A menu line: an icon, then the words (red for Delete). */
+    private LinearLayout sheetItem(LinearLayout parent,int icon,String label,Runnable action){return sheetItem(parent,icon,label,false,action);}
+    private LinearLayout sheetItem(LinearLayout parent,int icon,String label,boolean red,Runnable action){LinearLayout r=row();r.setPadding(dp(8),dp(12),dp(8),dp(12));r.setGravity(Gravity.CENTER_VERTICAL);
+        ImageView i=new ImageView(this);i.setImageResource(icon);i.setImageTintList(ColorStateList.valueOf(red?danger:muted));r.addView(i,new LinearLayout.LayoutParams(dp(22),dp(22)));
+        TextView t=text(label,17,red?danger:ink,false);t.setPadding(dp(18),0,dp(4),0);r.addView(t,new LinearLayout.LayoutParams(0,-2,1));
+        pressable(r);r.setContentDescription(label);r.setOnClickListener(v->action.run());parent.addView(r,new LinearLayout.LayoutParams(-1,-2));return r;}
     private TextView sheetAction(LinearLayout parent,String label,Runnable action){TextView t=text(label,17,ink,false);t.setPadding(dp(8),dp(14),dp(8),dp(14));
         pressable(t);t.setOnClickListener(v->action.run());parent.addView(t,new LinearLayout.LayoutParams(-1,-2));return t;}
     /** Choices in a panel from the bottom of the screen, in place of Android's plain list dialog. Delete and block are shown in red. */
@@ -1773,6 +1801,7 @@ public class PairedActivity extends Activity {
     private void react(JSONObject m,String emoji,String action){JSONObject chat=store.chat(chatId);if(chat==null){error("Refresh this conversation first.");return;}
         String id=m.optString("messageID"),mine=myReaction(m,chat);
         if(action.equals("remove")?mine.isEmpty():sameEmoji(emoji,mine))return;
+        if(!action.equals("remove"))ReactionUsage.used(this,emoji);
         getWindow().getDecorView().performHapticFeedback(action.equals("remove")?android.view.HapticFeedbackConstants.CONTEXT_CLICK:android.view.HapticFeedbackConstants.CONFIRM);
         String sent=action.equals("remove")?"":emoji;sentReactions.put(id,sent);sentReactionAt.put(id,android.os.SystemClock.uptimeMillis());
         PairedService.execute(cl->{cl.react(chat.toString(),id,emoji,mine.isEmpty()||action.equals("remove")?action:"switch");return "";},(v,e)->{
@@ -3855,8 +3884,14 @@ public class PairedActivity extends Activity {
     /** Saved messages for this chat, shown at the end with their state; tap to retry or delete. */
     private void renderOutbox(ChatTheme theme,List<JSONObject> queued){
         for(JSONObject o:queued){String state=o.optString("state");gap(items,8);
-            LinearLayout line=row();line.setGravity(Gravity.END);TextView b=text(o.optString("text"),17,theme.onBubble(dark),false);b.setPadding(dp(16),dp(11),dp(16),dp(11));
+            // Translated before it went: shown as it's going, with what you wrote a tap away (as once it's sent).
+            String qid="o:"+o.optString("id");SentOriginals.Original wrote=SentOriginals.find(this,chatId,o.optString("text"));boolean wroteShown=wrote!=null&&showingWritten.contains(qid);
+            LinearLayout line=row();line.setGravity(Gravity.END);TextView b=text(wroteShown?wrote.text:o.optString("text"),17,theme.onBubble(dark),false);b.setPadding(dp(16),dp(11),dp(16),dp(11));
             b.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels*0.72f));b.setBackground(shape(theme.bubble(dark),22));b.setAlpha(0.7f);line.addView(b);items.addView(line);
+            if(wrote!=null){String in=Translation.label(wrote.to);TextView toggle=text(wroteShown?"What you wrote · Show what was sent":"Sent in "+in+" · Show what you wrote",12,theme.accent(dark),false);
+                toggle.setPadding(dp(14),dp(6),dp(14),dp(6));toggle.setMinHeight(dp(36));toggle.setGravity(Gravity.END);pressable(toggle);
+                toggle.setContentDescription(wroteShown?"Showing what you wrote. Show what was sent in "+in:"Sent in "+in+". Show what you wrote");
+                toggle.setOnClickListener(v->{if(!showingWritten.remove(qid))showingWritten.add(qid);renderMessages(false);});items.addView(toggle,new LinearLayout.LayoutParams(-1,-2));}
             String oid=o.optString("id");motion(line,"o:"+oid,LIFT,motionOutbox.add(oid)&&motionReady);
             // What it's waiting for, in plain words: the signal (it couldn't reach Google), the reconnect, or Google confirming delivery.
             String label=Outbox.label(o,PairedService.ready(),PairedService.status(this),System.currentTimeMillis());boolean act=state.equals(Outbox.FAILED)||label.startsWith("Not confirmed");
