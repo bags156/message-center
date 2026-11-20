@@ -3877,7 +3877,7 @@ public class PairedActivity extends Activity {
 
     // ---- 0.6: reliability, outbox, contacts, management, search, voice, sharing, links ----
     private Outbox outbox;
-    private JSONObject contacts;private boolean contactsFailed;private List<PhoneContacts.Entry> phoneContacts;private List<Person> chatPeople;private boolean groupMode;private String contactQuery="";
+    private JSONObject contacts;private boolean contactsFailed;private List<PhoneContacts.Entry> phoneContacts;private boolean groupMode;private String contactQuery="";
     /** The new group's screens: the search box, the picked people as chips, the Next button, the name typed so far and their colors. */
     private EditText contactSearch,groupNameInput;private LinearLayout pickedChips;private TextView groupNext;private String groupName="";private final Map<String,String> pickedHex=new HashMap<>();private final Map<String,String> picked=new LinkedHashMap<>();
     private final List<Outgoing> incoming=new ArrayList<>();private String incomingText;
@@ -3972,14 +3972,24 @@ public class PairedActivity extends Activity {
         menuSheet("This chat's notifications show",labels,actions);}
 
     // Contacts and new conversations
-    private void newMessage(){if(!PairedService.ready()){toast("Connect first, then start a chat.");return;}picked.clear();groupMode=false;contactQuery="";chatPeople=null;knownNames=null;newChat();
-        loadPhoneContacts();if(contacts==null)loadContacts();}
+    private void newMessage(){if(!PairedService.ready()){toast("Connect first, then start a chat.");return;}picked.clear();groupMode=false;contactQuery="";people=null;frequentPeople=null;newChat();
+        peopleChanged();loadPhoneContacts();if(contacts==null)loadContacts();}
     /** Google Messages' contacts: its "frequent" list, and the first few hundred of the rest. */
     private void loadContacts(){contactsFailed=false;PairedService.execute(c->c.contacts(),(raw,e)->{if(!e.isEmpty()){contactsFailed=true;if(screen.equals("newchat"))renderContacts();return;}
-        try{contacts=new JSONObject(raw);}catch(Exception ex){contactsFailed=true;}knownNames=null;if(screen.equals("newchat"))renderContacts();});}
+        try{contacts=new JSONObject(raw);}catch(Exception ex){contactsFailed=true;}peopleChanged();});}
     /** This phone's contacts (everyone, unlike Google's list), read in the background each time you start a conversation. */
     private void loadPhoneContacts(){if(!PhoneContacts.allowed(this))return;decoder.execute(()->{List<PhoneContacts.Entry> all=PhoneContacts.all(this);
-        ui.post(()->{phoneContacts=all;knownNames=null;if(screen.equals("newchat"))renderContacts();});});}
+        ui.post(()->{phoneContacts=all;peopleChanged();});});}
+    /**
+     * Everyone to search (and Google's frequent people), worked out in the background whenever
+     * contacts arrive, so typing a name never waits for it. Null until the first is ready.
+     */
+    private List<Person> people,frequentPeople;private int peopleBuild,peopleReady;
+    private void peopleChanged(){int build=++peopleBuild;List<PhoneContacts.Entry> phone=phoneContacts;JSONObject google=contacts;
+        decoder.execute(()->{List<Person> all,top;try{List<JSONObject> chats=new ArrayList<>();for(int folder:new int[]{1,2})chats.addAll(store.chats("",folder));
+                Map<String,String> known=knownNames(phone,google,chats);all=everyone(phone,google,chats,known);top=frequent(google,known);}
+            catch(Exception e){Diagnostics.note("Couldn't list contacts to search");all=new ArrayList<>();top=new ArrayList<>();}
+            List<Person> a=all,t=top;ui.post(()->{if(build!=peopleBuild)return;people=a;frequentPeople=t;peopleReady=build;if(screen.equals("newchat"))renderContacts();});});}
     private void newChat(){remember();base("newchat");header(groupMode?"New group":"New conversation",()->{if(groupMode){groupMode=false;picked.clear();pickedHex.clear();groupName="";newChat();}else inbox();});
         EditText search=input(groupMode?"Add people by name or number":"Type a name or phone number");search.setSingleLine(true);search.setText(contactQuery);contactSearch=search;
         LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-1,-2);sp.setMargins(dp(16),0,dp(16),dp(8));root.addView(search,sp);
@@ -3991,11 +4001,14 @@ public class PairedActivity extends Activity {
         if(groupMode){groupNext=text("",16,onFab,true);groupNext.setGravity(Gravity.CENTER);groupNext.setPadding(0,dp(14),0,dp(14));pressDim(groupNext);
             groupNext.setOnClickListener(v->{if(picked.size()>=2)nameGroup();});
             LinearLayout.LayoutParams np=new LinearLayout.LayoutParams(-1,-2);np.setMargins(dp(16),dp(4),dp(16),dp(12));root.addView(groupNext,np);updateGroupNext();}
-        search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){contactQuery=s.toString();renderContacts();}public void afterTextChanged(Editable e){}});
+        search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){contactQuery=s.toString();ui.removeCallbacks(contactsTyped);ui.post(contactsTyped);}public void afterTextChanged(Editable e){}});
         renderContacts();search.requestFocus();}
-    /** Someone you can start a conversation with: from your phone's contacts, Google's list, or a chat you're in. */
-    private static final class Person{final String name,number,formatted,hex,folded,digits;
-        Person(String name,String number,String formatted,String hex){this.name=name;this.number=number;this.formatted=formatted;this.hex=hex;folded=ContactSearch.fold(name);digits=ChatText.digits(number);}}
+    /** Keystrokes that come together (typing fast) redraw the list once. */
+    private final Runnable contactsTyped=this::renderContacts;
+    /** Someone you can start a conversation with: from your phone's contacts, Google's list, or a chat you're in. Search keys are worked out once. */
+    private static final class Person{final String name,number,formatted,hex,folded,digits,nick;final boolean unnamed;
+        Person(String name,String number,String formatted,String hex){this.name=name;this.number=number;this.formatted=formatted;this.hex=hex;folded=ContactSearch.fold(name);digits=ChatText.digits(number);
+            nick=ContactSearch.fold(Nicknames.get(number));unnamed=ContactSearch.numberLike(name);}}
     private static final int CONTACTS_PERMISSION=81,CALL_LOG_PERMISSION=97;
     // ---- Calls in chats: a quiet line for each call with the person, from the phone's call log (never sent anywhere) ----
     /** Calls with the person in the open chat (callsChat), newest last. */
@@ -4027,10 +4040,12 @@ public class PairedActivity extends Activity {
     private void watchCalls(boolean on){android.content.ContentResolver r=getContentResolver();if(callWatch!=null){try{r.unregisterContentObserver(callWatch);}catch(Exception ignored){}callWatch=null;}
         if(!on||!callsOn())return;callWatch=new android.database.ContentObserver(ui){@Override public void onChange(boolean self){if(screen.equals("chat")&&!chatId.isEmpty())loadCalls(chatId);}};
         try{r.registerContentObserver(android.provider.CallLog.Calls.CONTENT_URI,true,callWatch);}catch(Exception e){callWatch=null;}}
-    private void renderContacts(){if(items==null||!screen.equals("newchat"))return;items.removeAllViews();String q=contactQuery.trim(),number=ChatText.normalizeNumber(q);
+    /** Which drawing of the list is current: rows still being added for an older one stop. */
+    private int contactsDrawn;
+    private void renderContacts(){if(items==null||!screen.equals("newchat"))return;int draw=++contactsDrawn;items.removeAllViews();String q=contactQuery.trim(),number=ChatText.normalizeNumber(q);
         if(!groupMode&&q.isEmpty()){LinearLayout g=row();g.setPadding(dp(8),dp(10),dp(8),dp(10));pressable(g);FrameLayout face=new FrameLayout(this);face.setBackground(oval(fab));
-            ImageView people=new ImageView(this);people.setImageResource(R.drawable.ic_people);people.setImageTintList(ColorStateList.valueOf(onFab));people.setPadding(dp(10),dp(10),dp(10),dp(10));
-            face.addView(people,new FrameLayout.LayoutParams(-1,-1));g.addView(face,new LinearLayout.LayoutParams(dp(44),dp(44)));
+            ImageView icon=new ImageView(this);icon.setImageResource(R.drawable.ic_people);icon.setImageTintList(ColorStateList.valueOf(onFab));icon.setPadding(dp(10),dp(10),dp(10),dp(10));
+            face.addView(icon,new FrameLayout.LayoutParams(-1,-1));g.addView(face,new LinearLayout.LayoutParams(dp(44),dp(44)));
             LinearLayout texts=vertical();texts.setPadding(dp(16),0,dp(8),0);texts.addView(text("Create group",17,ink,false));texts.addView(text("Two or more people",14,muted,false));g.addView(texts);
             g.setOnClickListener(v->{groupMode=true;picked.clear();pickedHex.clear();groupName="";contactQuery="";newChat();});items.addView(g);}
         // Picked people stay in their places in the list, ticked (and up top as chips).
@@ -4039,56 +4054,69 @@ public class PairedActivity extends Activity {
         // Without the contacts permission, only Google's partial list can be searched; one row to fix that.
         if(!PhoneContacts.allowed(this))items.addView(allowContactsRow());
         String ql=ContactSearch.fold(q),qd=ChatText.digits(q);
-        if(q.isEmpty()&&contacts!=null){org.json.JSONArray top=contacts.optJSONArray("top");if(top!=null&&top.length()>0){items.addView(sectionLabel("Frequent"));int added=0;
-            Map<String,String> known=knownNames();for(Person g:googlePeople(top)){if(added>=20)break;if(!shown.add(g.number))continue;Person p=named(g,known);items.addView(contactRow(p.name,p.number,p.formatted,p.hex));added++;}}}
-        List<Person> everyone=everyone();List<Person> hits=new ArrayList<>();List<Integer> scores=new ArrayList<>();
-        for(Person p:everyone){if(shown.contains(p.number))continue;int sc=ContactSearch.score(p.folded,ContactSearch.fold(Nicknames.get(p.number)),p.digits,ql,qd);if(sc<0)continue;
-            // Best matches first; ties keep the list's own (alphabetical) order.
-            int at=hits.size();while(at>0&&scores.get(at-1)>sc)at--;hits.add(at,p);scores.add(at,sc);shown.add(p.number);}
-        boolean loading=phoneContacts==null&&PhoneContacts.allowed(this)||contacts==null&&!contactsFailed;
-        if(!hits.isEmpty()){items.addView(sectionLabel(q.isEmpty()?"All contacts":"Contacts"));int max=q.isEmpty()?600:80;
-            for(int i=0;i<hits.size()&&i<max;i++){Person p=hits.get(i);items.addView(contactRow(p.name,p.number,p.formatted,p.hex));}}
-        else if(loading)items.addView(sectionLabel("Loading contacts…"));
-        else if(!q.isEmpty()&&number.isEmpty()){TextView none=text("No one called “"+q+"”. Type their number to message them.",15,muted,false);none.setPadding(dp(8),dp(16),dp(8),dp(8));items.addView(none);}
-        if(contactsFailed&&phoneContacts==null){TextView note=text("Google Messages didn't send its contact list. You can still type a number.",13,muted,false);note.setPadding(dp(8),dp(12),dp(8),dp(4));items.addView(note);}}
+        List<Person> rows=new ArrayList<>();int frequent=0;
+        if(q.isEmpty()&&frequentPeople!=null)for(Person p:frequentPeople)if(shown.add(p.number))rows.add(p);
+        frequent=rows.size();
+        // Best matches first (by how well they match); ties keep the list's own (alphabetical) order.
+        List<List<Person>> byScore=new ArrayList<>();for(int i=0;i<4;i++)byScore.add(new ArrayList<>());
+        if(people!=null)for(Person p:people){if(shown.contains(p.number))continue;int sc=ContactSearch.score(p.folded,p.nick,p.digits,ql,qd);if(sc<0)continue;byScore.get(Math.min(sc,3)).add(p);shown.add(p.number);}
+        int max=q.isEmpty()?600:80,hits=0;for(List<Person> group:byScore)for(Person p:group)if(hits<max){rows.add(p);hits++;}
+        boolean loading=people==null||phoneContacts==null&&PhoneContacts.allowed(this)||contacts==null&&!contactsFailed;
+        if(rows.isEmpty()){
+            if(loading)items.addView(sectionLabel("Loading contacts…"));
+            else if(!q.isEmpty()&&number.isEmpty()){TextView none=text("No one called “"+q+"”. Type their number to message them.",15,muted,false);none.setPadding(dp(8),dp(16),dp(8),dp(8));items.addView(none);}}
+        if(contactsFailed&&phoneContacts==null){TextView note=text("Google Messages didn't send its contact list. You can still type a number.",13,muted,false);note.setPadding(dp(8),dp(12),dp(8),dp(4));items.addView(note);}
+        contactRows(draw,rows,frequent,0);}
+    /**
+     * The people, a screenful now and the rest a few at a time after, so the next letter you type is
+     * never waiting behind hundreds of rows. A newer drawing stops this one.
+     */
+    private void contactRows(int draw,List<Person> rows,int frequent,int from){if(draw!=contactsDrawn||items==null||!screen.equals("newchat"))return;
+        int end=Math.min(rows.size(),from+(from==0?16:30));
+        for(int i=from;i<end;i++){if(i==0&&frequent>0)items.addView(sectionLabel("Frequent"));if(i==frequent)items.addView(sectionLabel(contactQuery.trim().isEmpty()?"All contacts":"Contacts"));
+            Person p=rows.get(i);items.addView(contactRow(p.name,p.number,p.formatted,p.hex));}
+        if(end<rows.size()){int next=end;ui.post(()->contactRows(draw,rows,frequent,next));}}
     /**
      * Everyone to search: this phone's contacts, then anyone else from Google's list or your chats,
      * one row per number. Google often sends a number with no name, so names are filled in from
      * your contacts, your nicknames, the chat's own name and the people in your chats; anyone still
      * known only by number goes after everyone with a name, instead of crowding the top.
      */
-    private List<Person> everyone(){Map<String,String> known=knownNames();List<Person> out=new ArrayList<>();Set<String> seen=new HashSet<>(),keys=new HashSet<>();
-        if(phoneContacts!=null)for(PhoneContacts.Entry e:phoneContacts){String detail=e.label.isEmpty()?e.formatted:e.label+" · "+e.formatted;
+    private List<Person> everyone(List<PhoneContacts.Entry> phone,JSONObject google,List<JSONObject> chats,Map<String,String> known){List<Person> out=new ArrayList<>();Set<String> seen=new HashSet<>(),keys=new HashSet<>();
+        if(phone!=null)for(PhoneContacts.Entry e:phone){String detail=e.label.isEmpty()?e.formatted:e.label+" · "+e.formatted;
             if(seen.add(e.name+"\n"+e.number)){out.add(named(new Person(e.name,e.number,detail,""),known));keys.add(ContactSearch.key(e.number));}}
         Set<String> phoneKeys=new HashSet<>(keys);List<Person> more=new ArrayList<>();
-        if(contacts!=null){org.json.JSONArray all=contacts.optJSONArray("all");if(all!=null)more.addAll(googlePeople(all));}
-        if(chatPeople==null)chatPeople=peopleFromChats();more.addAll(chatPeople);
+        if(google!=null){org.json.JSONArray all=google.optJSONArray("all");if(all!=null)more.addAll(googlePeople(all));}
+        more.addAll(peopleFromChats(chats));
         for(Person p:more){String k=ContactSearch.key(p.number);if(k.isEmpty()||phoneKeys.contains(k)||!keys.add(k))continue;out.add(named(p,known));}
         java.text.Collator order=java.text.Collator.getInstance();order.setStrength(java.text.Collator.PRIMARY);
-        out.sort((a,b)->{boolean na=ContactSearch.numberLike(a.name),nb=ContactSearch.numberLike(b.name);if(na!=nb)return na?1:-1;return na?a.number.compareTo(b.number):order.compare(a.name,b.name);});
+        out.sort((a,b)->{if(a.unnamed!=b.unnamed)return a.unnamed?1:-1;return a.unnamed?a.number.compareTo(b.number):order.compare(a.name,b.name);});
+        return out;}
+    /** Google's frequent people (up to 20), by their best names. */
+    private static List<Person> frequent(JSONObject google,Map<String,String> known){List<Person> out=new ArrayList<>();Set<String> seen=new HashSet<>();
+        org.json.JSONArray top=google==null?null:google.optJSONArray("top");if(top==null)return out;
+        for(Person g:googlePeople(top)){if(out.size()>=20)break;if(seen.add(g.number))out.add(named(g,known));}
         return out;}
     /** Number key → a real name, strongest source first: your contacts, then a 1:1 chat's name, then names Google gives people in your chats or its list. */
-    private Map<String,String> knownNames;
-    private Map<String,String> knownNames(){if(knownNames!=null)return knownNames;Map<String,String> names=new HashMap<>();
-        if(phoneContacts!=null)for(PhoneContacts.Entry e:phoneContacts)nameFor(names,e.number,e.name);
-        List<JSONObject> chats=new ArrayList<>();for(int folder:new int[]{1,2})chats.addAll(store.chats("",folder));
+    private static Map<String,String> knownNames(List<PhoneContacts.Entry> phone,JSONObject google,List<JSONObject> chats){Map<String,String> names=new HashMap<>();
+        if(phone!=null)for(PhoneContacts.Entry e:phone)nameFor(names,e.number,e.name);
         for(JSONObject c:chats){JSONObject o=PairedProtocol.other(c);if(o!=null)nameFor(names,PairedProtocol.number(o),PairedProtocol.string(c,"name"));}
         for(JSONObject c:chats)for(JSONObject p:PairedProtocol.members(c)){String full=PairedProtocol.string(p,"fullName");nameFor(names,PairedProtocol.number(p),full.isEmpty()?PairedProtocol.string(p,"firstName"):full);}
-        if(contacts!=null)for(String list:new String[]{"top","all"}){org.json.JSONArray a=contacts.optJSONArray(list);if(a!=null)for(int i=0;i<a.length();i++){JSONObject ct=a.optJSONObject(i);JSONObject num=ct==null?null:ct.optJSONObject("number");
+        if(google!=null)for(String list:new String[]{"top","all"}){org.json.JSONArray a=google.optJSONArray(list);if(a!=null)for(int i=0;i<a.length();i++){JSONObject ct=a.optJSONObject(i);JSONObject num=ct==null?null:ct.optJSONObject("number");
             if(num!=null)nameFor(names,PairedProtocol.string(num,"number"),ct.optString("name"));}}
-        return knownNames=names;}
+        return names;}
     private static void nameFor(Map<String,String> names,String number,String name){String k=ContactSearch.key(number);if(!k.isEmpty()&&!ContactSearch.numberLike(name))names.putIfAbsent(k,name.trim());}
     /** The person with their best name: your nickname for them, else a real name if theirs is only a number. */
     private static Person named(Person p,Map<String,String> known){String nick=Nicknames.get(p.number);if(!nick.isEmpty()&&!nick.equals(p.name))return new Person(nick,p.number,p.formatted,p.hex);
-        if(!ContactSearch.numberLike(p.name))return p;String name=known.get(ContactSearch.key(p.number));return name==null?p:new Person(name,p.number,p.formatted,p.hex);}
-    private List<Person> googlePeople(org.json.JSONArray list){List<Person> out=new ArrayList<>();
+        if(!p.unnamed)return p;String name=known.get(ContactSearch.key(p.number));return name==null?p:new Person(name,p.number,p.formatted,p.hex);}
+    private static List<Person> googlePeople(org.json.JSONArray list){List<Person> out=new ArrayList<>();
         for(int i=0;i<list.length();i++){JSONObject ct=list.optJSONObject(i);if(ct==null)continue;String name=ct.optString("name");JSONObject num=ct.optJSONObject("number");
             String raw=num==null?"":PairedProtocol.string(num,"number"),n=ChatText.normalizeNumber(raw);if(n.isEmpty()&&raw.startsWith("+"))n=raw;if(n.isEmpty())continue;
             String formatted=num==null?n:num.optString("formattedNumber",n);out.add(new Person(name.isEmpty()?formatted:name,n,formatted,ct.optString("avatarHexColor")));}
         return out;}
     /** People from your conversations (including archived ones), so anyone you've messaged can be found even if they aren't a contact. */
-    private List<Person> peopleFromChats(){List<Person> out=new ArrayList<>();Set<String> seen=new HashSet<>();
-        for(int folder:new int[]{1,2})for(JSONObject c:store.chats("",folder))for(JSONObject p:PairedProtocol.members(c)){String raw=PairedProtocol.number(p),n=ChatText.normalizeNumber(raw);
+    private static List<Person> peopleFromChats(List<JSONObject> chats){List<Person> out=new ArrayList<>();Set<String> seen=new HashSet<>();
+        for(JSONObject c:chats)for(JSONObject p:PairedProtocol.members(c)){String raw=PairedProtocol.number(p),n=ChatText.normalizeNumber(raw);
             if(n.isEmpty()&&raw.startsWith("+"))n=raw;if(n.isEmpty()||!seen.add(n))continue;String name=PairedProtocol.name(p),formatted=p.optString("formattedNumber",n);
             out.add(new Person(name.isEmpty()?formatted:name,n,formatted,p.optString("avatarHexColor")));}
         return out;}
