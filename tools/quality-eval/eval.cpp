@@ -4,6 +4,7 @@
 // A developer tool: synthetic messages only; nothing here runs in the app.
 #include "quality_core.h"
 #include <chrono>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -47,7 +48,11 @@ static std::string json(const std::string& s) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 4) { std::cerr << "usage: quality_eval model.gguf cases.tsv out.jsonl\n"; return 2; }
+    if (argc < 4) { std::cerr << "usage: quality_eval model.gguf cases.tsv out.jsonl [speed]\n"; return 2; }
+    // QUALITY_REPACK=1: weights rearranged for this CPU at load. QUALITY_THREADS=n: fixed thread count.
+    bool repack = getenv("QUALITY_REPACK") && std::string(getenv("QUALITY_REPACK")) == "1";
+    int threads = getenv("QUALITY_THREADS") ? atoi(getenv("QUALITY_THREADS")) : 0;
+    bool speedOnly = argc > 4 && std::string(argv[4]) == "speed";
     std::vector<Case> cases;
     std::ifstream in(argv[2]); std::string line;
     while (std::getline(in, line)) {
@@ -60,7 +65,7 @@ int main(int argc, char** argv) {
     std::ofstream out(argv[3]);
     auto never = [] { return false; };
     auto loadStart = std::chrono::steady_clock::now();
-    QualityModel model(argv[1]);
+    QualityModel model(argv[1], repack, threads);
     // Warm up, so the timings below don't include reading the model in.
     model.translate(prefix("casual", cases[0]), cases[0].text, SUFFIX, never);
     out << "{\"kind\":\"load\",\"ms\":" << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - loadStart).count() << "}\n";
@@ -76,10 +81,13 @@ int main(int argc, char** argv) {
             auto t0 = std::chrono::steady_clock::now();
             std::string said = model.translate(prefix(c.to == "es" ? "casual" : "plain", c), c.text, SUFFIX, never);
             long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
-            out << "{\"kind\":\"speed\",\"mode\":\"" << mode << "\",\"id\":" << json(c.id) << ",\"ms\":" << ms << ",\"reused\":" << model.reused() << ",\"processed\":" << model.processed() << ",\"output\":" << json(said) << "}\n";
+            out << "{\"kind\":\"speed\",\"mode\":\"" << mode << "\",\"id\":" << json(c.id) << ",\"ms\":" << ms << ",\"reused\":" << model.reused() << ",\"processed\":" << model.processed()
+                << ",\"written\":" << model.written() << ",\"promptMs\":" << model.promptMs() << ",\"writeMs\":" << model.writeMs()
+                << ",\"threads\":" << model.threads() << ",\"repack\":" << (repack ? "true" : "false") << ",\"output\":" << json(said) << "}\n";
             out.flush();
         }
     }
+    if (speedOnly) return 0;
     // Naturalness: every message under each prompt variant (context only where there's a previous message).
     for (const char* variant : {"plain", "casual"}) {
         for (const Case& c : cases) {

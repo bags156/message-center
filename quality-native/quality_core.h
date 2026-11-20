@@ -16,10 +16,15 @@ class QualityModel {
     static constexpr int SLOTS=2;
     Slot slots_[SLOTS];
     unsigned long clock_=0;
-    int reused_=0,processed_=0;
+    int reused_=0,processed_=0,written_=0;long promptMs_=0,writeMs_=0;
+    bool repack_;int threads_;
     void forgetCache();
 public:
-    explicit QualityModel(const std::string& path);
+    /**
+     * repack: weights rearranged at load for this CPU's matrix instructions (faster, but held in
+     * memory rather than read from the file as needed). threads: 0 picks from the phone's fast cores.
+     */
+    explicit QualityModel(const std::string& path,bool repack=false,int threads=0);
     ~QualityModel();
     QualityModel(const QualityModel&)=delete;
     QualityModel& operator=(const QualityModel&)=delete;
@@ -29,4 +34,10 @@ public:
     /** For the last message: tokens already in the context, and tokens processed for it. */
     int reused()const{return reused_;}
     int processed()const{return processed_;}
+    /** For the last message: tokens written, and time spent reading the prompt and writing the answer. */
+    int written()const{return written_;}
+    long promptMs()const{return promptMs_;}
+    long writeMs()const{return writeMs_;}
+    /** Threads it uses to write an answer. */
+    int threads()const;
 };

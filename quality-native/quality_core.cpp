@@ -5,7 +5,17 @@
 #include <stdexcept>
 #include <vector>
 #include <chrono>
+#include <cstdio>
 namespace {
+/**
+ * How many fast cores this phone has: those at least 70% as fast as the fastest. Writing an answer
+ * is held up by its slowest thread, so slow (efficiency) cores only get in the way. 0 if unknown.
+ */
+unsigned fastCores(){std::vector<long> freq;
+    for(int cpu=0;cpu<64;cpu++){char path[96];std::snprintf(path,sizeof path,"/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq",cpu);
+        FILE* f=std::fopen(path,"r");if(!f)break;long khz=0;if(std::fscanf(f,"%ld",&khz)!=1)khz=0;std::fclose(f);freq.push_back(khz);}
+    long top=0;for(long k:freq)top=std::max(top,k);if(top<=0)return 0;
+    unsigned n=0;for(long k:freq)if(k*10>=top*7)n++;return n;}
 void quiet(ggml_log_level,const char*,void*) {}
 void check(const std::function<bool()>& cancelled){if(cancelled())throw std::runtime_error("Translation cancelled");}
 std::vector<llama_token> tokens(const llama_vocab* vocab,const std::string& words,bool bos,bool special){
@@ -16,9 +26,11 @@ std::vector<llama_token> tokens(const llama_vocab* vocab,const std::string& word
 }
 constexpr int CONTEXT=2048;
 }
-QualityModel::QualityModel(const std::string& path){
+int QualityModel::threads()const{if(threads_>0)return threads_;unsigned cores=std::max(1u,std::thread::hardware_concurrency()),fast=fastCores();
+    return (int)std::min(6u,fast>0?std::min(fast,cores):std::min(4u,cores));}
+QualityModel::QualityModel(const std::string& path,bool repack,int threads):repack_(repack),threads_(threads){
     static bool initialized=[](){llama_log_set(quiet,nullptr);llama_backend_init();return true;}();(void)initialized;
-    auto p=llama_model_default_params();p.n_gpu_layers=0;p.load_mode=LLAMA_LOAD_MODE_MMAP;p.use_extra_bufts=false;
+    auto p=llama_model_default_params();p.n_gpu_layers=0;p.load_mode=LLAMA_LOAD_MODE_MMAP;p.use_extra_bufts=repack_;
     model_=llama_model_load_from_file(path.c_str(),p);if(!model_)throw std::runtime_error("Translation model could not load");
 }
 QualityModel::~QualityModel(){if(ctx_)llama_free(ctx_);if(model_)llama_model_free(model_);}
@@ -31,9 +43,8 @@ std::string QualityModel::translate(const std::string& prefix,const std::string&
     if(input.empty()||input.size()>1400)throw std::runtime_error("Message fragment is too long for the translation model");
     if(!ctx_){
         auto p=llama_context_default_params();p.n_ctx=CONTEXT;p.n_batch=256;p.n_ubatch=128;
-        // Prompt processing is arithmetic and uses more cores well; writing the answer is limited by memory speed, where four is enough.
-        unsigned cores=std::max(1u,std::thread::hardware_concurrency());
-        p.n_threads=std::min(4u,cores);p.n_threads_batch=std::min(6u,cores);p.no_perf=true;
+        // The fast cores only (see fastCores), for both reading the prompt and writing the answer.
+        p.n_threads=threads();p.n_threads_batch=threads();p.no_perf=true;
         // Gemma 3's sliding-window layers keep the whole context, so the cache can be cut back to the instruction.
         p.swa_full=true;
         // Two sequences sharing one cache (same memory as one): each can still use the whole context when it needs to.
@@ -64,14 +75,17 @@ std::string QualityModel::translate(const std::string& prefix,const std::string&
             llama_batch_ext_set_output_logits(batch.get(),n-1,true);
             if(llama_process(ctx_,LLAMA_PROCESS_TYPE_DECODE,batch.get()))throw std::runtime_error("Translation inference failed");
             slot.tokens.insert(slot.tokens.end(),ids,ids+n);};
+        auto started=std::chrono::steady_clock::now();written_=0;
         for(size_t i=keep;i<input.size();i+=256)eval(input.data()+i,std::min<size_t>(256,input.size()-i),i);
+        auto read=std::chrono::steady_clock::now();promptMs_=(long)std::chrono::duration_cast<std::chrono::milliseconds>(read-started).count();
+        auto done=[&]{writeMs_=(long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-read).count();};
         std::unique_ptr<llama_sampler,decltype(&llama_sampler_free)> sampler(llama_sampler_chain_init(llama_sampler_chain_default_params()),llama_sampler_free);
         llama_sampler_chain_add(sampler.get(),llama_sampler_init_penalties(llama_vocab_n_tokens(vocab),64,1.0f,0,0));llama_sampler_chain_add(sampler.get(),llama_sampler_init_greedy());
         auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(90);
         size_t others=0;for(int s=0;s<SLOTS;s++)if(s!=seq)others+=slots_[s].tokens.size();
         std::string output;int max=std::min<int>(1024,CONTEXT-(int)input.size()-(int)others-1);
         for(int i=0;i<max;i++){check(cancelled);if(std::chrono::steady_clock::now()>deadline)throw std::runtime_error("Translation took too long; the original is unchanged");llama_token id=llama_sampler_sample(sampler.get(),ctx_,-1);
-            if(llama_vocab_is_eog(vocab,id)){if(output.empty())throw std::runtime_error("Translation was empty");return output;}
+            if(llama_vocab_is_eog(vocab,id)){done();if(output.empty())throw std::runtime_error("Translation was empty");return output;}written_++;
             char buffer[256];int n=llama_token_to_piece(vocab,id,buffer,sizeof(buffer),0,false);
             if(n<0){std::vector<char> more(-n);n=llama_token_to_piece(vocab,id,more.data(),more.size(),0,false);if(n<0)throw std::runtime_error("Translation token failed");output.append(more.data(),n);}else output.append(buffer,n);
             if(output.size()>text.size()*6+1024)throw std::runtime_error("Translation produced too much text; the original is unchanged");
