@@ -132,7 +132,7 @@ public final class PairedService extends Service {
         context.stopService(new Intent(context,PairedService.class));
     }
     @Override public void onCreate() {
-        super.onCreate();current=this;Diagnostics.init(this);HevcSandbox.init(this);GivenNames.init(this);Nicknames.load(this);store=new PairedStore(this);vault=new SessionVault(this);outbox=new Outbox(this);autoResend=new AutoResend(this);receipts=new ReadReceiptQueue(this);attachmentOutbox=new MediaOutbox(this);attachmentOutbox.recover();outbox.recover();watchWakeAndNetwork();main.postDelayed(stuckCheck,30_000);Arrivals.registerAll(this);
+        super.onCreate();current=this;Diagnostics.init(this);HevcSandbox.init(this);GivenNames.init(this);Nicknames.load(this);store=new PairedStore(this);vault=new SessionVault(this);outbox=new Outbox(this);OutgoingTranslation.resume(this,null);autoResend=new AutoResend(this);receipts=new ReadReceiptQueue(this);attachmentOutbox=new MediaOutbox(this);attachmentOutbox.recover();outbox.recover();watchWakeAndNetwork();main.postDelayed(stuckCheck,30_000);Arrivals.registerAll(this);
         NotificationManager manager=getSystemService(NotificationManager.class);ChatHeads.refresh(this);
         try{manager.deleteNotificationChannel(OLD_CONNECTION);}catch(Exception ignored){}
         NotificationChannel running=new NotificationChannel(RUNNING,"Running in background",NotificationManager.IMPORTANCE_MIN);
@@ -1074,6 +1074,8 @@ public final class PairedService extends Service {
     /** Sends whatever is waiting in the outbox now, starting the connection first if it isn't running. */
     static void flushOutboxNow(Context context) {PairedService s=current;
         if(s!=null){s.main.post(()->{s.changed("OUTBOX");s.flushOutbox();});}else{try{start(context);}catch(Exception ignored){}}}
+    /** The outbox changed outside the service (a translation finished): redraw, and send what's ready if connected. */
+    static void outboxChanged() {PairedService s=current;if(s!=null)s.main.post(()->{s.changed("OUTBOX");s.flushOutbox();});}
     /** Puts a saved message back in line to send (after the person chose Retry). */
     static void retryOutbox(Context context,String id) {new Outbox(context).setState(id,Outbox.WAITING,"");PairedService s=current;if(s!=null){s.changed("OUTBOX");s.flushOutbox();}}
     private static Uri chatUri(String id) {return new Uri.Builder().scheme("messagecenter").authority("chat").appendPath(id).build();}

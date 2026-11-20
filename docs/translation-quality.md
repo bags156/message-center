@@ -52,6 +52,8 @@ The translations were identical in every build. i8mm only sped up reading, which
 
 Two changes make the wait shorter on top of this. Opening a chat that translates what you send loads the model and reads its instruction in the background. With the stronger translator, a draft is also translated in the background once you pause typing, so Send can use it straight away. Each translation's timing (numbers only, never text) goes in the diagnostics journal.
 
+From 1.5.80, tapping Send with the stronger translator puts the message in the chat at once, showing what you wrote, as a translating outbox item. The translation runs in the background, even after you leave the chat, and then replaces the text before the message goes. Later messages in the same chat wait behind it, so they stay in order. Taking it back stops the translation. If the translation fails a check, the message waits for you instead of going out untranslated.
+
 ## Known limits
 
 Casual wording reads more naturally, but it is not more accurate overall; it makes different mistakes. On the comparison set:

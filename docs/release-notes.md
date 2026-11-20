@@ -1,7 +1,8 @@
-Message Center 1.5.79.
+Message Center 1.5.80.
 
-- The stronger translator is much faster. It now uses your phone's fast math instructions (it was built for the oldest ARM chips), so it writes about twice as fast and reads five times as fast, with the same translations. On test machines, a message took about 1 second instead of 2.5, and the first one about 3 seconds instead of 11.5. It also uses only your phone's fast cores.
-- Send is often instant. With the stronger translator, your message is translated in the background as soon as you pause typing, so tapping Send uses the translation that's already done. Opening a chat that translates what you send also gets the translator ready in the background.
-- Phones whose processors lack these instructions (from before about 2018) don't offer the stronger translator. The compact translator still works.
+- Send feels instant with the stronger translator. When you tap Send in a chat that translates what you send, your message goes into the chat straight away, marked "Translating to Spanish…". It turns into the translation and sends once the translation is ready, even if you leave the chat. Messages you send after it in the same chat wait their turn, so they arrive in order.
+- Tap a message while it's translating to take it back. What you wrote goes back in the message box.
+- If a message can't be translated, it isn't sent untranslated. It says "Not translated", and tapping it lets you translate again, send what you wrote, edit it or delete it.
+- Check before sending, scheduled messages and messages with attachments still translate first, as before.
 
 Update through Obtainium over the existing app. Your pairing, messages and settings are retained.
