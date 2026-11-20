@@ -1155,6 +1155,13 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(waitUntil(()->out.forChat("sr-chat").size()==1,10000),"Send on the check didn't send the translation");
             check(out.forChat("sr-chat").get(0).optString("text").toLowerCase(java.util.Locale.ROOT).contains("hola"),"The checked message wasn't the translation");
             out.remove(out.forChat("sr-chat").get(0).optString("id"));settings.setCheckTranslation("sr-chat",false);
+            // Holding Send: Send without translating sends what was typed, as written.
+            onMainCall(()->{((android.widget.EditText)field("composer").get(a)).setText(original);((android.view.View)field("sendButton").get(a)).performLongClick();return null;});
+            check(waitUntil(()->onScreen("Send without translating")!=null,3000)&&onScreen("Schedule in Spanish")!=null,"Holding Send didn't offer Send without translating and Schedule");
+            shoot("shot-translation-hold");pressText("Send without translating");
+            check(waitUntil(()->out.forChat("sr-chat").size()==1,10000),"Send without translating didn't send");
+            check(original.equals(out.forChat("sr-chat").get(0).optString("text")),"Send without translating translated it anyway");
+            out.remove(out.forChat("sr-chat").get(0).optString("id"));
             for(int change:new int[]{0,1,2}){
                 java.util.concurrent.CountDownLatch gate=new java.util.concurrent.CountDownLatch(1);
                 Translation.worker.submit(()->{gate.await(30,java.util.concurrent.TimeUnit.SECONDS);return null;});
