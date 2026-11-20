@@ -31,7 +31,7 @@ Comparison on 65 synthetic texts (`tools/quality-eval/cases.tsv`), using the pin
 | Can't, I'm stuck at work | No puedo, estoy atado al trabajo. | No puedo, estoy atascado en el trabajo. |
 | I'll take a rain check. | Lo posponemos. | Te lo dejo para otro momento. |
 
-Before this change, each message took 5.1–6.5 s (median) on the runner, because the engine read the whole prompt every time. The harness is `tools/quality-eval` and its workflow `translation-eval.yml`.
+Speed, alternating directions the way a conversation does: before this change, every message took 5–9 s on the runner, because the engine read the whole prompt each time. Now, after the first message, each took 1.3–2.4 s (median 1.9 s), and the translations were identical either way. The harness is `tools/quality-eval` and its workflow `translation-eval.yml`.
 
 Messages you type in the language a chat sends in now go as written. The app uses language ID to decide. An ordinary message takes language ID's usual confident answer. A short message such as `ya voy` needs a very confident answer. A word or two, such as `ok` or `sí`, is translated as before. A translation that comes back the same as what you typed, apart from punctuation, case or emoji, is also sent as typed.
 
