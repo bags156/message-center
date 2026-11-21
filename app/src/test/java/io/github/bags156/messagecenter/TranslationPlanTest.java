@@ -14,6 +14,15 @@ public class TranslationPlanTest {
     @Test public void automaticTranslationLeavesShortLinksNumbersAndOwnMessagesAlone() {
         assertTrue(TranslationPlan.automatic("¿Dónde estás? Te espero en la puerta del cine.",false,false));
         assertFalse(TranslationPlan.automatic("OK 👍",false,false));
+        assertTrue("a short message can be translated (if language ID is sure)",TranslationPlan.automatic("je suis là",false,false));
+        assertFalse(TranslationPlan.automatic("lol",false,false));
+        // Short texts: very sure, or fairly sure with the bundled detector agreeing.
+        assertEquals("fr",TranslationPlan.shortGuess("fr-FR",.93f,"",.9f));
+        assertEquals("fr",TranslationPlan.shortGuess("fr",.7f,"fr",.9f));
+        assertEquals("",TranslationPlan.shortGuess("fr",.7f,"es",.9f));
+        assertEquals("",TranslationPlan.shortGuess("fr",.7f,"",.9f));
+        assertEquals("",TranslationPlan.shortGuess("fr",.5f,"fr",.9f));
+        assertEquals("",TranslationPlan.shortGuess("und",.99f,"",.9f));
         assertFalse(TranslationPlan.automatic("https://example.com/longlinkwithmanyletters",false,false));
         assertFalse(TranslationPlan.automatic("441223",false,false));
         assertFalse(TranslationPlan.automatic("A longer outgoing message",true,false));

@@ -63,20 +63,26 @@ final class Translation {
     static String label(String code){return code==null||code.isEmpty()?"Off":Locale.forLanguageTag(code).getDisplayLanguage(Locale.getDefault());}
     static String defaultLanguage(Context c){String code=TranslationPlan.language(Locale.getDefault().toLanguageTag());return languages(c).contains(code)?code:"en";}
     /** Confidence checked, local language ID. Unknown/very short text is left for a source-language choice. */
-    static String detect(Context c,String words){return detect(c,words,.6f,true);}
+    static String detect(Context c,String words){ULocale[] best=new ULocale[1];float sure=classify(c,words,best);
+        return best[0]!=null&&sure>=.6f?TranslationPlan.language(best[0].toLanguageTag()):bundled(words);}
     /**
-     * What a draft you're sending is written in, or "" when that isn't clear. A short draft needs a
-     * very confident answer from the phone's own language ID (the fallback guesses on so little).
+     * What a message (yours or theirs) is written in, or "" when that isn't clear. An ordinary one takes
+     * the usual confident answer. A short one ("je suis là", "ya voy") needs the phone's language ID to
+     * be very sure, or fairly sure with the bundled detector agreeing. A word or two, never.
      */
-    static String writtenIn(Context c,String words){float sure=TranslationPlan.sureEnough(words);return sure>1?"":detect(c,words,sure,sure<=.6f);}
-    private static String detect(Context c,String words,float sure,boolean fallback){
+    static String writtenIn(Context c,String words){float needed=TranslationPlan.sureEnough(words);if(needed>1)return "";if(needed<=.6f)return detect(c,words);
+        ULocale[] best=new ULocale[1];float sure=classify(c,words,best);if(best[0]==null)return "";
+        return TranslationPlan.shortGuess(best[0].toLanguageTag(),sure,sure>=needed?"":bundled(words),needed);}
+    /** The phone's own language ID: its best guess (into best[0]) and how sure it is. */
+    private static float classify(Context c,String words,ULocale[] best){
         try{TextLanguage found=c.getSystemService(TextClassificationManager.class).getTextClassifier().detectLanguage(new TextLanguage.Request.Builder(words).build());
-            if(found.getLocaleHypothesisCount()>0){ULocale best=found.getLocale(0);if(found.getConfidenceScore(best)>=sure)return TranslationPlan.language(best.toLanguageTag());}}
+            if(found.getLocaleHypothesisCount()>0){best[0]=found.getLocale(0);return found.getConfidenceScore(best[0]);}}
         catch(Exception ignored){}
-        if(!fallback)return "";
+        return 0;}
+    /** The bundled detector (CLD2), when it's fairly sure; otherwise "". */
+    private static String bundled(String words){
         try{String code=TranslationPlan.language(string(TranslationNative.detect(utf8(words))));return "und".equals(code)?"":code;}
-        catch(LinkageError|RuntimeException ignored){return "";}
-    }
+        catch(LinkageError|RuntimeException ignored){return "";}}
     /** Called on worker. The caller supplies cancellation tied to the exact chat/draft. For reading: faithful wording. */
     static Result translate(Context c,String words,String source,String target,Consumer<String> progress,BooleanSupplier cancelled)throws Exception{return translate(c,words,source,target,false,progress,cancelled);}
     /** Sending: the stronger translator words it the way people text. */

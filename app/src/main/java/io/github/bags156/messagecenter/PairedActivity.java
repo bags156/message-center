@@ -2140,10 +2140,11 @@ public class PairedActivity extends Activity {
             String key=id+":"+mid+":"+target+":"+words;if(autoTranslationAttempts.contains(key))continue;
             if(submitted++>=(QualityTranslation.enabled(this)?1:12))break;autoTranslationAttempts.add(key);if(autoTranslationAttempts.size()>256)autoTranslationAttempts.remove(autoTranslationAttempts.iterator().next());
             Translation.worker.execute(()->{try{
-                String from=Translation.detect(getApplicationContext(),words);if(from.isEmpty()||from.equals(target))return;
+                String from=Translation.writtenIn(getApplicationContext(),words);if(from.isEmpty()||from.equals(target))return;
                 Translation.Result answer=Translation.translate(getApplicationContext(),words,from,target,step->ui.post(()->{if(resumed&&translationEpoch.get()==epoch&&chatSettings.readLanguage().equals(target)&&translationStatus!=null){translationStatus.setText(step);translationStatus.setVisibility(View.VISIBLE);}}),
                     ()->!resumed||translationEpoch.get()!=epoch||!chatSettings.readLanguage().equals(target)||Translation.worker.urgentWaiting());
                 ui.post(()->{if(translationEpoch.get()!=epoch||!chatId.equals(id)||!chatSettings.readLanguage().equals(target)||isDestroyed())return;
+                    if(translationStatus!=null)translationStatus.setVisibility(View.GONE);if(TranslationPlan.unchanged(words,answer.text))return; // nothing new to show
                     translations.put(mid,new String[]{answer.text,Translation.label(answer.from),target,words});waitingForData=null;if(translationStatus!=null)translationStatus.setVisibility(View.GONE);
                     ui.removeCallbacks(translationRedraw);ui.postDelayed(translationRedraw,400);});
             }catch(java.util.concurrent.CancellationException ignored){
