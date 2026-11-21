@@ -1104,7 +1104,8 @@ public final class OnDeviceSmoke extends Instrumentation {
         android.content.Context ctx=getTargetContext();String original="Hello, how are you? I hope you are having a wonderful day today.";
         String detected=Translation.worker.submit(()->Translation.detect(ctx,"¿Dónde estás? Te espero en la puerta del cine.")).get(30,java.util.concurrent.TimeUnit.SECONDS);
         check("es".equals(detected),"Bundled language detection did not recognize Spanish ("+detected+")");
-        onMainCall(()->{
+        // From scratch: the earlier step's translation (switched to the original) is saved, and would otherwise come back as it was left.
+        onMainCall(()->{SavedTranslations.removeChat(ctx,"sr-chat");field("savedTranslationsFor").set(a,"");
             ((java.util.Map<?,?>)field("translations").get(a)).clear();((java.util.Set<?>)field("showingOriginal").get(a)).clear();
             new ChatSettings(ctx).setReadLanguage("en");method("renderMessages",boolean.class).invoke(a,true);return null;});
         long until=android.os.SystemClock.uptimeMillis()+45000;
