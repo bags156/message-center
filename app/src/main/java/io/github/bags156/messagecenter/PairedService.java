@@ -732,10 +732,14 @@ public final class PairedService extends Service {
             for(String k:new String[]{"fullName","firstName"}){String v=p.optString(k).trim();if(!v.isEmpty()){out.add(v);out.add(v.split("\\s+")[0]);}}}
         return out;
     }
-    /** Muted or snoozed chats stay quiet, unless the message @-mentions you or has one of your alert keywords. */
+    /**
+     * Muted or snoozed chats stay quiet, unless the message @-mentions you or has one of your alert
+     * keywords. Snoozed privately, nothing comes through at all.
+     */
     private boolean quiet(String id,JSONObject m) {
         // Snoozed "until it's quiet": every new message keeps it snoozed another half hour.
         ChatSettings s=new ChatSettings(this);s.activity(id);if(!s.muted(id)&&!s.snoozed(id))return false;
+        if(s.snoozedPrivately(id))return true;
         String text=PairedProtocol.text(m);
         if(!SmartText.keyword(text,SmartText.splitList(getSharedPreferences("paired",MODE_PRIVATE).getString("alert_keywords",""))).isEmpty())return false;
         return !ChatText.mentions(text,mentionNames(this,store.chat(id)));
