@@ -1104,12 +1104,25 @@ public final class OnDeviceSmoke extends Instrumentation {
         android.content.Context ctx=getTargetContext();String original="Hello, how are you? I hope you are having a wonderful day today.";
         String detected=Translation.worker.submit(()->Translation.detect(ctx,"¿Dónde estás? Te espero en la puerta del cine.")).get(30,java.util.concurrent.TimeUnit.SECONDS);
         check("es".equals(detected),"Bundled language detection did not recognize Spanish ("+detected+")");
-        onMainCall(()->{
+        // From scratch: the earlier step's translation (switched to the original) is saved, and would otherwise come back as it was left.
+        onMainCall(()->{SavedTranslations.removeChat(ctx,"sr-chat");field("savedTranslationsFor").set(a,"");
             ((java.util.Map<?,?>)field("translations").get(a)).clear();((java.util.Set<?>)field("showingOriginal").get(a)).clear();
             new ChatSettings(ctx).setReadLanguage("en");method("renderMessages",boolean.class).invoke(a,true);return null;});
         long until=android.os.SystemClock.uptimeMillis()+45000;
         while(android.os.SystemClock.uptimeMillis()<until&&described(a,"Translated from")==null)Thread.sleep(200);
         check(described(a,"Translated from")!=null,"Automatic incoming translation did not appear");
+        // Coming back: the translation was saved, so it shows at once without translating again, and switching to the original is remembered.
+        Runnable forget=()->{try{((java.util.Map<?,?>)field("translations").get(a)).clear();((java.util.Set<?>)field("showingOriginal").get(a)).clear();((java.util.Set<?>)field("autoTranslationAttempts").get(a)).clear();
+            field("savedTranslationsFor").set(a,"");method("renderMessages",boolean.class).invoke(a,true);}catch(Exception e){throw new RuntimeException(e);}};
+        String shownChat=(String)field("chatId").get(a);
+        java.util.concurrent.CountDownLatch busy=new java.util.concurrent.CountDownLatch(1);Translation.worker.submit(()->{busy.await(30,java.util.concurrent.TimeUnit.SECONDS);return null;});
+        try{check(waitUntil(()->SavedTranslations.forChat(ctx,shownChat).size()>0,5000),"The translation wasn't saved");
+            runOnMainSync(forget);check(described(a,"Translated from")!=null,"A saved translation didn't show when coming back (it would have to be translated again)");
+            android.view.View toOriginal=described(a,"Translated from");runOnMainSync(toOriginal::performClick);
+            check(waitUntil(()->{for(SavedTranslations.Saved saved:SavedTranslations.forChat(ctx,shownChat).values())if(saved.original)return true;return false;},5000),"Switching to the original wasn't remembered");
+            runOnMainSync(forget);android.view.View toTranslation=described(a,"Show translation");check(toTranslation!=null,"Coming back didn't keep the message switched to its original");
+            runOnMainSync(toTranslation::performClick);check(described(a,"Translated from")!=null,"Switching back to the saved translation didn't show it");}
+        finally{busy.countDown();}
         onMainCall(()->method("setReadingLanguage",String.class).invoke(a,"es"));waitForIdleSync();
         check(exactText(a,"¿Dónde estás? Te espero en la puerta del cine.")!=null,"Changing the reading language kept the previous translation on screen");
         onMainCall(()->method("setReadingLanguage",String.class).invoke(a,"en"));until=android.os.SystemClock.uptimeMillis()+45000;

@@ -1119,7 +1119,7 @@ public class PairedActivity extends Activity {
             ValueAnimator a=ValueAnimator.ofFloat(blur,0f);a.setDuration(420);a.addUpdateListener(x->{float r=(float)x.getAnimatedValue();content.setRenderEffect(r<0.5f?null:android.graphics.RenderEffect.createBlurEffect(r,r,android.graphics.Shader.TileMode.DECAL));});
             a.addListener(new android.animation.AnimatorListenerAdapter(){@Override public void onAnimationEnd(android.animation.Animator an){content.setRenderEffect(null);}});a.start();box.postDelayed(later,INK_SHOWN_MS);});
         cover.setOnLongClickListener(v->{messageSheet(m);return true;});return box;}
-    private void renderMessages(boolean bottom){if(items==null||!screen.equals("chat"))return;refreshReadingLanguage();queueAutoTranslation();ui.post(this::updateQuickRow);long perfAll=Perf.start(),perf=perfAll;refreshSavedAttachments();voiceCards.clear();voiceOrder.clear();
+    private void renderMessages(boolean bottom){if(items==null||!screen.equals("chat"))return;refreshReadingLanguage();loadSavedTranslations(chatId);queueAutoTranslation();ui.post(this::updateQuickRow);long perfAll=Perf.start(),perf=perfAll;refreshSavedAttachments();voiceCards.clear();voiceOrder.clear();
         ScrollView sv=scroll;View content=sv.getChildAt(0);int y,before;boolean atBottom;Spot spot;
         // If the last redraw hasn't been laid out yet, its new views have no positions; keep aiming where it was aiming.
         if(placing!=null&&placingIn==sv){sv.getViewTreeObserver().removeOnPreDrawListener(placing);placing=null;y=placeY;before=placeBefore;atBottom=bottom||placeBottom;spot=atBottom?null:placeSpot;}
@@ -1331,7 +1331,7 @@ public class PairedActivity extends Activity {
         b.setOnLongClickListener(v->{messageSheet(m);return true;});b.setOnClickListener(v->tapped(m,b));if(text.getMovementMethod()!=null)text.setOnClickListener(v->tapped(m,b));
         View translated=null;
         if(tr!=null){TextView toggle=text(translatedShown?"Translated · Show original":"Original · Show "+Translation.label(tr[2])+" translation",12,theme.accent(dark),false);toggle.setPadding(dp(14),dp(6),dp(14),dp(6));toggle.setMinHeight(dp(36));toggle.setGravity(outgoing?Gravity.END:Gravity.START);pressable(toggle);
-            toggle.setContentDescription(translatedShown?"Translated from "+tr[1]+" to "+Translation.label(tr[2])+". Show original":"Show translation");toggle.setOnClickListener(v->{if(!showingOriginal.remove(mid))showingOriginal.add(mid);renderMessages(false);});translated=toggle;}
+            toggle.setContentDescription(translatedShown?"Translated from "+tr[1]+" to "+Translation.label(tr[2])+". Show original":"Show translation");toggle.setOnClickListener(v->toggleOriginal(mid));translated=toggle;}
         else if(wrote!=null){String in=Translation.label(wrote.to);TextView toggle=text(wroteShown?"What you wrote · Show what was sent":"Sent in "+in+" · Show what you wrote",12,theme.accent(dark),false);
             toggle.setPadding(dp(14),dp(6),dp(14),dp(6));toggle.setMinHeight(dp(36));toggle.setGravity(Gravity.END);pressable(toggle);
             toggle.setContentDescription(wroteShown?"Showing what you wrote. Show what was sent in "+in:"Sent in "+in+". Show what you wrote");
@@ -1915,8 +1915,23 @@ public class PairedActivity extends Activity {
             :getPackageManager().getLaunchIntentForPackage(MessageListener.GOOGLE_MESSAGES);
         try{startActivity(open);toast("Copied. In Google Messages, hold your message and tap Edit (the pencil). The change shows here too.");}
         catch(Exception e){toast("Google Messages couldn't be opened.");}}
-    // Translation preferences are backed up with chat-settings; translated text stays in memory.
-    private final Map<String,String[]> translations=new java.util.LinkedHashMap<String,String[]>(128,.75f,true){protected boolean removeEldestEntry(Map.Entry<String,String[]> e){return size()>128;}};
+    // Translations made on this phone, saved (SavedTranslations) and loaded a chat at a time: [text, from label, target, words].
+    private final Map<String,String[]> translations=new java.util.LinkedHashMap<String,String[]>(256,.75f,true){protected boolean removeEldestEntry(Map.Entry<String,String[]> e){return size()>2000;}};
+    /** Which chat's saved translations are loaded (with the reading language and translator they were loaded for). */
+    private String savedTranslationsFor="";
+    private void loadSavedTranslations(String id){String key=id+"|"+chatSettings.readLanguage()+"|"+Translation.engineKey(this);if(key.equals(savedTranslationsFor))return;savedTranslationsFor=key;
+        String read=chatSettings.readLanguage(),engine=Translation.engineKey(this);
+        // (Whether a message has been edited since is checked as it's drawn: its words must match.)
+        for(Map.Entry<String,SavedTranslations.Saved> e:SavedTranslations.forChat(this,id).entrySet()){String mid=e.getKey();if(translations.containsKey(mid))continue;SavedTranslations.Saved s=e.getValue();
+            if(!SavedTranslations.applies(s,s.words,read,engine))continue;
+            translations.put(mid,new String[]{s.text,s.fromLabel,s.target,s.words});if(s.original)showingOriginal.add(mid);else showingOriginal.remove(mid);}}
+    /** A translation is ready: shown now, and saved for next time (off the main thread). */
+    private void keepTranslation(String chat,String mid,String target,boolean automatic,String words,String text,String fromLabel){
+        translations.put(mid,new String[]{text,fromLabel,target,words});showingOriginal.remove(mid);String engine=Translation.engineKey(this);Context app=getApplicationContext();
+        decoder.execute(()->SavedTranslations.save(app,chat,mid,target,engine,automatic,words,text,fromLabel));}
+    /** Translation or original: switched now, and remembered for that message. */
+    private void toggleOriginal(String mid){boolean original=!showingOriginal.remove(mid);if(original)showingOriginal.add(mid);Context app=getApplicationContext();
+        decoder.execute(()->SavedTranslations.showingOriginal(app,mid,original));renderMessages(false);}
     private final java.util.Set<String> showingOriginal=new java.util.HashSet<>();
     /** Sent messages showing what you wrote rather than the translation that went. */
     private final java.util.Set<String> showingWritten=new java.util.HashSet<>();
@@ -1953,7 +1968,7 @@ public class PairedActivity extends Activity {
     private String activeReadLanguage;
     /** Clear translations from every chat when the app-wide reading preference changes. */
     private void refreshReadingLanguage(){String read=chatSettings.readLanguage()+"|"+Translation.engineKey(this);if(read.equals(activeReadLanguage))return;activeReadLanguage=read;
-        translationEpoch.incrementAndGet();autoTranslationAttempts.clear();translations.clear();showingOriginal.clear();
+        translationEpoch.incrementAndGet();autoTranslationAttempts.clear();translations.clear();showingOriginal.clear();savedTranslationsFor="";
         if(translationStatus!=null)translationStatus.setVisibility(View.GONE);}
     private void setReadingLanguage(String code){chatSettings.setReadLanguage(code);refreshReadingLanguage();
         if(screen.equals("chat"))renderMessages(false);queueAutoTranslation();}
@@ -2109,7 +2124,7 @@ public class PairedActivity extends Activity {
             .setNegativeButton("Wait for Wi-Fi",null).show();}
     /** Any message, including one you sent: choose the target and optionally override detection. */
     private void translate(JSONObject m,String words){String mid=m.optString("messageID");
-        if(translations.containsKey(mid)){if(!showingOriginal.remove(mid))showingOriginal.add(mid);renderMessages(false);return;}
+        if(translations.containsKey(mid)){toggleOriginal(mid);return;}
         translationChoices(m,words,"",translationTarget());}
     private void translationChoices(JSONObject message,String words,String source,String target){LinearLayout content=vertical();Dialog[] d={null};
         content.addView(text("Translate message",20,ink,true));gap(content,8);
@@ -2124,7 +2139,7 @@ public class PairedActivity extends Activity {
             step->ui.post(()->{if(!cancelled.get())status.setText(step);}),()->cancelled.get()||translationEpoch.get()!=epoch);
             ui.post(()->{if(cancelled.get()||translationEpoch.get()!=epoch||isDestroyed())return;
                 progress.dismiss();if(mid.isEmpty()){selectText(answer.text);return;}
-                translations.put(mid,new String[]{answer.text,Translation.label(answer.from),target,words});showingOriginal.remove(mid);renderMessages(false);
+                if(!answer.same)keepTranslation(id,mid,target,false,words,answer.text,Translation.label(answer.from));renderMessages(false);
                 if(answer.same)toast("Already in "+Translation.label(target));});
         }catch(java.util.concurrent.CancellationException ignored){}
         catch(Translation.NeedsData e){ui.post(()->{if(cancelled.get())return;progress.dismiss();askMobileData(e,"The message stays as it is meanwhile.",()->translateMessage(message,words,source,target));});}
@@ -2145,7 +2160,7 @@ public class PairedActivity extends Activity {
                     ()->!resumed||translationEpoch.get()!=epoch||!chatSettings.readLanguage().equals(target)||Translation.worker.urgentWaiting());
                 ui.post(()->{if(translationEpoch.get()!=epoch||!chatId.equals(id)||!chatSettings.readLanguage().equals(target)||isDestroyed())return;
                     if(translationStatus!=null)translationStatus.setVisibility(View.GONE);if(TranslationPlan.unchanged(words,answer.text))return; // nothing new to show
-                    translations.put(mid,new String[]{answer.text,Translation.label(answer.from),target,words});waitingForData=null;if(translationStatus!=null)translationStatus.setVisibility(View.GONE);
+                    keepTranslation(id,mid,target,true,words,answer.text,Translation.label(answer.from));waitingForData=null;if(translationStatus!=null)translationStatus.setVisibility(View.GONE);
                     ui.removeCallbacks(translationRedraw);ui.postDelayed(translationRedraw,400);});
             }catch(java.util.concurrent.CancellationException ignored){
                 // Stepped aside for something you're waiting on: tried again once that's done.
