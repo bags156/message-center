@@ -15,10 +15,14 @@ final class TranslationPlan {
         return "en".equals(from)||"en".equals(to)?new String[]{from+"-"+to}:new String[]{from+"-en","en-"+to};
     }
     /** Automatic detection ignores tiny/ambiguous fragments and link-only or numeric messages. */
+    /**
+     * Incoming text worth a look for automatic translation: a few words at least ("je suis là"). Whether
+     * it's translated is then up to language ID (Translation.writtenIn), which has to be surer the
+     * shorter it is; "ok" or "lol" alone never is.
+     */
     static boolean automatic(String text,boolean outgoing,boolean notice) {
         if(outgoing||notice||text==null||text.length()>6000)return false;
-        String prose=text.replaceAll("(?i)https?://\\S+|www\\.\\S+", "").trim();
-        return prose.codePoints().filter(Character::isLetter).count()>=12;
+        return sureEnough(text)<=1;
     }
     /** Symbols, numbers and links alone are already ready to send. */
     static boolean outgoingText(String text) {
@@ -41,6 +45,16 @@ final class TranslationPlan {
     static float sureEnough(String text) {
         long n=letters(text);
         return n>=12?.6f:n>=4?.9f:2f;
+    }
+    /**
+     * A short text's language: the phone's language ID when it's very sure, or fairly sure (.6) with the
+     * bundled detector agreeing; otherwise "" (not clear enough to translate on its own).
+     */
+    static String shortGuess(String phone,float phoneSure,String bundled,float needed) {
+        String code=language(phone);
+        if(code.isEmpty()||"und".equals(code))return "";
+        if(phoneSure>=needed)return code;
+        return phoneSure>=.6f&&code.equals(language(bundled))?code:"";
     }
     /** Already written in the language it's sent in, so it goes as written, untranslated. */
     static boolean alreadyIn(String detected,String target) {
