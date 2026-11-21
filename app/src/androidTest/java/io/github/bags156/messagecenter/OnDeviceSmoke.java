@@ -1395,6 +1395,12 @@ public final class OnDeviceSmoke extends Instrumentation {
             // Spread out, one head dragged onto the × closes just that chat.
             runOnMainSync(()->((android.view.ViewGroup)heads[0]).getChildAt(0).performClick());waitForIdleSync();Thread.sleep(300);
             runOnMainSync(()->{heads[0]=ChatHeads.view();shown[0]=((android.view.ViewGroup)heads[0]).getChildCount();});check(shown[0]==2,"The stack didn't spread out again ("+shown[0]+")");
+            // Read somewhere else (in the app, from the notification, another device): the head's unread count goes.
+            check(ChatHeads.unread("head-chat")==1,"A new message didn't count on its head ("+ChatHeads.unread("head-chat")+")");
+            PairedService.clearNotification(ctx,"head-chat");waitForIdleSync();
+            check(ChatHeads.unread("head-chat")==0,"Reading the chat outside its head left the unread badge on it");
+            runOnMainSync(()->ChatHeads.add(ctx,"head-chat",false,true));PairedService.markReadFromNotification(ctx,"head-chat",()->{});waitForIdleSync();
+            check(ChatHeads.unread("head-chat")==0,"Marking the chat read from its notification left the unread badge on its head");
             int buzzes=ChatHeads.buzzed;
             dragOntoClose(((android.view.ViewGroup)heads[0]).getChildAt(0),"shot-chat-head-close");Thread.sleep(500);
             check(ChatHeads.buzzed>buzzes,"Reaching the × didn't vibrate");

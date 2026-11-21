@@ -320,9 +320,9 @@ public final class PairedService extends Service {
     }
     /** Saves a chat from Google; once Google says it's read (on the phone or anywhere), this app's notification goes too. */
     /** Saves a chat from Google; true if anything about it changed. */
-    private boolean applyChat(JSONObject c) {boolean changed=store.chat(c);if(changed)chatWrites.incrementAndGet();if(!c.optBoolean("unread"))dismiss(c.optString("conversationID"));return changed;}
+    private boolean applyChat(JSONObject c) {boolean changed=store.chat(c);if(changed)chatWrites.incrementAndGet();if(!c.optBoolean("unread")){String id=c.optString("conversationID");ChatHeads.read(this,id);dismiss(id);}return changed;}
     /** Drops a chat's notification if this app posted one (bubbles stay). */
-    private void dismiss(String id) {synchronized(notified){if(notified.remove(id)==null)return;}clearNotification(this,id);}
+    private void dismiss(String id) {ChatHeads.read(this,id);synchronized(notified){if(notified.remove(id)==null)return;}clearNotification(this,id);}
     /** Called when the app is opened: catch up with Google now (at most every 20 seconds). */
     static void syncNow() {PairedService s=current;if(s==null)return;
         if(s.inactive&&s.ready){s.inactive=false;s.network.execute(()->{try{if(s.client!=null){s.client.reactivate();s.update("Connected to Google Messages");}}catch(Exception ignored){}});}
@@ -581,7 +581,7 @@ public final class PairedService extends Service {
     /** The running service's database, so background checks don't open a second copy. */
     static PairedStore sharedStore(){PairedService s=current;return s==null?null:s.store;}
     static void clearNotification(Context context,String id) {
-        PairedService s=current;if(s!=null)synchronized(s.notified){s.notified.remove(id);}
+        ChatHeads.read(context,id);PairedService s=current;if(s!=null)synchronized(s.notified){s.notified.remove(id);}
         NotificationManager nm=context.getSystemService(NotificationManager.class);Nudges.cancel(context,id);
         // Cancelling a bubbled chat's notification would also close its bubble; quiet it instead (no dot, out of the shade).
         for(StatusBarNotification n:nm.getActiveNotifications())if(("chat:"+id).equals(n.getTag())&&(n.getNotification().flags&Notification.FLAG_BUBBLE)!=0){
@@ -956,7 +956,7 @@ public final class PairedService extends Service {
     static void markReadFromNotification(Context context,String chat,Runnable done) {
         PairedService s=current;
         if(s!=null)synchronized(s.notified){s.notified.remove(chat);}
-        context.getSystemService(NotificationManager.class).cancel("chat:"+chat,1);Nudges.cancel(context,chat);
+        context.getSystemService(NotificationManager.class).cancel("chat:"+chat,1);Nudges.cancel(context,chat);ChatHeads.read(context,chat);
         ChatSettings settings=new ChatSettings(context);settings.setMarkedUnread(chat,false);
         // Clear the unread dot here even when no read receipt goes to the sender.
         PairedStore own=s==null?new PairedStore(context):null,store=own!=null?own:s.store;JSONObject c=store.chat(chat),latest=store.latestIncoming(chat);if(own!=null)own.close();

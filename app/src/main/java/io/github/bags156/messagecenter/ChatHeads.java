@@ -191,8 +191,14 @@ final class ChatHeads {
         });
     }
 
-    /** A chat read in the app: its count goes. */
-    static void read(Context c, String chat) { ui(c, () -> { if (unread.remove(chat) != null) draw(); }); }
+    /**
+     * A chat read anywhere (in the app, from its notification, or on another device), or replied to:
+     * its head's unread count goes.
+     */
+    static void read(Context c, String chat) { if (chat == null || chat.isEmpty()) return; ui(c, () -> { if (unread.remove(chat) != null) draw(); }); }
+
+    /** A chat's unread count on its head (for checks). */
+    static int unread(String chat) { Integer n = unread.get(chat); return n == null ? 0 : n; }
 
     private static void load() {
         if (loaded) return;
