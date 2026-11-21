@@ -1,5 +1,6 @@
-Message Center 1.5.82.
+Message Center 1.5.83.
 
-- Short messages are translated automatically too. "je suis là" wasn't translated because the app only translated messages of at least 12 letters, so that "ok" or "lol" would never be mistranslated. Now a short message (4 letters or more) is translated when your phone is very sure of its language, or fairly sure and the app's own detector agrees. A word or two alone, like "ok", still isn't. If a translation comes back the same as the message, nothing extra is shown.
+- Translations are saved. Once a message is translated, the translation is still there when you come back to the chat, even after closing the app, and it isn't translated again. If you switched a message to its original, it stays that way, and you can tap to switch at any time.
+- Saved translations stay on this phone only (the app makes no backups). They're deleted with their message or chat, or when you unpair. A message that's been edited since is translated again. Changing your reading language or translator translates messages again in the new setting, but translations you asked for yourself stay.
 
 Update through Obtainium over the existing app. Your pairing, messages and settings are retained.

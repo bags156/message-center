@@ -44,8 +44,8 @@ final class PairedStore extends SQLiteOpenHelper {
         return 1;
     }
     synchronized void deleteChat(String id) {SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
-        try{db.delete("chats","id=?",new String[]{id});db.delete("items","chat=?",new String[]{id});db.setTransactionSuccessful();}finally{db.endTransaction();}PhotoText.removeChat(appContext,id);}
-    synchronized void deleteMessage(String id) {getWritableDatabase().delete("items","id=?",new String[]{id});PhotoText.removeMessage(appContext,id);}
+        try{db.delete("chats","id=?",new String[]{id});db.delete("items","chat=?",new String[]{id});db.setTransactionSuccessful();}finally{db.endTransaction();}PhotoText.removeChat(appContext,id);SavedTranslations.removeChat(appContext,id);}
+    synchronized void deleteMessage(String id) {getWritableDatabase().delete("items","id=?",new String[]{id});PhotoText.removeMessage(appContext,id);SavedTranslations.removeMessage(appContext,id);}
     /** Synced messages in a chat whose text contains the query, newest first. */
     synchronized List<JSONObject> search(String chat,String query,int max) {
         List<JSONObject> out=new ArrayList<>();String q=query.trim().toLowerCase(java.util.Locale.ROOT);if(q.isEmpty())return out;
@@ -229,5 +229,5 @@ final class PairedStore extends SQLiteOpenHelper {
         ContentValues v=new ContentValues();v.put("id",id);v.put("cursor",cursor);v.put("note",note);getWritableDatabase().insertWithOnConflict("pages",null,v,SQLiteDatabase.CONFLICT_REPLACE);
     }
     synchronized String page(String id,boolean note) {try(Cursor c=getReadableDatabase().rawQuery("SELECT cursor,note FROM pages WHERE id=?",new String[]{id})){return c.moveToFirst()?c.getString(note?1:0):"";}}
-    synchronized void clear() {parsed.clear();SQLiteDatabase db=getWritableDatabase();db.beginTransaction();try{for(String table:new String[]{"chats","items","pages"})db.delete(table,null,null);db.setTransactionSuccessful();}finally{db.endTransaction();}}
+    synchronized void clear() {parsed.clear();SavedTranslations.clear(appContext);SQLiteDatabase db=getWritableDatabase();db.beginTransaction();try{for(String table:new String[]{"chats","items","pages"})db.delete(table,null,null);db.setTransactionSuccessful();}finally{db.endTransaction();}}
 }
