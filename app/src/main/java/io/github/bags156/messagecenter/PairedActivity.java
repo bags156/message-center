@@ -3873,8 +3873,9 @@ public class PairedActivity extends Activity {
     private boolean safeIncoming(Uri u){if(u==null)return false;String scheme=u.getScheme(),auth=u.getAuthority();
         if(!"content".equals(scheme))return false;return auth==null||!auth.startsWith(getPackageName());}
     private String snoozeLabel(String id){long until=chatSettings.snoozedUntil(id);if(chatSettings.untilQuiet(id))return "it's quiet";
-        boolean today=android.text.format.DateUtils.isToday(until);return (today?"":new SimpleDateFormat("EEE ",Locale.getDefault()).format(new Date(until)))+timeOnly(until);}
-    /** Pause this chat's notifications for a while. @-mentions of you still come through. */
+        boolean today=android.text.format.DateUtils.isToday(until),far=until-System.currentTimeMillis()>6*86_400_000L;
+        return (today?"":new SimpleDateFormat(far?"EEE, MMM d, ":"EEE ",Locale.getDefault()).format(new Date(until)))+timeOnly(until);}
+    /** Pause this chat's notifications for a while: briefly (@-mentions still come through), or privately for longer (nothing does). */
     private void snoozeMenu(String id){List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();long now=System.currentTimeMillis();
         java.util.Calendar morning=java.util.Calendar.getInstance();morning.add(java.util.Calendar.DAY_OF_YEAR,1);morning.set(java.util.Calendar.HOUR_OF_DAY,8);morning.set(java.util.Calendar.MINUTE,0);morning.set(java.util.Calendar.SECOND,0);
         // Until it's quiet: off while the chat keeps going, back on by itself after half an hour without new messages.
@@ -3882,8 +3883,16 @@ public class PairedActivity extends Activity {
             toast("Quiet until this chat has no new messages for 30 minutes. @-mentions still notify you.");refreshAfterSetting();});
         long[] times={now+3_600_000L,now+8*3_600_000L,morning.getTimeInMillis()};String[] names={"For 1 hour","For 8 hours","Until tomorrow, "+timeOnly(morning.getTimeInMillis())};
         for(int i=0;i<times.length;i++){long until=times[i];labels.add(names[i]);actions.add(()->{chatSettings.setSnooze(id,until);PairedService.clearNotification(this,id);toast("Snoozed until "+snoozeLabel(id)+". @-mentions still notify you.");refreshAfterSetting();});}
+        // Longer, and private: nothing from the chat pops up (not even @-mentions), on the lock screen or in the car.
+        long monday=ChatSettings.mondayMorning(now,java.util.TimeZone.getDefault());
+        labels.add("Until "+new SimpleDateFormat("EEEE",Locale.getDefault()).format(new Date(monday))+", "+timeOnly(monday)+" · private");actions.add(()->snoozePrivately(id,monday));
+        labels.add("For a week · private");actions.add(()->snoozePrivately(id,now+7*86_400_000L));
+        labels.add("Until a date and time… · private");actions.add(()->pickDateTime(until->snoozePrivately(id,until)));
         if(chatSettings.snoozed(id)){labels.add("Turn off snooze");actions.add(()->{chatSettings.setSnooze(id,0);toast("Notifications on for this chat");refreshAfterSetting();});}
         menuSheet("Snooze notifications",labels,actions);}
+    /** Snoozed with nothing coming through until then: no notifications from this chat at all, so nothing in Android Auto either. */
+    private void snoozePrivately(String id,long until){chatSettings.setSnooze(id,until,true);PairedService.clearNotification(this,id);
+        toast("Snoozed until "+snoozeLabel(id)+". Nothing from this chat will pop up until then, on your phone or in Android Auto, not even @-mentions.");refreshAfterSetting();}
     private void refreshAfterSetting(){if(screen.equals("details"))details();else if(screen.equals("inbox"))renderInbox();}
     /** Settings: which names count as an @mention of you (alerts even in muted or snoozed chats). */
     private void editMentionNames(){EditText e=input("Your first name, or names separated by commas");e.setText(getSharedPreferences("paired",MODE_PRIVATE).getString("mention_name",""));

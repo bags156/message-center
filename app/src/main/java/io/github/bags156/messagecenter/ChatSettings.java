@@ -134,11 +134,28 @@ final class ChatSettings {
     /** Notifications are paused for this chat until this time (0 when not snoozed). */
     long snoozedUntil(String id) { return prefs.getLong("snooze:" + id, 0); }
     boolean snoozed(String id) { return snoozedUntil(id) > System.currentTimeMillis(); }
-    void setSnooze(String id, long until) { if (until <= 0) prefs.edit().remove("snooze:" + id).remove("snooze-quiet:" + id).apply(); else prefs.edit().putLong("snooze:" + id, until).remove("snooze-quiet:" + id).apply(); }
+    void setSnooze(String id, long until) { setSnooze(id, until, false); }
+    /**
+     * privately: nothing from the chat comes through until then, not @-mentions or alert keywords
+     * either (say while visitors are around, or in the car with others).
+     */
+    void setSnooze(String id, long until, boolean privately) {
+        if (until <= 0) prefs.edit().remove("snooze:" + id).remove("snooze-quiet:" + id).remove("snooze-private:" + id).apply();
+        else prefs.edit().putLong("snooze:" + id, until).remove("snooze-quiet:" + id).putBoolean("snooze-private:" + id, privately).apply();
+    }
+    /** Snoozed with nothing coming through (see setSnooze). */
+    boolean snoozedPrivately(String id) { return snoozed(id) && prefs.getBoolean("snooze-private:" + id, false); }
+    /** The next Monday at 8:00 (for "this weekend"), at least an hour away. */
+    static long mondayMorning(long now, java.util.TimeZone zone) {
+        java.util.Calendar at = java.util.Calendar.getInstance(zone); at.setTimeInMillis(now);
+        at.set(java.util.Calendar.HOUR_OF_DAY, 8); at.set(java.util.Calendar.MINUTE, 0); at.set(java.util.Calendar.SECOND, 0); at.set(java.util.Calendar.MILLISECOND, 0);
+        while (at.get(java.util.Calendar.DAY_OF_WEEK) != java.util.Calendar.MONDAY || at.getTimeInMillis() < now + 3_600_000L) at.add(java.util.Calendar.DAY_OF_YEAR, 1);
+        return at.getTimeInMillis();
+    }
     /** "Until it's quiet": the snooze ends once the chat has had no new messages for this long. */
     static final long QUIET_MS = 30 * 60_000L;
     boolean untilQuiet(String id) { return prefs.getBoolean("snooze-quiet:" + id, false) && snoozed(id); }
-    void snoozeUntilQuiet(String id) { prefs.edit().putBoolean("snooze-quiet:" + id, true).putLong("snooze:" + id, System.currentTimeMillis() + QUIET_MS).apply(); }
+    void snoozeUntilQuiet(String id) { prefs.edit().putBoolean("snooze-quiet:" + id, true).remove("snooze-private:" + id).putLong("snooze:" + id, System.currentTimeMillis() + QUIET_MS).apply(); }
     /** A message arrived: a chat snoozed until it's quiet stays snoozed for QUIET_MS from now. */
     void activity(String id) { if (untilQuiet(id)) prefs.edit().putLong("snooze:" + id, System.currentTimeMillis() + QUIET_MS).apply(); }
     /** Chat background: "" (none), "stock:<name>", or "photo" (a picture you chose, saved by the app). */
