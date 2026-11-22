@@ -91,6 +91,13 @@ public final class FloatingChatActivity extends PairedActivity {
     @Override protected void onResume() { super.onResume(); current = this; showing = true; String chat = getIntent().getStringExtra("chat"); ChatHeads.floating(this, chat == null ? "" : chat); }
     @Override protected void onStop() { closed(); super.onStop(); }
     @Override protected void onDestroy() { closed(); super.onDestroy(); }
+    /** A chat that's gone (deleted, blocked): its floating window closes if it's showing it. */
+    static void closeChat(String chat) {
+        new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+            FloatingChatActivity f = current; if (f == null || chat == null) return;
+            if (chat.equals(f.getIntent().getStringExtra("chat"))) f.finish();
+        });
+    }
     private void closed() { if (current != this) return; current = null; showing = false; ChatHeads.floating(this, ""); }
 
     @Override public void onBackPressed() { if (atChat()) finish(); else super.onBackPressed(); }

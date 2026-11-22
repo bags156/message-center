@@ -1412,6 +1412,10 @@ public final class OnDeviceSmoke extends Instrumentation {
             dragOntoClose(((android.view.ViewGroup)heads[0]).getChildAt(0),null);Thread.sleep(500);
             runOnMainSync(()->heads[0]=ChatHeads.view());check(ChatHeads.heads().isEmpty()&&heads[0]==null,"Dropping the heads on the × didn't close them ("+ChatHeads.heads()+")");
             runOnMainSync(()->{ChatHeads.add(ctx,"head-chat-2",false,false);ChatHeads.add(ctx,"head-chat",false,false);});Thread.sleep(300);
+            // A deleted (or blocked) conversation loses its head too, and its bubble isn't put back.
+            PairedService.chatGone(ctx,"head-chat");waitForIdleSync();
+            check(ChatHeads.heads().equals(java.util.Collections.singletonList("head-chat-2")),"Deleting a conversation left its chat head ("+ChatHeads.heads()+")");
+            check(!ChatBubbles.waiting("head-chat"),"A deleted conversation's bubble would be put back");
             runOnMainSync(()->ChatHeads.clear(ctx));Thread.sleep(300);runOnMainSync(()->heads[0]=ChatHeads.view());check(heads[0]==null,"Closing all chat heads left one on screen");}
         finally{ChatHeads.testNewMs=0;ChatHeads.testMidMs=0;prefs.edit().remove(ChatHeads.NEW).remove(ChatHeads.MID).remove(ChatHeads.OPACITY).commit();removeMonitor(floating);runOnMainSync(()->ChatHeads.clear(ctx));prefs.edit().putString(ChatHeads.STYLE,"android").commit();
             onMainCall(()->method("inbox").invoke(a));waitForIdleSync();try(PairedStore store=new PairedStore(ctx)){store.deleteChat("head-chat");}}}

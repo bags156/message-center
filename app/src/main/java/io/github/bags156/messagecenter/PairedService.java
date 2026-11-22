@@ -320,7 +320,10 @@ public final class PairedService extends Service {
     }
     /** Saves a chat from Google; once Google says it's read (on the phone or anywhere), this app's notification goes too. */
     /** Saves a chat from Google; true if anything about it changed. */
-    private boolean applyChat(JSONObject c) {boolean changed=store.chat(c);if(changed)chatWrites.incrementAndGet();if(!c.optBoolean("unread")){String id=c.optString("conversationID");ChatHeads.read(this,id);dismiss(id);}return changed;}
+    private boolean applyChat(JSONObject c) {boolean changed=store.chat(c);if(changed)chatWrites.incrementAndGet();
+        // Deleted on another device (or blocked there): it goes from here entirely, bubble and head too.
+        int folder=PairedStore.folder(c.optString("status"));if(folder==0||folder==3){String id=c.optString("conversationID");main.post(()->chatGone(this,id));return changed;}
+        if(!c.optBoolean("unread")){String id=c.optString("conversationID");ChatHeads.read(this,id);dismiss(id);}return changed;}
     /** Drops a chat's notification if this app posted one (bubbles stay). */
     private void dismiss(String id) {ChatHeads.read(this,id);synchronized(notified){if(notified.remove(id)==null)return;}clearNotification(this,id);}
     /** Called when the app is opened: catch up with Google now (at most every 20 seconds). */
@@ -580,6 +583,19 @@ public final class PairedService extends Service {
     /** Opening a chat clears its notification and the messages collected in it. */
     /** The running service's database, so background checks don't open a second copy. */
     static PairedStore sharedStore(){PairedService s=current;return s==null?null:s.store;}
+    /**
+     * A chat that's gone (deleted, here or on another device, or blocked): its notification and
+     * bubble, chat head and floating window go, its bubble isn't put back later, and its conversation
+     * shortcut is removed (so Android doesn't offer it to share to, or bubble it again).
+     */
+    static void chatGone(Context context,String id) {
+        if(id==null||id.isEmpty())return;
+        ChatBubbles.forget(context,id);ChatHeads.remove(context,id);FloatingChatActivity.closeChat(id);
+        PairedService s=current;if(s!=null)synchronized(s.notified){s.notified.remove(id);}
+        context.getSystemService(NotificationManager.class).cancel("chat:"+id,1);Nudges.cancel(context,id);
+        try{ShortcutManager sm=context.getSystemService(ShortcutManager.class);java.util.List<String> ids=java.util.Collections.singletonList("chat-"+id);
+            sm.removeLongLivedShortcuts(ids);sm.removeDynamicShortcuts(ids);}catch(Exception ignored){}
+    }
     static void clearNotification(Context context,String id) {
         ChatHeads.read(context,id);PairedService s=current;if(s!=null)synchronized(s.notified){s.notified.remove(id);}
         NotificationManager nm=context.getSystemService(NotificationManager.class);Nudges.cancel(context,id);

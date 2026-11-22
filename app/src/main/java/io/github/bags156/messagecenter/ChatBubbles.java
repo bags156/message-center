@@ -71,6 +71,16 @@ final class ChatBubbles {
         main().postDelayed(restore, RESTORE_DELAY_MS);
     }
 
+    /** A chat that's gone (deleted, blocked): its bubble isn't put back, even if it was put away while its chat was open. Any thread. */
+    static void forget(Context context, String chat) {
+        if (app == null) app = context.getApplicationContext();
+        if (chat == null || chat.isEmpty()) return;
+        taken.remove(chat); remember(chat, false);
+    }
+
+    /** Whether a chat's bubble is waiting to be put back (for checks). */
+    static boolean waiting(String chat) { return taken.containsKey(chat); }
+
     /** After a restart of the app (its bubbles were taken down when it stopped), puts them back. */
     static void restoreSoon(Context context) {
         if (app == null) app = context.getApplicationContext();
