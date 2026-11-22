@@ -4298,13 +4298,13 @@ public class PairedActivity extends Activity {
     private void deleteChat(JSONObject c){String id=c.optString("conversationID");pendingDeletes.add(id);if(!screen.equals("inbox"))inbox();else renderInbox();
         showUndo("Conversation deleted",6000,()->{pendingDeletes.remove(id);if(screen.equals("inbox"))renderInbox();},
             ()->PairedService.execute(cl->{cl.deleteChat(c.toString());return "";},(v,e)->{pendingDeletes.remove(id);if(!e.isEmpty()){error(e);if(screen.equals("inbox"))renderInbox();return;}
-                store.deleteChat(id);PairedService.clearNotification(this,id);getSystemService(NotificationManager.class).cancel("chat:"+id,1);if(screen.equals("inbox"))renderInbox();}));}
+                store.deleteChat(id);PairedService.chatGone(this,id);if(screen.equals("inbox"))renderInbox();}));}
     private void block(JSONObject c){String id=c.optString("conversationID");boolean blocked=c.optString("status").equals("BLOCKED_FOLDER")||c.optString("status").equals("SPAM_FOLDER");
         if(blocked){PairedService.execute(cl->{cl.blockChat(c.toString(),"unblock");return "";},(v,e)->{if(!e.isEmpty()){error(e);return;}setStatus(c,"ACTIVE");toast("Unblocked");inbox();});return;}
         new AlertDialog.Builder(this).setTitle("Block "+PairedProtocol.title(c)+"?").setMessage("You won't get messages or notifications from this conversation. You can unblock it from ⋮ → Blocked & spam.")
             .setNegativeButton("Cancel",null).setNeutralButton("Block & report spam",(d,w)->doBlock(c,id,"report")).setPositiveButton("Block",(d,w)->doBlock(c,id,"block")).show();}
     private void doBlock(JSONObject c,String id,String action){PairedService.execute(cl->{cl.blockChat(c.toString(),action);return "";},(v,e)->{if(!e.isEmpty()){error(e);return;}
-        setStatus(c,action.equals("report")?"SPAM_FOLDER":"BLOCKED_FOLDER");PairedService.clearNotification(this,id);getSystemService(NotificationManager.class).cancel("chat:"+id,1);toast(action.equals("report")?"Blocked and reported":"Blocked");inbox();});}
+        setStatus(c,action.equals("report")?"SPAM_FOLDER":"BLOCKED_FOLDER");PairedService.chatGone(this,id);toast(action.equals("report")?"Blocked and reported":"Blocked");inbox();});}
     private void deleteMessage(JSONObject m){String mid=m.optString("messageID");if(mid.isEmpty())return;
         new AlertDialog.Builder(this).setMessage("Delete this message? It's removed from Google Messages on your phone, not from the other person's phone.")
             .setNegativeButton("Cancel",null).setPositiveButton("Delete",(d,w)->PairedService.execute(c->{c.deleteMessage(mid);return "";},(v,e)->{if(!e.isEmpty()){error(e);return;}store.deleteMessage(mid);renderMessages(false);})).show();}
