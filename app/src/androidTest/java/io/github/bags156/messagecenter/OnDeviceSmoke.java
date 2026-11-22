@@ -2366,10 +2366,13 @@ public final class OnDeviceSmoke extends Instrumentation {
         check(cancelled,"Native generation did not honor cancellation");
         try(PairedStore store=new PairedStore(ctx)){store.chat(new JSONObject("{conversationID:'quality-chat',name:'Quality Check',type:'RCS',participants:[{ID:{participantID:'me',number:'+15550000000'},isMe:true},{ID:{participantID:'qc',number:'+15550104001'},fullName:'Quality Check'}]}"));}
         ctx.getSharedPreferences("paired",0).edit().putBoolean("undo_send",false).apply();ChatSettings settings=new ChatSettings(ctx);settings.setWriteLanguage("quality-chat","en");settings.setSendLanguage("quality-chat","es");
-        onMainCall(()->{method("thread",String.class).invoke(activity,"quality-chat");((android.widget.EditText)field("composer").get(activity)).setText("Let's call it a day.");((android.view.View)field("sendButton").get(activity)).performClick();return null;});
-        // The bubble goes up at once, with what you wrote, and turns into the translation once it's ready.
+        // The bubble goes up at once, with what you wrote (looked for the moment Send returns: the translation can be quick), and turns into the translation once it's ready.
+        boolean[] showsWritten={false};
+        onMainCall(()->{method("thread",String.class).invoke(activity,"quality-chat");((android.widget.EditText)field("composer").get(activity)).setText("Let's call it a day.");((android.view.View)field("sendButton").get(activity)).performClick();
+            java.util.ArrayList<android.view.View> found=new java.util.ArrayList<>();activity.getWindow().getDecorView().findViewsWithText(found,"Let's call it a day.",android.view.View.FIND_VIEWS_WITH_TEXT);
+            for(android.view.View v:found)if(v!=field("composer").get(activity))showsWritten[0]=true;return null;});
         Outbox out=new Outbox(ctx);check(waitUntil(()->out.forChat("quality-chat").size()==1,1500),"Send didn't put the message in the chat at once");
-        check(waitUntil(()->onScreen("Let's call it a day.")!=null,1500),"The message going up doesn't show what you wrote");
+        check(showsWritten[0],"The message going up doesn't show what you wrote");
         onMainCall(()->{check(((android.widget.EditText)field("composer").get(activity)).length()==0,"Send left the draft in the message box");return null;});
         java.util.concurrent.Callable<Boolean> translatedOne=()->out.forChat("quality-chat").size()==1&&!Outbox.TRANSLATING.equals(out.forChat("quality-chat").get(0).optString("state"));
         check(waitUntil(translatedOne,180000),"One tap did not translate the message");
