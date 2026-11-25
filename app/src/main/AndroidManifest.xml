@@ -29,6 +29,11 @@
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <queries>
         <package android:name="com.google.android.apps.messaging" />
+        <!-- Task apps "Create task" on a message can hand a task to (apps that take shared text). -->
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="text/plain" />
+        </intent>
         <!-- The music and podcast apps a shared song can open in ("Open in Spotify" under the link). -->
         <package android:name="com.spotify.music" />
         <package android:name="com.apple.android.music" />
