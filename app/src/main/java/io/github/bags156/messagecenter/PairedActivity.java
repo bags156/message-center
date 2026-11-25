@@ -1688,6 +1688,8 @@ public class PairedActivity extends Activity {
             if(new Notes(this).has(noteTo[0]))sheetItem(content,R.drawable.ic_notes,"Add to an existing note",()->{d[0].dismiss();messageToNote(m,c,true);});}
         JSONObject reminder=Reminders.forMessage(this,mid);
         sheetItem(content,R.drawable.ic_bell,reminder==null?"Remind me":"Reminder "+separatorStamp(reminder.optLong("at"))+" · change",()->{d[0].dismiss();remindMenu(m);});
+        TaskApps.App taskApp=TaskApps.chosen(this);
+        sheetItem(content,R.drawable.ic_task,taskApp==null?"Create task":"Create task in "+taskApp.label,()->{d[0].dismiss();createTask(m,c);});
         // The rest.
         if(!reactors.isEmpty())sheetItem(content,R.drawable.ic_people,"See who reacted",()->{d[0].dismiss();reactionSheet(m,c);});
         sheetItem(content,R.drawable.ic_check,"Select messages",()->{d[0].dismiss();startSelecting(m);});
@@ -1695,6 +1697,24 @@ public class PairedActivity extends Activity {
         View rule=new View(this);rule.setBackgroundColor(surface);LinearLayout.LayoutParams rl=new LinearLayout.LayoutParams(-1,dp(1));rl.setMargins(dp(8),dp(6),dp(8),dp(6));content.addView(rule,rl);
         sheetItem(content,R.drawable.ic_delete,"Delete",true,()->{d[0].dismiss();deleteMessage(m);}).setContentDescription("Delete message");
         d[0]=sheet(content);}
+    /** A message as a new task in your task app (the one you picked, or pick one now). */
+    private void createTask(JSONObject m,JSONObject c){TaskApps.App app=TaskApps.chosen(this);
+        if(app==null){chooseTaskApp(()->createTask(m,c));return;}
+        String what=PairedProtocol.media(m).isEmpty()?"Message":noteWhat(m);what=what.isEmpty()?"Message":Character.toUpperCase(what.charAt(0))+what.substring(1);
+        String sender=PairedProtocol.outgoing(m)?"You":c==null?"":senderName(m,c);long at=m.optLong("timestamp")/1000;
+        String when=at<=0?"":new SimpleDateFormat("MMM d",Locale.getDefault()).format(new Date(at))+" at "+timeOnly(at);
+        String[] task=TaskApps.task(PairedProtocol.text(m),what,sender,when);
+        try{startActivity(TaskApps.intent(app,task));}catch(Exception e){TaskApps.choose(this,null);toast(app.label+" couldn't take the task. Pick the app again.");}}
+    /**
+     * Which task app "Create task" uses: the task apps on this phone (Google Tasks, Todoist, TickTick,
+     * Microsoft To Do…), or any other app that takes text. Remembered; then runs after a pick.
+     */
+    private void chooseTaskApp(Runnable then){chooseTaskApp(TaskApps.installed(this),true,then);}
+    private void chooseTaskApp(List<TaskApps.App> apps,boolean tasksOnly,Runnable then){List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
+        for(TaskApps.App a:apps){labels.add(a.label);actions.add(()->{TaskApps.choose(this,a);toast("Tasks go to "+a.label+". Change it in Settings › Messages › Tasks.");if(then!=null)then.run();else refreshAfterSetting();});}
+        if(tasksOnly){labels.add(apps.isEmpty()?"No task app found · choose any app…":"Another app…");actions.add(()->chooseTaskApp(TaskApps.anyApp(this),false,then));}
+        else if(apps.isEmpty()){toast("No app on this phone takes text. Install a task app (like Google Tasks, Todoist or TickTick).");return;}
+        menuSheet(tasksOnly?"Create tasks in":"Create tasks in another app",labels,actions);}
     /** One reaction in the menu's rows: ringed if it's yours; picking yours again changes nothing (nothing is sent). */
     private TextView reactionChoice(JSONObject m,String e,String current,Dialog[] d){TextView t=text(e,24,ink,false);t.setGravity(Gravity.CENTER);boolean selected=e.equals(current);if(selected)t.setBackground(oval(fab));
         t.setContentDescription(selected?"Your reaction: "+e:"React with "+e);
@@ -4799,6 +4819,8 @@ public class PairedActivity extends Activity {
             settingRow(g,R.drawable.ic_undo,0xfff97316,"Undo send","How long you have to take a message back after tapping send",undoSendOn()?undoSendSeconds()+(undoSendSeconds()==1?" second":" seconds"):"Off",this::chooseUndoSend);
             settingSwitch(g,R.drawable.ic_sparkle,0xffa855f7,"Suggested replies","Replies to tap above the message box, worked out on this phone",smartRepliesOn(),on->prefs.edit().putBoolean("smart_replies",on).apply());
             settingRow(g,R.drawable.ic_send,0xff0ea5e9,"Quick replies","Saved phrases above the message box",quickRepliesOn()?quickReplies().size()+" saved":"Off",this::editQuickReplies);
+            TaskApps.App taskApp=TaskApps.chosen(this);
+            settingRow(g,R.drawable.ic_task,0xff10b981,"Tasks","Where “Create task” sends a message (long-press it)",taskApp==null?"Not chosen":taskApp.label,()->chooseTaskApp(null));
             LinearLayout show=settingsGroup(content,"What chats show");
             settingSwitch(show,R.drawable.ic_sparkle,0xffa855f7,"Message effects","Balloons, Slam, invisible ink and other effects iPhones send, and phrases like “Happy birthday”",effectsOn(),on->prefs.edit().putBoolean("message_effects",on).apply());
             settingSwitch(show,R.drawable.ic_link,0xff14b8a6,"Link previews","Only for contacts and chats you've written in",linkPreviewsOn(),on->prefs.edit().putBoolean("link_previews",on).apply());

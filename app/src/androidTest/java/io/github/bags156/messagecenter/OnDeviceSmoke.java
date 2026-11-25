@@ -1622,9 +1622,12 @@ public final class OnDeviceSmoke extends Instrumentation {
             check(waitUntil(()->onScreen("Reply")!=null,3000),"Holding a message didn't open its menu");
             // Every action, by its short name (the sheet may scroll, so it's looked for in the whole menu, not just what's showing).
             android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();
-            for(String item:new String[]{"Reply","Copy text","Forward","Star","Pin to top","Translate","Select text","Remind me","Select messages","Details","Delete"}){boolean found=false;
+            for(String item:new String[]{"Reply","Copy text","Forward","Star","Pin to top","Translate","Select text","Remind me","Create task","Select messages","Details","Delete"}){boolean found=false;
                 for(android.view.accessibility.AccessibilityNodeInfo n:root.findAccessibilityNodeInfosByText(item))if(n.getText()!=null&&item.contentEquals(n.getText()))found=true;
                 check(found,"The message menu is missing "+item);}
+            // Task apps on this phone are found without trouble, and a message makes a task with who sent it.
+            java.util.List<TaskApps.App> taskApps=TaskApps.installed(ctx),anyApps=TaskApps.anyApp(ctx);note("PROBE task apps: "+taskApps.size()+" of "+anyApps.size()+" that take text");
+            check(TaskApps.task("Bring chairs","Message","Riley","")[1].contains("— Riley"),"A task doesn't say who sent the message");
             // The second row: the ones used most, under the first row, most used first.
             java.util.List<android.view.accessibility.AccessibilityNodeInfo> heart=root.findAccessibilityNodeInfosByText("❤️"),fire=root.findAccessibilityNodeInfosByText("🔥"),pray=root.findAccessibilityNodeInfosByText("🙏");
             check(!fire.isEmpty()&&!pray.isEmpty(),"The menu has no row of your most-used reactions");
