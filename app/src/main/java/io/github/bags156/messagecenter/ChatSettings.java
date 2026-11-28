@@ -143,6 +143,9 @@ final class ChatSettings {
         if (until <= 0) prefs.edit().remove("snooze:" + id).remove("snooze-quiet:" + id).remove("snooze-private:" + id).apply();
         else prefs.edit().putLong("snooze:" + id, until).remove("snooze-quiet:" + id).putBoolean("snooze-private:" + id, privately).apply();
     }
+    /** Kept off Android Auto: its messages don't show or get read out in the car (they still notify on the phone). */
+    boolean hiddenFromCar(String id) { return prefs.getBoolean("car-hidden:" + id, false); }
+    void setHiddenFromCar(String id, boolean hidden) { if (hidden) prefs.edit().putBoolean("car-hidden:" + id, true).apply(); else prefs.edit().remove("car-hidden:" + id).apply(); }
     /** Snoozed with nothing coming through (see setSnooze). */
     boolean snoozedPrivately(String id) { return snoozed(id) && prefs.getBoolean("snooze-private:" + id, false); }
     /** The next Monday at 8:00 (for "this weekend"), at least an hour away. */
