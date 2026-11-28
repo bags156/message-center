@@ -801,6 +801,10 @@ public final class PairedService extends Service {
         if(!showName){postNameless(id,chat,recent,hidden,quiet);return;}
         Notification.MessagingStyle style=new Notification.MessagingStyle(new Person.Builder().setName("You").build());
         if(group){style.setConversationTitle(title);style.setGroupConversation(true);}
+        // Kept off Android Auto: the car only takes a notification with the conversation's messages and its
+        // Reply and Mark as read buttons marked as such. Those buttons are never marked for this chat, and
+        // while the phone's connected to the car it's a plain notification, without the messages either.
+        boolean offCar=new ChatSettings(this).hiddenFromCar(id),inCar=offCar&&CarLink.connected(this);
         Bitmap lastPhoto=null;String lastText="";
         if(!showText){
             if(lastIn!=null){String pid=lastIn.optString("participantID"),sender=PairedProtocol.person(chat,pid,lastIn.optJSONObject("senderParticipant"));Bitmap photo=photo(chat,pid,sender);
@@ -816,11 +820,11 @@ public final class PairedService extends Service {
             style.addMessage(new Notification.MessagingStyle.Message(text,PairedProtocol.time(r),who.build()));lastPhoto=photo;lastText=group?sender+": "+text:text;
         }
         // Android (and the phone maker) add their own suggested replies and actions unless told not to.
-        Notification.Builder builder=new Notification.Builder(this,MESSAGES).setAllowSystemGeneratedContextualActions(false).setSmallIcon(R.drawable.ic_notification).setStyle(style).setContentTitle(title).setContentText(lastText)
+        Notification.Builder builder=new Notification.Builder(this,MESSAGES).setAllowSystemGeneratedContextualActions(false).setSmallIcon(R.drawable.ic_notification).setStyle(inCar?new Notification.BigTextStyle().bigText(lastText):style).setContentTitle(title).setContentText(lastText)
             .setCategory(Notification.CATEGORY_MESSAGE).setVisibility(Notification.VISIBILITY_PRIVATE).setContentIntent(openIntent(id)).setAutoCancel(true)
             .setWhen(recent.isEmpty()?System.currentTimeMillis():PairedProtocol.time(recent.get(recent.size()-1))).setShowWhen(true).setNumber(m==null?0:recent.size());
         if(!group&&lastPhoto!=null)builder.setLargeIcon(lastPhoto);
-        builder.addAction(replyAction(id)).addAction(readAction(id));
+        if(!inCar)builder.addAction(replyAction(id,!offCar)).addAction(readAction(id,!offCar));
         // A login or verification code in the newest message gets its own Copy button.
         String code=newestCode(recent,chat);
         if(!code.isEmpty()){builder.addAction(copyAction(id,code,showText));if(code.equals(copiedCode))builder.setSubText(showText?"Code "+code+" copied":"Code copied");}
@@ -880,13 +884,14 @@ public final class PairedService extends Service {
      * Reply straight from the notification (also what Android Auto reads and answers). No suggested
      * replies, the app's or Android's: one tap on a suggestion sent it, too easily by accident.
      */
-    private Notification.Action replyAction(String id) {
+    /** forCar: marked as Reply, so Android Auto (and watches) can use it; a chat kept off the car has an unmarked one. */
+    private Notification.Action replyAction(String id,boolean forCar) {
         Intent intent=new Intent(this,NotificationActions.class).setAction(NotificationActions.REPLY).setData(chatUri(id)).putExtra("chat",id);
         // The reply text is added to this intent by Android, so it must be mutable; it is explicit to this app.
         PendingIntent pending=PendingIntent.getBroadcast(this,3,intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_MUTABLE);
         return new Notification.Action.Builder(Icon.createWithResource(this,R.drawable.ic_send),"Reply",pending)
             .addRemoteInput(new RemoteInput.Builder(KEY_REPLY).setLabel("Reply").build())
-            .setSemanticAction(Notification.Action.SEMANTIC_ACTION_REPLY).addExtras(noUi()).setAllowGeneratedReplies(false).build();
+            .setSemanticAction(forCar?Notification.Action.SEMANTIC_ACTION_REPLY:Notification.Action.SEMANTIC_ACTION_NONE).addExtras(noUi()).setAllowGeneratedReplies(false).build();
     }
     private Notification.Action copyAction(String id,String code,boolean showCode) {
         Intent intent=new Intent(this,NotificationActions.class).setAction(NotificationActions.COPY).setData(chatUri(id)).putExtra("chat",id).putExtra("code",code);
@@ -904,7 +909,7 @@ public final class PairedService extends Service {
         Notification.Builder b=new Notification.Builder(this,MESSAGES).setAllowSystemGeneratedContextualActions(false).setSmallIcon(R.drawable.ic_notification).setContentTitle(line)
             .setCategory(Notification.CATEGORY_MESSAGE).setVisibility(Notification.VISIBILITY_PUBLIC).setContentIntent(openIntent(id)).setAutoCancel(true)
             .setWhen(recent.isEmpty()?System.currentTimeMillis():PairedProtocol.time(recent.get(recent.size()-1))).setShowWhen(true);
-        b.addAction(replyAction(id)).addAction(readAction(id));
+        boolean offCar=new ChatSettings(this).hiddenFromCar(id);if(!(offCar&&CarLink.connected(this)))b.addAction(replyAction(id,!offCar)).addAction(readAction(id,!offCar));
         String code=newestCode(recent,chat);if(!code.isEmpty()){b.addAction(copyAction(id,code,false));if(code.equals(copiedCode))b.setSubText("Code copied");}
         if(quiet)b.setGroup("quiet-"+id).setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY).setOnlyAlertOnce(true);
         getSystemService(NotificationManager.class).notify("chat:"+id,1,b.build());
@@ -943,11 +948,11 @@ public final class PairedService extends Service {
     /** Publishes a chat's conversation shortcut (needed before it can have its own notification settings). */
     static void ensureShortcut(Context context,String id) {PairedService s=current;if(s==null)return;JSONObject chat=s.store.chat(id);if(chat==null)return;
         String title=PairedProtocol.title(chat);s.publishShortcut(id,title,s.chatIcon(chat,title));}
-    private Notification.Action readAction(String id) {
+    private Notification.Action readAction(String id,boolean forCar) {
         Intent intent=new Intent(this,NotificationActions.class).setAction(NotificationActions.READ).setData(chatUri(id)).putExtra("chat",id);
         PendingIntent pending=PendingIntent.getBroadcast(this,4,intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Action.Builder(Icon.createWithResource(this,R.drawable.ic_ticks),"Mark as read",pending)
-            .setSemanticAction(Notification.Action.SEMANTIC_ACTION_MARK_AS_READ).addExtras(noUi()).build();
+            .setSemanticAction(forCar?Notification.Action.SEMANTIC_ACTION_MARK_AS_READ:Notification.Action.SEMANTIC_ACTION_NONE).addExtras(noUi()).build();
     }
     /** Sends a reply typed into a notification, or saves it to send once connected. */
     static void replyFromNotification(Context context,String chat,String text,Runnable done) {

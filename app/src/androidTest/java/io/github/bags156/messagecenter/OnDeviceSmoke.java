@@ -979,8 +979,12 @@ public final class OnDeviceSmoke extends Instrumentation {
             onMainCall(()->method("chatOptions",JSONObject.class).invoke(a,chat));
             check(waitForText("Remind me in 1 hour",3000,true),"Holding a chat doesn't offer \"Remind me in 1 hour\"");shoot("shot-chat-remind-menu");
             // The menu: four tiles, then short lists; theme and read receipts live in Details.
-            for(String tile:new String[]{"Pin","Unread","Mute","Archive","Snooze notifications","Needs a reply","Open as bubble","Details","Block\u2026","Delete conversation\u2026"})
+            for(String tile:new String[]{"Pin","Unread","Mute","Archive","Snooze notifications","Show in Android Auto","Needs a reply","Open as bubble","Details","Block\u2026","Delete conversation\u2026"})
                 check(onScreen(tile)!=null,"Holding a chat doesn't offer "+tile);
+            // Keeping it off Android Auto is one switch, right there.
+            pressText("Show in Android Auto");check(waitUntil(()->new ChatSettings(ctx).hiddenFromCar("remind-chat"),3000),"Turning off \"Show in Android Auto\" didn't keep the chat off the car");
+            new ChatSettings(ctx).setHiddenFromCar("remind-chat",false);
+            if(onScreen("Remind me in 1 hour")==null){onMainCall(()->method("chatOptions",JSONObject.class).invoke(a,chat));check(waitForText("Remind me in 1 hour",3000,true),"The chat menu didn't come back");}
             check(onScreen("Chat theme\u2026")==null&&onScreen("Turn on read receipts for this chat")==null,"Holding a chat still lists theme and read receipts (they're in Details)");
             long before=System.currentTimeMillis();pressText("Remind me in 1 hour");Thread.sleep(400);
             JSONObject set=Reminders.forChat(ctx,"remind-chat");

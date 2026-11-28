@@ -608,6 +608,7 @@ public class PairedActivity extends Activity {
             if(reminder==null)menuRow(later,R.drawable.ic_clock,0xfff97316,"Remind me in 1 hour",null,false,closing.apply(()->remindChat(c,System.currentTimeMillis()+3_600_000L)));
             else menuRow(later,R.drawable.ic_clock,0xfff97316,"Reminder at "+timeOnly(reminder.optLong("at")),"Remove",false,closing.apply(()->{Reminders.remove(this,reminder.optString("id"));toast("Reminder removed");}));
             menuRow(later,R.drawable.ic_bell,0xff8b5cf6,"Snooze notifications",chatSettings.snoozed(id)?"Until "+snoozeLabel(id):"",false,closing.apply(()->snoozeMenu(id)));
+            menuSwitch(later,R.drawable.ic_car,0xff64748b,"Show in Android Auto",!chatSettings.hiddenFromCar(id),on->showInCar(id,on));
             menuRow(later,R.drawable.ic_send,0xff0ea5e9,"Needs a reply","",false,closing.apply(()->replyFollowUp(c)));
             gap(content,12);LinearLayout places=menuGroup(content);
             menuRow(places,R.drawable.ic_chat,0xff14b8a6,"Open as bubble",null,false,closing.apply(()->openBubble(id)));
@@ -1031,7 +1032,14 @@ public class PairedActivity extends Activity {
         labels.add(muted?"Unmute":"Mute");actions.add(()->toggleMute(id));
         if(!muted){labels.add(snoozed?"Snoozed until "+snoozeLabel(id)+": change\u2026":"Snooze\u2026");actions.add(()->snoozeMenu(id));}
         String own=NotificationPrivacy.own(this,id);labels.add("Message previews: "+NotificationPrivacy.label(own.isEmpty()?NotificationPrivacy.mode(this):own));actions.add(()->chatNotificationContent(id));
+        boolean offCar=chatSettings.hiddenFromCar(id);labels.add(offCar?"Hidden from Android Auto: show it":"Hide from Android Auto");actions.add(()->showInCar(id,offCar));
         menuSheet("Notifications",labels,actions);}
+    /**
+     * Whether a chat shows in Android Auto. Hidden, its messages don't appear or get read out in the car;
+     * they still notify on the phone as usual (plain, without Reply, while you're connected to the car).
+     */
+    private void showInCar(String id,boolean show){chatSettings.setHiddenFromCar(id,!show);
+        toast(show?"This chat shows in Android Auto again.":"This chat won't show in Android Auto. Its messages still notify on your phone.");refreshAfterSetting();}
     /** The first message on screen in the chat and how far down it sits, or null when you're at (or near) the newest message. */
     private Spot currentSpot(){if(scroll==null||items==null)return null;View content=scroll.getChildAt(0);int y=scroll.getScrollY();
         if(content==null||content.getHeight()-scroll.getHeight()-y<dp(80))return null;return spotAt(y);}
